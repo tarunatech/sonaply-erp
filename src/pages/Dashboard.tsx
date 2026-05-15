@@ -28,7 +28,7 @@ export default function Dashboard() {
       name: c, value: batches.filter(b => b.category === c).reduce((s, b) => s + b.availableQty, 0)
     })).filter(c => c.value > 0);
 
-    const challans = await (await fetch('http://localhost:5000/api/challans')).json();
+    const challans = await (await fetch('/api/challans')).json();
     const todayChallans = challans.filter((c: any) => c.date === today).length;
 
     const months: Record<string, number> = {};
