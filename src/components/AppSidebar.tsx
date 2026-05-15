@@ -32,7 +32,7 @@ export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupLabel className="text-sidebar-foreground/70">
-            {!collapsed && "🪵 Plywood ERP"}
+            {!collapsed && "🪵 Sonaply ERP"}
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
