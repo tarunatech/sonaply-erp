@@ -9,14 +9,14 @@ import { Download } from "lucide-react";
 export default function DailyExport() {
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
 
-  const doExport = (type: string) => {
+  const doExport = async (type: string) => {
     const d = date;
-    let data: Record<string, unknown>[] = [];
+    let data: any[] = [];
     switch (type) {
-      case 'sales': data = getSales().filter(s => s.orderDate === d) as any; break;
-      case 'purchases': data = getPurchases().filter(p => p.date === d) as any; break;
-      case 'stock': data = getBatches().filter(b => b.date === d) as any; break;
-      case 'orders': data = getOrders().filter(o => o.orderDate === d) as any; break;
+      case 'sales': data = (await getSales()).filter(s => s.orderDate === d); break;
+      case 'purchases': data = (await getPurchases()).filter(p => p.date === d); break;
+      case 'stock': data = (await getBatches()).filter(b => b.date === d); break;
+      case 'orders': data = (await getOrders()).filter(o => o.orderDate === d); break;
     }
     if (!data.length) { alert('No data for this date'); return; }
     exportCSV(data, `daily-${type}-${d}.csv`);

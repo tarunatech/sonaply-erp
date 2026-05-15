@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { getUsers, addUser, deleteUser, getCurrentUser } from "@/lib/store";
+import { useState, useEffect, useCallback } from "react";
+import { getUsers, addUser, deleteUser, getCurrentUser, User } from "@/lib/store";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -12,26 +12,36 @@ import { useToast } from "@/hooks/use-toast";
 import { Plus, Trash2 } from "lucide-react";
 
 export default function UserManagement() {
-  const [users, setUsers] = useState(getUsers());
+  const [users, setUsers] = useState<User[]>([]);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ name: '', email: '', password: '', role: 'Staff' as 'Admin' | 'Staff' });
   const { toast } = useToast();
   const current = getCurrentUser();
 
-  const handleAdd = () => {
+  const refresh = useCallback(() => getUsers().then(setUsers), []);
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const handleAdd = async () => {
     if (!form.name || !form.email || !form.password) { toast({ title: "Fill all fields", variant: "destructive" }); return; }
-    addUser(form);
+    await addUser(form);
     toast({ title: "User added" });
     setOpen(false);
     setForm({ name: '', email: '', password: '', role: 'Staff' });
-    setUsers(getUsers());
+    refresh();
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (id === current?.id) { toast({ title: "Cannot delete yourself", variant: "destructive" }); return; }
-    deleteUser(id);
-    setUsers(getUsers());
-    toast({ title: "User deleted" });
+    const password = window.prompt("Please enter admin password to delete:");
+    if (password !== 'admin') {
+      if (password !== null) toast({ title: "Incorrect password", variant: "destructive" });
+      return;
+    }
+    if (window.confirm("Are you sure you want to delete this user?")) {
+      await deleteUser(id);
+      refresh();
+      toast({ title: "User deleted" });
+    }
   };
 
   return (

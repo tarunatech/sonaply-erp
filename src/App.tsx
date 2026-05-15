@@ -17,28 +17,17 @@ import StockEntry from "./pages/StockEntry";
 import PurchasePage from "./pages/PurchasePage";
 import SalesPage from "./pages/SalesPage";
 import OrderTracking from "./pages/OrderTracking";
+import DeliveredOrders from "./pages/DeliveredOrders";
+import PendingOrders from "./pages/PendingOrders";
+import ChallanPage from "./pages/ChallanPage";
 import DailyExport from "./pages/DailyExport";
+import ClientsPage from "./pages/ClientsPage";
 import UserManagement from "./pages/UserManagement";
 import NotFound from "./pages/NotFound";
 
+
 const queryClient = new QueryClient();
 
-const LowStockNotifier = () => {
-  const { toast } = useToast();
-  useEffect(() => {
-    const lowStock = getBatches().filter(b => b.availableQty < 10);
-    if (lowStock.length > 0) {
-      setTimeout(() => {
-        toast({
-          title: "Low Stock Alert",
-          description: `You have ${lowStock.length} items with low stock.`,
-          variant: "destructive",
-        });
-      }, 500);
-    }
-  }, [toast]);
-  return null;
-};
 
 const App = () => {
   const [user, setUser] = useState(getCurrentUser());
@@ -59,8 +48,7 @@ const App = () => {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <Toaster />
-        <LowStockNotifier />
-        <BrowserRouter>
+        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <SidebarProvider>
             <div className="min-h-screen flex w-full">
               <AppSidebar isAdmin={isAdmin} />
@@ -80,8 +68,14 @@ const App = () => {
                     <Route path="/purchases" element={<PurchasePage />} />
                     <Route path="/sales" element={<SalesPage />} />
                     <Route path="/orders" element={<OrderTracking />} />
+                    <Route path="/pending-orders" element={<PendingOrders />} />
+                    <Route path="/delivered-orders" element={<DeliveredOrders />} />
+                    <Route path="/challans" element={<ChallanPage />} />
                     <Route path="/export" element={<DailyExport />} />
+                    <Route path="/clients" element={<ClientsPage />} />
+
                     {isAdmin && <Route path="/users" element={<UserManagement />} />}
+
                     <Route path="*" element={<NotFound />} />
                   </Routes>
                 </main>

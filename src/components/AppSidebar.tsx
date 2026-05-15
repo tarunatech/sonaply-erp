@@ -1,4 +1,4 @@
-import { LayoutDashboard, Package, PackagePlus, ShoppingCart, TrendingUp, ClipboardList, Download, Users } from "lucide-react";
+import { LayoutDashboard, Package, PackagePlus, ShoppingCart, TrendingUp, ClipboardList, Download, Users, FileText, CheckCircle2, UserCircle } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
 import {
@@ -13,9 +13,14 @@ const items = [
   { title: "Purchases", url: "/purchases", icon: ShoppingCart },
   { title: "Sales", url: "/sales", icon: TrendingUp },
   { title: "Orders", url: "/orders", icon: ClipboardList },
+  { title: "Pending Orders", url: "/pending-orders", icon: ClipboardList },
+  { title: "Challans", url: "/challans", icon: FileText },
+  { title: "Delivered Orders", url: "/delivered-orders", icon: CheckCircle2 },
   { title: "Daily Export", url: "/export", icon: Download },
+  { title: "Clients", url: "/clients", icon: UserCircle },
   { title: "Users", url: "/users", icon: Users },
 ];
+
 
 export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
   const { state } = useSidebar();

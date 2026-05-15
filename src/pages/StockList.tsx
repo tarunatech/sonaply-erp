@@ -1,6 +1,7 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { getBatches, getOrders, exportCSV, deleteBatch, updateBatch, StockBatch } from "@/lib/store";
+import { getBatches, getOrders, exportCSV, deleteBatch, updateBatch, StockBatch, Order } from "@/lib/store";
+
 import { printElement } from "@/lib/print";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -10,44 +11,64 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Search, Download, Printer, Plus, ClipboardList, Pencil, Trash2 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 export default function StockList() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [search, setSearch] = useState("");
-  const [showLowStock, setShowLowStock] = useState(searchParams.get("filter") === "lowStock");
   const [allBatches, setAllBatches] = useState<StockBatch[]>([]);
+  const [pendingOrders, setPendingOrders] = useState<Order[]>([]);
   const [editingBatch, setEditingBatch] = useState<StockBatch | null>(null);
+  const { toast } = useToast();
+
+  const refreshData = useCallback(async () => {
+    const [b, o] = await Promise.all([getBatches(), getOrders()]);
+    setAllBatches(b);
+    setPendingOrders(o.filter(order => order.status === 'Pending'));
+  }, []);
 
   useEffect(() => {
-    setAllBatches(getBatches());
-  }, []);
+    refreshData();
+  }, [refreshData]);
 
-  const pendingOrders = useMemo(() => {
-    return getOrders().filter(o => o.status === 'Pending');
-  }, []);
 
   const batches = useMemo(() => {
     let b = allBatches;
-    if (showLowStock) b = b.filter(i => i.availableQty < 10);
-    if (search) b = b.filter(i => i.productName.toLowerCase().includes(search.toLowerCase()) || i.batchNumber.toLowerCase().includes(search.toLowerCase()));
-    return b;
-  }, [allBatches, search, showLowStock]);
+    if (search) {
+      const s = search.toLowerCase();
+      b = b.filter(i => 
+        i.productName.toLowerCase().includes(s) || 
+        i.batchNumber.toLowerCase().includes(s) ||
+        i.category.toLowerCase().includes(s)
+      );
+    }
+    return [...b].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [allBatches, search]);
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
+    const password = prompt("Please enter admin password to delete:");
+    if (password !== 'admin') {
+      if (password !== null) toast({ title: "Incorrect password", variant: "destructive" });
+      return;
+    }
     if (confirm("Are you sure you want to delete this stock batch?")) {
-      deleteBatch(id);
-      setAllBatches(getBatches());
+      await deleteBatch(id);
+      refreshData();
+      toast({ title: "Batch deleted" });
     }
   };
 
-  const handleEditSave = () => {
+  const handleEditSave = async () => {
     if (editingBatch) {
-      updateBatch(editingBatch.id, editingBatch);
-      setAllBatches(getBatches());
+      await updateBatch(editingBatch.id, editingBatch);
+      refreshData();
       setEditingBatch(null);
     }
   };
+
+
+
 
   return (
     <div className="space-y-4">
@@ -70,20 +91,22 @@ export default function StockList() {
                     <TableHead>Order #</TableHead>
                     <TableHead>Client</TableHead>
                     <TableHead>Product</TableHead>
-                    <TableHead className="text-right">Qty</TableHead>
+                    <TableHead className="text-right">Total Qty</TableHead>
+                    <TableHead className="text-right text-orange-600">Pending</TableHead>
                     <TableHead>Date</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {pendingOrders.length === 0 ? (
-                    <TableRow><TableCell colSpan={5} className="text-center py-4 text-muted-foreground">No pending items.</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={6} className="text-center py-4 text-muted-foreground">No pending items.</TableCell></TableRow>
                   ) : pendingOrders.map(o => (
                     <TableRow key={o.id}>
-                      <TableCell>{o.orderNumber}</TableCell>
+                      <TableCell className="text-xs">{o.orderNumber}</TableCell>
                       <TableCell>{o.clientName}</TableCell>
                       <TableCell className="font-medium">{o.productName}</TableCell>
-                      <TableCell className="text-right font-semibold text-orange-600">{o.quantity}</TableCell>
-                      <TableCell>{o.orderDate}</TableCell>
+                      <TableCell className="text-right">{o.quantity}</TableCell>
+                      <TableCell className="text-right font-bold text-orange-600">{o.pendingQty || 0}</TableCell>
+                      <TableCell className="text-xs">{o.orderDate}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -171,14 +194,30 @@ export default function StockList() {
           <Button variant="outline" size="sm" onClick={() => printElement('stock-table')}><Printer className="mr-1 h-4 w-4" />Print</Button>
         </div>
       </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card className="bg-primary/5 border-primary/20">
+          <CardContent className="pt-6">
+            <div className="text-sm font-medium text-muted-foreground">Total Sales (Items)</div>
+            <div className="text-2xl font-bold text-primary">
+              {allBatches.reduce((acc, b) => acc + (b.quantity - b.availableQty), 0).toLocaleString()}
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="bg-success/5 border-success/20">
+          <CardContent className="pt-6">
+            <div className="text-sm font-medium text-muted-foreground">Available Stock</div>
+            <div className="text-2xl font-bold text-success">
+              {allBatches.reduce((acc, b) => acc + b.availableQty, 0).toLocaleString()}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
       <div className="flex flex-wrap gap-3">
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input className="pl-9" placeholder="Search product or batch..." value={search} onChange={e => setSearch(e.target.value)} />
         </div>
-        <Button variant={showLowStock ? "default" : "outline"} onClick={() => setShowLowStock(!showLowStock)}>
-          Low Stock Only
-        </Button>
       </div>
       <Card>
         <CardContent className="p-0" id="stock-table">
@@ -186,25 +225,26 @@ export default function StockList() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Product</TableHead><TableHead>Category</TableHead><TableHead>Thickness</TableHead>
-                  <TableHead>Batch</TableHead><TableHead className="text-right">Total Qty</TableHead>
+                  <TableHead>Product</TableHead><TableHead>Category</TableHead>
+                  <TableHead>Batch</TableHead>
+                  <TableHead className="text-right">Sold</TableHead>
                   <TableHead className="text-right">Available</TableHead><TableHead className="text-right">Nil</TableHead><TableHead className="text-right">Damaged</TableHead>
-                  <TableHead>Location</TableHead><TableHead>Updated</TableHead><TableHead className="text-right no-print">Actions</TableHead>
+                  <TableHead>Updated</TableHead><TableHead className="text-right no-print">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {batches.length === 0 ? (
-                  <TableRow><TableCell colSpan={11} className="text-center text-muted-foreground py-8">No stock entries found</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">No stock entries found</TableCell></TableRow>
                 ) : batches.map(b => (
-                  <TableRow key={b.id} className={b.availableQty < 10 ? 'bg-destructive/5' : ''}>
+                  <TableRow key={b.id}>
                     <TableCell className="font-medium">{b.productName}</TableCell>
-                    <TableCell>{b.category}</TableCell><TableCell>{b.thickness}</TableCell>
+                    <TableCell>{b.category}</TableCell>
                     <TableCell>{b.batchNumber}</TableCell>
-                    <TableCell className="text-right">{b.quantity}</TableCell>
+                    <TableCell className="text-right text-blue-600 font-medium">{(b.quantity - b.availableQty) || 0}</TableCell>
                     <TableCell className="text-right font-semibold">{b.availableQty}</TableCell>
                     <TableCell className="text-right text-muted-foreground">{b.nilQty || 0}</TableCell>
                     <TableCell className="text-right text-stock-damaged">{b.damageQty}</TableCell>
-                    <TableCell>{b.warehouseLocation}</TableCell>
+
                     <TableCell>{b.date}</TableCell>
                     <TableCell className="text-right no-print">
                       <div className="flex justify-end gap-2">
