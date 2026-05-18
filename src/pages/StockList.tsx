@@ -229,12 +229,13 @@ export default function StockList() {
                   <TableHead>Batch</TableHead>
                   <TableHead className="text-right">Sold</TableHead>
                   <TableHead className="text-right">Available</TableHead><TableHead className="text-right">Nil</TableHead><TableHead className="text-right">Damaged</TableHead>
+                  <TableHead>Description</TableHead>
                   <TableHead>Updated</TableHead><TableHead className="text-right no-print">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {batches.length === 0 ? (
-                  <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">No stock entries found</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground py-8">No stock entries found</TableCell></TableRow>
                 ) : batches.map(b => (
                   <TableRow key={b.id}>
                     <TableCell className="font-medium">{b.productName}</TableCell>
@@ -244,6 +245,7 @@ export default function StockList() {
                     <TableCell className="text-right font-semibold">{b.availableQty}</TableCell>
                     <TableCell className="text-right text-muted-foreground">{b.nilQty || 0}</TableCell>
                     <TableCell className="text-right text-stock-damaged">{b.damageQty}</TableCell>
+                    <TableCell className="max-w-[150px] truncate text-muted-foreground italic" title={b.description}>{b.description || '-'}</TableCell>
 
                     <TableCell>{b.date}</TableCell>
                     <TableCell className="text-right no-print">
@@ -284,6 +286,10 @@ export default function StockList() {
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label className="text-right">Damage Qty</Label>
                 <Input type="number" className="col-span-3" value={editingBatch.damageQty} onChange={e => setEditingBatch({...editingBatch, damageQty: Number(e.target.value)})} />
+              </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label className="text-right">Description</Label>
+                <Input className="col-span-3" value={editingBatch.description || ''} onChange={e => setEditingBatch({...editingBatch, description: e.target.value})} />
               </div>
             </div>
           )}

@@ -13,7 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Download, Printer, MessageCircle, Plus, Trash2, Pencil } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 
-const PRICE_CATEGORIES = ['0-10000', '10000-20000', '20000-50000', '50000-100000', 'Above 100000'];
+const PRICE_CATEGORIES = ['0-10000', '10000-20000', '20000-50000', '50000-100000', 'Above 100000', 'Only Cash'];
 
 interface SaleItem {
   productName: string;
@@ -369,6 +369,11 @@ export default function SalesPage() {
                                       <span>Batch: {b.batchNumber}</span>
                                       <span>Available: {b.availableQty}</span>
                                     </div>
+                                    {b.description && (
+                                      <div className="text-[11px] text-blue-600 italic mt-1 bg-blue-50/50 px-1.5 py-0.5 rounded border border-blue-100/50">
+                                        {b.description}
+                                      </div>
+                                    )}
                                   </div>
                                 ))}
                                 {filteredBatches.length === 0 && (
@@ -387,7 +392,12 @@ export default function SalesPage() {
                               (item.batchNo ? b.batchNumber === item.batchNo : true)
                             );
                             return batch ? (
-                              <span className="text-blue-700 font-bold">Stock Available: {batch.availableQty}</span>
+                              <div className="flex flex-col items-end text-right w-full">
+                                <span className="text-blue-700 font-bold">Stock Available: {batch.availableQty}</span>
+                                {batch.description && (
+                                  <span className="text-blue-600 italic text-[11px] mt-0.5">Note: {batch.description}</span>
+                                )}
+                              </div>
                             ) : null;
                           })()}
                         </div>

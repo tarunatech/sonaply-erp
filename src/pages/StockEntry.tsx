@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { PackagePlus } from "lucide-react";
 
-const defaultForm = { productCode: '', productName: '', category: '', batchNumber: '', supplier: '', quantity: 0, date: new Date().toISOString().slice(0, 10) };
+const defaultForm = { productCode: '', productName: '', category: '', batchNumber: '', supplier: '', quantity: 0, date: new Date().toISOString().slice(0, 10), description: '' };
 
 export default function StockEntry() {
   const [form, setForm] = useState(defaultForm);
@@ -270,6 +270,10 @@ export default function StockEntry() {
             </div>
             <div><Label>Quantity *</Label><Input type="number" value={form.quantity || ''} onChange={e => u('quantity', +e.target.value)} /></div>
             <div><Label>Date</Label><Input type="date" value={form.date} readOnly className="bg-muted text-muted-foreground" /></div>
+            <div className="sm:col-span-2">
+              <Label>Description / Note</Label>
+              <Input value={form.description || ''} onChange={e => u('description', e.target.value)} placeholder="Add a description or note about this batch..." />
+            </div>
 
           </div>
           <Button className="w-full" onClick={handleSubmit}><PackagePlus className="mr-2 h-4 w-4" />Add Stock Batch</Button>

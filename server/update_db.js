@@ -16,6 +16,9 @@ async function update() {
       )
     `);
     
+    console.log('Adding description column to batches...');
+    await db.query('ALTER TABLE batches ADD COLUMN IF NOT EXISTS description TEXT');
+
     console.log('✅ Database updated successfully!');
     process.exit(0);
   } catch (err) {

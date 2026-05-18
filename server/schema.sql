@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS batches (
   date DATE DEFAULT CURRENT_DATE,
   available_qty INTEGER DEFAULT 0,
   damage_qty INTEGER DEFAULT 0,
-  nil_qty INTEGER DEFAULT 0
+  nil_qty INTEGER DEFAULT 0,
+  description TEXT
 );
 
 CREATE TABLE IF NOT EXISTS purchases (

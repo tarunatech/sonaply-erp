@@ -63,14 +63,14 @@ app.get('/api/batches', async (req, res) => {
 });
 
 app.post('/api/batches', async (req, res) => {
-  const { product_id, product_code, product_name, category, batch_number, supplier, quantity, rate, date, available_qty, damage_qty, nil_qty } = req.body;
+  const { product_id, product_code, product_name, category, batch_number, supplier, quantity, rate, date, available_qty, damage_qty, nil_qty, description } = req.body;
   const productId = product_id === '' ? null : product_id;
   try {
     const result = await db.query(
       `INSERT INTO batches 
-      (product_id, product_code, product_name, category, batch_number, supplier, quantity, rate, date, available_qty, damage_qty, nil_qty) 
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
-      [productId, product_code, product_name, category, batch_number, supplier, quantity, rate, date, available_qty, damage_qty, nil_qty]
+      (product_id, product_code, product_name, category, batch_number, supplier, quantity, rate, date, available_qty, damage_qty, nil_qty, description) 
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
+      [productId, product_code, product_name, category, batch_number, supplier, quantity, rate, date, available_qty, damage_qty, nil_qty, description]
     );
 
     res.json(result.rows[0]);

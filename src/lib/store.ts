@@ -4,7 +4,7 @@ export interface Product {
 export interface StockBatch {
   id: string; productId: string; productCode?: string; productName: string; category: string;
   batchNumber: string; supplier: string; quantity: number; rate: number; date: string;
-  availableQty: number; damageQty: number; nilQty?: number;
+  availableQty: number; damageQty: number; nilQty?: number; description?: string;
 }
 export interface Purchase {
   id: string; supplierName: string; supplierPhone: string; productName: string; category: string;
@@ -55,7 +55,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 const mapBatch = (b: any): StockBatch => ({
   id: b.id, productId: b.product_id, productCode: b.product_code, productName: b.product_name,
   category: b.category, batchNumber: b.batch_number, supplier: b.supplier, quantity: b.quantity,
-  rate: Number(b.rate), date: b.date, availableQty: b.available_qty, damageQty: b.damage_qty, nilQty: b.nil_qty
+  rate: Number(b.rate), date: b.date, availableQty: b.available_qty, damageQty: b.damage_qty, nilQty: b.nil_qty, description: b.description
 });
 
 const mapOrder = (o: any): Order => ({
@@ -103,7 +103,7 @@ export const addBatch = (b: Omit<StockBatch, 'id'>) => {
     product_id: b.productId, product_code: b.productCode, product_name: b.productName,
     category: b.category, batch_number: b.batchNumber, supplier: b.supplier,
     quantity: b.quantity, rate: b.rate, date: b.date, available_qty: b.availableQty,
-    damage_qty: b.damageQty, nil_qty: b.nilQty
+    damage_qty: b.damageQty, nil_qty: b.nilQty, description: b.description
   };
   return request<any>('/batches', { method: 'POST', body: JSON.stringify(body) }).then(mapBatch);
 };
@@ -118,6 +118,7 @@ export const updateBatch = (id: string, updates: Partial<StockBatch>) => {
   if (updates.category) body.category = updates.category;
   if (updates.batchNumber) body.batch_number = updates.batchNumber;
   if (updates.supplier) body.supplier = updates.supplier;
+  if (updates.description !== undefined) body.description = updates.description;
   
   return request<any>(`/batches/${id}`, { method: 'PUT', body: JSON.stringify(body) }).then(mapBatch);
 };
@@ -266,4 +267,16 @@ export const generateWhatsAppLink = (phone: string, message: string) => {
 };
 
 // Categories
-export const CATEGORIES = ['Plywood', 'Block Board', 'Flush Door', 'MDF', 'Particle Board', 'Veneer', 'Laminate', 'Other'];
+export const CATEGORIES = [
+  "FINE TOUCH",
+  "FINE TOUCH LITE",
+  "FINOBLE",
+  "REAL PLUS",
+  "REAL TOUCH",
+  "ROXX LAM",
+  "KIWI DECOR",
+  "ELITE LAM",
+  "ACRIKA",
+  "KALAA",
+  "YOUR DECOR"
+];

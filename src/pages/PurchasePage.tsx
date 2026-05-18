@@ -18,7 +18,19 @@ interface PurchaseItem {
   batchNumber: string;
 }
 
-const PURCHASE_CATEGORIES = ["FINBOLE", "REAL PLUS", "KALAA", "FINE TOUCH LIGHT"];
+const PURCHASE_CATEGORIES = [
+  "FINE TOUCH",
+  "FINE TOUCH LITE",
+  "FINOBLE",
+  "REAL PLUS",
+  "REAL TOUCH",
+  "ROXX LAM",
+  "KIWI DECOR",
+  "ELITE LAM",
+  "ACRIKA",
+  "KALAA",
+  "YOUR DECOR"
+];
 const defaultItem: PurchaseItem = { productName: '', category: '', quantity: 0, batchNumber: '' };
 
 export default function PurchasePage() {
