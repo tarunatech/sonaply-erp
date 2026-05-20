@@ -1,12 +1,12 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { getBatches, getOrders, exportCSV, deleteBatch, updateBatch, StockBatch, Order } from "@/lib/store";
+import { getBatches, getOrders, exportCSV, deleteBatch, updateBatch, StockBatch, Order, CATEGORIES } from "@/lib/store";
 
 import { printElement } from "@/lib/print";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-// Removed Select imports
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
@@ -17,6 +17,7 @@ export default function StockList() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [search, setSearch] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [allBatches, setAllBatches] = useState<StockBatch[]>([]);
   const [pendingOrders, setPendingOrders] = useState<Order[]>([]);
   const [editingBatch, setEditingBatch] = useState<StockBatch | null>(null);
@@ -32,19 +33,31 @@ export default function StockList() {
     refreshData();
   }, [refreshData]);
 
+  const categoriesList = useMemo(() => {
+    const list = new Set<string>();
+    allBatches.forEach(b => {
+      if (b.category) list.add(b.category);
+    });
+    // Add default categories from store
+    CATEGORIES.forEach(c => list.add(c));
+    return Array.from(list).sort();
+  }, [allBatches]);
 
   const batches = useMemo(() => {
     let b = allBatches;
+    if (selectedCategory && selectedCategory !== "all") {
+      b = b.filter(i => (i.category || '').toLowerCase() === selectedCategory.toLowerCase());
+    }
     if (search) {
       const s = search.toLowerCase();
       b = b.filter(i => 
-        i.productName.toLowerCase().includes(s) || 
-        i.batchNumber.toLowerCase().includes(s) ||
-        i.category.toLowerCase().includes(s)
+        (i.productName || '').toLowerCase().includes(s) || 
+        (i.batchNumber || '').toLowerCase().includes(s) ||
+        (i.category || '').toLowerCase().includes(s)
       );
     }
     return [...b].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [allBatches, search]);
+  }, [allBatches, search, selectedCategory]);
 
   const handleDelete = async (id: string) => {
     const password = prompt("Please enter admin password to delete:");
@@ -213,10 +226,23 @@ export default function StockList() {
         </Card>
       </div>
 
-      <div className="flex flex-wrap gap-3">
+      <div className="flex flex-wrap gap-3 items-center">
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input className="pl-9" placeholder="Search product or batch..." value={search} onChange={e => setSearch(e.target.value)} />
+          <Input className="pl-9" placeholder="Search product, category or batch..." value={search} onChange={e => setSearch(e.target.value)} />
+        </div>
+        <div className="w-full sm:w-[220px]">
+          <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+            <SelectTrigger>
+              <SelectValue placeholder="All Categories" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Categories</SelectItem>
+              {categoriesList.map(c => (
+                <SelectItem key={c} value={c}>{c}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
       <Card>
@@ -274,6 +300,24 @@ export default function StockList() {
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label className="text-right">Product</Label>
                 <Input className="col-span-3" value={editingBatch.productName} onChange={e => setEditingBatch({...editingBatch, productName: e.target.value})} />
+              </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label className="text-right">Category</Label>
+                <div className="col-span-3">
+                  <Select 
+                    value={editingBatch.category} 
+                    onValueChange={v => setEditingBatch({...editingBatch, category: v})}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select Category" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {categoriesList.map(c => (
+                        <SelectItem key={c} value={c}>{c}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label className="text-right">Available Qty</Label>

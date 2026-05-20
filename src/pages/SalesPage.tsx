@@ -60,11 +60,14 @@ export default function SalesPage() {
   const filteredSales = useMemo(() => {
     return sales.filter(s => {
       const f = productFilter.toLowerCase();
+      const productBatch = allBatches.find(b => b.productName === s.productName);
+      const productCategoryMatch = productBatch ? (productBatch.category || '').toLowerCase().includes(f) : false;
       return s.clientName.toLowerCase().includes(f) || 
              s.productName.toLowerCase().includes(f) ||
-             s.category.toLowerCase().includes(f);
+             (s.category || '').toLowerCase().includes(f) ||
+             productCategoryMatch;
     }).sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
-  }, [sales, productFilter]);
+  }, [sales, productFilter, allBatches]);
 
   const scrollToSelected = (containerRef: React.RefObject<HTMLDivElement>, index: number) => {
     if (index >= 0 && containerRef.current) {
@@ -427,7 +430,7 @@ export default function SalesPage() {
             </div>
             <div className="w-full sm:w-72">
               <Input 
-                placeholder="Filter by product or client..." 
+                placeholder="Filter by client, product or category..." 
                 value={productFilter} 
                 onChange={e => setProductFilter(e.target.value)} 
                 className="h-9"

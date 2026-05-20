@@ -77,12 +77,15 @@ export default function PendingOrders() {
   const filteredOrders = useMemo(() => {
     if (!filter) return orders;
     const f = filter.toLowerCase();
-    return orders.filter(o =>
-      o.clientName.toLowerCase().includes(f) ||
-      o.productName.toLowerCase().includes(f) ||
-      o.orderNumber.toLowerCase().includes(f)
-    ).sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
-  }, [orders, filter]);
+    return orders.filter(o => {
+      const productBatch = batches.find(b => b.productName === o.productName);
+      const categoryMatch = productBatch ? (productBatch.category || '').toLowerCase().includes(f) : false;
+      return o.clientName.toLowerCase().includes(f) ||
+             o.productName.toLowerCase().includes(f) ||
+             o.orderNumber.toLowerCase().includes(f) ||
+             categoryMatch;
+    }).sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
+  }, [orders, filter, batches]);
 
   return (
     <div className="space-y-4">
@@ -92,7 +95,7 @@ export default function PendingOrders() {
           <div className="relative w-full sm:w-72">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Search pending items..."
+              placeholder="Search client, product, category or order..."
               value={filter}
               onChange={e => setFilter(e.target.value)}
               className="pl-9 h-9"
