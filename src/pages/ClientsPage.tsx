@@ -10,13 +10,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogT
 import { useToast } from "@/hooks/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-const PRICE_CATEGORIES = ['0-10000', '10000-20000', '20000-50000', '50000-100000', 'Above 100000', 'Only Cash'];
+const PRICE_CATEGORIES = ['Regular', 'Premium', 'Only Cash'];
 
 export default function ClientsPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [editingClient, setEditingClient] = useState<any>(null);
   const [filter, setFilter] = useState('');
-   const [newClient, setNewClient] = useState({ name: '', phone: '', priceCategory: '0-10000' });
+   const [newClient, setNewClient] = useState({ name: '', phone: '', priceCategory: 'Regular' });
   const [showAddDialog, setShowAddDialog] = useState(false);
   const { toast } = useToast();
 
@@ -56,7 +56,7 @@ export default function ClientsPage() {
     await addClient(newClient);
     refresh();
     setShowAddDialog(false);
-    setNewClient({ name: '', phone: '', priceCategory: '0-10000' });
+    setNewClient({ name: '', phone: '', priceCategory: 'Regular' });
     toast({ title: "New client profile created" });
   };
 

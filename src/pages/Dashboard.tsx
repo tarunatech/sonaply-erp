@@ -4,7 +4,7 @@ import { getBatches, getSales, getPurchases, getOrders, CATEGORIES } from "@/lib
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from "recharts";
 import { Package, Clock, TrendingUp, ShoppingCart, AlertTriangle, FileText } from "lucide-react";
 
 const COLORS = ["hsl(213,94%,48%)", "hsl(142,76%,36%)", "hsl(25,95%,53%)", "hsl(0,84%,60%)", "hsl(280,65%,60%)", "hsl(38,92%,50%)", "hsl(180,60%,45%)", "hsl(330,70%,55%)"];
@@ -96,9 +96,13 @@ export default function Dashboard() {
           <CardContent className="h-72">
             {data.catDist.length ? (
               <ResponsiveContainer width="100%" height="100%">
-                <PieChart><Pie data={data.catDist} cx="50%" cy="50%" outerRadius={80} dataKey="value" label={({ name, value }) => `${name}: ${value}`}>
-                  {data.catDist.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                </Pie><Tooltip /></PieChart>
+                <PieChart>
+                  <Pie data={data.catDist} cx="50%" cy="50%" outerRadius={80} dataKey="value">
+                    {data.catDist.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                  </Pie>
+                  <Tooltip />
+                  <Legend layout="horizontal" verticalAlign="bottom" align="center" wrapperStyle={{ paddingTop: "20px", fontSize: "12px" }} />
+                </PieChart>
               </ResponsiveContainer>
             ) : <p className="text-muted-foreground text-center pt-20">No stock data yet</p>}
           </CardContent>

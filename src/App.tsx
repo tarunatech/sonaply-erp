@@ -17,8 +17,9 @@ import StockEntry from "./pages/StockEntry";
 import PurchasePage from "./pages/PurchasePage";
 import SalesPage from "./pages/SalesPage";
 import OrderTracking from "./pages/OrderTracking";
-import DeliveredOrders from "./pages/DeliveredOrders";
+import HoldPage from "./pages/HoldPage";
 import PendingOrders from "./pages/PendingOrders";
+import DeliveredOrders from "./pages/DeliveredOrders";
 import ChallanPage from "./pages/ChallanPage";
 import DailyExport from "./pages/DailyExport";
 import ClientsPage from "./pages/ClientsPage";
@@ -33,6 +34,48 @@ const App = () => {
   const [user, setUser] = useState(getCurrentUser());
   const handleLogin = useCallback(() => setUser(getCurrentUser()), []);
   const handleLogout = useCallback(() => { logout(); setUser(null); }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        const target = e.target as HTMLElement;
+
+        // Only intercept if we are inside an input or select
+        if (target.tagName !== 'INPUT' && target.tagName !== 'SELECT') {
+          return;
+        }
+
+        // Exclude specific input types where Enter should retain its default behavior
+        if (target.tagName === 'INPUT') {
+          const type = (target as HTMLInputElement).type;
+          if (type === 'submit' || type === 'file' || type === 'reset') {
+            return;
+          }
+        }
+
+        // Get all focusable elements
+        const focusableElements = Array.from(
+          document.querySelectorAll<HTMLElement>(
+            'input:not([disabled]):not([type="hidden"]):not([readonly]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])'
+          )
+        ).filter(el => el.tabIndex >= 0);
+
+        const index = focusableElements.indexOf(target);
+        if (index > -1) {
+          e.preventDefault(); // Prevent form submission
+          const nextElement = focusableElements[index + 1];
+          if (nextElement) {
+            nextElement.focus();
+          }
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
 
   if (!user) {
     return (
@@ -68,6 +111,7 @@ const App = () => {
                     <Route path="/purchases" element={<PurchasePage />} />
                     <Route path="/sales" element={<SalesPage />} />
                     <Route path="/orders" element={<OrderTracking />} />
+                    <Route path="/holds" element={<HoldPage />} />
                     <Route path="/pending-orders" element={<PendingOrders />} />
                     <Route path="/delivered-orders" element={<DeliveredOrders />} />
                     <Route path="/challans" element={<ChallanPage />} />

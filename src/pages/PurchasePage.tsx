@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { addPurchase, addBatch, getPurchases, updatePurchase, deletePurchase, exportCSV, Purchase } from "@/lib/store";
 import { printElement } from "@/lib/print";
 import { Card, CardContent } from "@/components/ui/card";
@@ -8,8 +8,9 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import { Download, Printer, Plus, Trash2, Pencil } from "lucide-react";
+import { Download, Printer, Plus, Trash2, Pencil, ChevronDown, ChevronRight } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
+import { format } from "date-fns";
 
 interface PurchaseItem {
   productName: string;
@@ -31,7 +32,7 @@ const PURCHASE_CATEGORIES = [
   "KALAA",
   "YOUR DECOR"
 ];
-const defaultItem: PurchaseItem = { productName: '', category: '', quantity: 0, batchNumber: '' };
+const defaultItem: PurchaseItem = { productName: '', category: '', quantity: 0, batchNumber: '0' };
 
 export default function PurchasePage() {
   const [supplierName, setSupplierName] = useState('');
@@ -49,6 +50,7 @@ export default function PurchasePage() {
   const [selectedProductSuggestionIndex, setSelectedProductSuggestionIndex] = useState<number>(-1);
   const categoryContainerRef = useRef<HTMLDivElement>(null);
   const productContainerRef = useRef<HTMLDivElement>(null);
+  const [expandedSuppliers, setExpandedSuppliers] = useState<Record<string, boolean>>({});
   const { toast } = useToast();
 
   const refresh = useCallback(() => getPurchases().then(setPurchases), []);
@@ -70,6 +72,22 @@ export default function PurchasePage() {
              p.category.toLowerCase().includes(f);
     }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [purchases, purchaseFilter]);
+
+  const groupedPurchases = useMemo(() => {
+    const groups: Record<string, Purchase[]> = {};
+    filteredPurchases.forEach(p => {
+      if (!groups[p.supplierName]) groups[p.supplierName] = [];
+      groups[p.supplierName].push(p);
+    });
+    return groups;
+  }, [filteredPurchases]);
+
+  const toggleSupplier = (supplierName: string) => {
+    setExpandedSuppliers(prev => ({
+      ...prev,
+      [supplierName]: !prev[supplierName]
+    }));
+  };
 
   useEffect(() => {
     if (selectedSupplierIndex >= 0 && supplierContainerRef.current) {
@@ -427,57 +445,84 @@ export default function PurchasePage() {
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow></TableHeader>
               <TableBody>
-                {filteredPurchases.length === 0 ? <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">No purchases found</TableCell></TableRow>
-                : filteredPurchases.map(p => (
-                  <TableRow key={p.id}>
-                    <TableCell className="font-medium">{p.supplierName}</TableCell><TableCell>{p.productName}</TableCell>
-                    <TableCell>{p.category}</TableCell><TableCell className="text-right">{p.quantity}</TableCell>
-                    <TableCell>{p.batchNumber}</TableCell><TableCell>{p.date}</TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        <Dialog open={!!editingPurchase && editingPurchase.id === p.id} onOpenChange={(open) => !open && setEditingPurchase(null)}>
-                          <DialogTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-8 w-8 text-blue-600" onClick={() => setEditingPurchase({...p})} title="Edit Purchase">
-                              <Pencil className="h-4 w-4" />
-                            </Button>
-                          </DialogTrigger>
-                          <DialogContent>
-                            <DialogHeader><DialogTitle>Edit Purchase Record</DialogTitle></DialogHeader>
-                            <div className="grid gap-4 py-4">
-                              <div className="grid gap-2">
-                                <Label>Supplier Name</Label>
-                                <Input value={editingPurchase?.supplierName || ''} onChange={e => setEditingPurchase({...editingPurchase, supplierName: e.target.value})} />
-                              </div>
-                              <div className="grid gap-2">
-                                <Label>Product Name</Label>
-                                <Input value={editingPurchase?.productName || ''} onChange={e => setEditingPurchase({...editingPurchase, productName: e.target.value})} />
-                              </div>
-                              <div className="grid grid-cols-2 gap-4">
-                                <div className="grid gap-2">
-                                  <Label>Quantity</Label>
-                                  <Input type="number" value={editingPurchase?.quantity || ''} onChange={e => setEditingPurchase({...editingPurchase, quantity: +e.target.value})} />
-                                </div>
-                                <div className="grid gap-2">
-                                  <Label>Batch Number</Label>
-                                  <Input value={editingPurchase?.batchNumber || ''} onChange={e => setEditingPurchase({...editingPurchase, batchNumber: e.target.value})} />
-                                </div>
-                              </div>
-                              <div className="grid gap-2">
-                                <Label>Category</Label>
-                                <Input value={editingPurchase?.category || ''} onChange={e => setEditingPurchase({...editingPurchase, category: e.target.value})} />
-                              </div>
-                            </div>
-                            <DialogFooter><Button onClick={handleEditSave}>Save Changes</Button></DialogFooter>
-                          </DialogContent>
-                        </Dialog>
+                {Object.keys(groupedPurchases).length === 0 ? <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">No purchases found</TableCell></TableRow>
+                : Object.entries(groupedPurchases).map(([supplierName, groupPurchases]) => {
+                  const isExpanded = expandedSuppliers[supplierName];
+                  const totalQty = groupPurchases.reduce((sum, p) => sum + p.quantity, 0);
+                  
+                  return (
+                    <React.Fragment key={supplierName}>
+                      <TableRow 
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => toggleSupplier(supplierName)}
+                      >
+                        <TableCell className="font-semibold text-primary flex items-center gap-2">
+                          {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                          {supplierName}
+                        </TableCell>
+                        <TableCell colSpan={2} className="text-muted-foreground text-sm">
+                          {groupPurchases.length} entry(s)
+                        </TableCell>
+                        <TableCell className="text-right font-medium text-muted-foreground">{totalQty}</TableCell>
+                        <TableCell colSpan={3}></TableCell>
+                      </TableRow>
+                      
+                      {isExpanded && groupPurchases.map(p => (
+                        <TableRow key={p.id} className="bg-muted/20">
+                          <TableCell className="pl-8 text-muted-foreground text-sm">└─</TableCell>
+                          <TableCell>{p.productName}</TableCell>
+                          <TableCell>{p.category}</TableCell>
+                          <TableCell className="text-right">{p.quantity}</TableCell>
+                          <TableCell>{p.batchNumber}</TableCell>
+                          <TableCell>{p.date ? format(new Date(p.date), 'dd-MM-yyyy') : ''}</TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-1">
+                              <Dialog open={!!editingPurchase && editingPurchase.id === p.id} onOpenChange={(open) => !open && setEditingPurchase(null)}>
+                                <DialogTrigger asChild>
+                                  <Button variant="ghost" size="icon" className="h-8 w-8 text-blue-600" onClick={(e) => { e.stopPropagation(); setEditingPurchase({...p}); }} title="Edit Purchase">
+                                    <Pencil className="h-4 w-4" />
+                                  </Button>
+                                </DialogTrigger>
+                                <DialogContent onClick={(e) => e.stopPropagation()}>
+                                  <DialogHeader><DialogTitle>Edit Purchase Record</DialogTitle></DialogHeader>
+                                  <div className="grid gap-4 py-4">
+                                    <div className="grid gap-2">
+                                      <Label>Supplier Name</Label>
+                                      <Input value={editingPurchase?.supplierName || ''} onChange={e => setEditingPurchase({...editingPurchase, supplierName: e.target.value})} />
+                                    </div>
+                                    <div className="grid gap-2">
+                                      <Label>Product Name</Label>
+                                      <Input value={editingPurchase?.productName || ''} onChange={e => setEditingPurchase({...editingPurchase, productName: e.target.value})} />
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                      <div className="grid gap-2">
+                                        <Label>Quantity</Label>
+                                        <Input type="number" value={editingPurchase?.quantity || ''} onChange={e => setEditingPurchase({...editingPurchase, quantity: +e.target.value})} />
+                                      </div>
+                                      <div className="grid gap-2">
+                                        <Label>Batch Number</Label>
+                                        <Input value={editingPurchase?.batchNumber || ''} onChange={e => setEditingPurchase({...editingPurchase, batchNumber: e.target.value})} />
+                                      </div>
+                                    </div>
+                                    <div className="grid gap-2">
+                                      <Label>Category</Label>
+                                      <Input value={editingPurchase?.category || ''} onChange={e => setEditingPurchase({...editingPurchase, category: e.target.value})} />
+                                    </div>
+                                  </div>
+                                  <DialogFooter><Button onClick={handleEditSave}>Save Changes</Button></DialogFooter>
+                                </DialogContent>
+                              </Dialog>
 
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => handleDelete(p.id)} title="Delete Purchase">
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                              <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={(e) => { e.stopPropagation(); handleDelete(p.id); }} title="Delete Purchase">
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </React.Fragment>
+                  );
+                })}
               </TableBody>
             </Table>
           </div></CardContent></Card>

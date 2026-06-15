@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
-import { getOrders, updateOrder, exportCSV, addChallan, getBatches, Order, StockBatch } from "@/lib/store";
+import { getOrders, updateOrder, exportCSV, addChallan, getBatches, getChallans, Order, StockBatch } from "@/lib/store";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { printElement } from "@/lib/print";
 import { Card, CardContent } from "@/components/ui/card";
@@ -30,7 +30,16 @@ export default function PendingOrders() {
 
   const handleCreateChallan = async () => {
     if (!currentOrder) return;
-    const challanNum = `CHL-${Date.now().toString(36).toUpperCase()}`;
+
+    const allChallans = await getChallans();
+    let maxNum = 0;
+    for (const c of allChallans) {
+      const numPart = c.challanNumber.split('-')[1];
+      if (numPart && !isNaN(parseInt(numPart, 10))) {
+        maxNum = Math.max(maxNum, parseInt(numPart, 10));
+      }
+    }
+    const challanNum = `CHL-${maxNum + 1}`;
 
     await addChallan({
       challanNumber: challanNum,

@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
-import { addSale, addOrder, getBatches, getProducts, getSales, updateSale, deleteSale, exportCSV, generateWhatsAppLink, getClients, StockBatch, Sale, Client } from "@/lib/store";
+import { addSale, addOrder, addClient, getBatches, getClients, getSales, addHold, updateSale, deleteSale, exportCSV, Sale, Client, StockBatch } from "@/lib/store";
+import { Hand } from "lucide-react";
 
 import { printElement } from "@/lib/print";
 import { Card, CardContent } from "@/components/ui/card";
@@ -13,7 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Download, Printer, MessageCircle, Plus, Trash2, Pencil } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 
-const PRICE_CATEGORIES = ['0-10000', '10000-20000', '20000-50000', '50000-100000', 'Above 100000', 'Only Cash'];
+const PRICE_CATEGORIES = ['Regular', 'Premium', 'Only Cash'];
 
 interface SaleItem {
   productName: string;
@@ -27,8 +28,9 @@ const defaultItem: SaleItem = { productName: '', quantity: 0, isProductSelected:
 export default function SalesPage() {
   const [clientName, setClientName] = useState('');
   const [clientPhone, setClientPhone] = useState('');
-  const [priceCategory, setPriceCategory] = useState('0-10000');
+  const [priceCategory, setPriceCategory] = useState('Regular');
   const [orderDate, setOrderDate] = useState(new Date().toISOString().slice(0, 10));
+  const [narration, setNarration] = useState('');
   const [items, setItems] = useState<SaleItem[]>([{ ...defaultItem }]);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState<number | null>(null);
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState<number>(-1);
@@ -147,6 +149,11 @@ export default function SalesPage() {
       toast({ title: "Please enter client name", variant: "destructive" }); return;
     }
 
+    const selectedClient = uniqueClients.find(c => c.name === clientName);
+    if (!selectedClient) {
+      toast({ title: "Please select an existing client from the suggestions", variant: "destructive" }); return;
+    }
+
     const validItems = items.filter(item => item.productName && item.quantity > 0);
     if (validItems.length === 0) {
       toast({ title: "Please add at least one valid product", variant: "destructive" }); return;
@@ -167,6 +174,7 @@ export default function SalesPage() {
         orderDate,
         valueCategory,
         batchNo: item.batchNo,
+        narration,
       });
 
       await addOrder({
@@ -179,8 +187,9 @@ export default function SalesPage() {
         orderDate,
         status: 'Pending',
         batchNo: sale.batchNo || item.batchNo,
-        pendingQty: sale.pendingQty,
-        fulfilledQty: sale.fulfilledQty,
+        pendingQty: item.quantity,
+        fulfilledQty: 0,
+        narration,
       });
     }
 
@@ -190,7 +199,45 @@ export default function SalesPage() {
     setClientName('');
     setClientPhone('');
     setItems([{ ...defaultItem }]);
+    setNarration('');
     refreshSales();
+    refreshClients();
+  };
+
+  const handleHold = async () => {
+    if (!clientName) {
+      toast({ title: "Please enter client name", variant: "destructive" }); return;
+    }
+
+    const selectedClient = uniqueClients.find(c => c.name === clientName);
+    if (!selectedClient) {
+      toast({ title: "Please select an existing client from the suggestions", variant: "destructive" }); return;
+    }
+
+    const validItems = items.filter(item => item.productName && item.quantity > 0);
+    if (validItems.length === 0) {
+      toast({ title: "Please add at least one valid product", variant: "destructive" }); return;
+    }
+
+    for (const item of validItems) {
+      await addHold({
+        clientName,
+        clientPhone,
+        productName: item.productName,
+        category: priceCategory,
+        quantity: item.quantity,
+        batchNo: item.batchNo || '',
+        holdDate: orderDate
+      });
+    }
+
+    toast({ title: "Products put on hold!" });
+    
+    // Reset form
+    setClientName('');
+    setClientPhone('');
+    setItems([{ ...defaultItem }]);
+    refreshSales(); // To refresh batches
     refreshClients();
   };
 
@@ -273,7 +320,7 @@ export default function SalesPage() {
               </div>
               <div><Label>Client Phone</Label><Input value={clientPhone} onChange={e => setClientPhone(e.target.value)} placeholder="919876543210" /></div>
               <div><Label>Price Category</Label>
-                <Select value={priceCategory} onValueChange={setPriceCategory}>
+                <Select value={priceCategory} onValueChange={setPriceCategory} disabled>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>{PRICE_CATEGORIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
                 </Select>
@@ -284,18 +331,17 @@ export default function SalesPage() {
             <div className="space-y-4 pb-48">
               <div className="flex justify-between items-center">
                 <h3 className="font-semibold">Products</h3>
-                <Button variant="outline" size="sm" onClick={addItem}><Plus className="mr-1 h-4 w-4" /> Add Product</Button>
               </div>
 
               <div className="space-y-2">
                 <div className="grid grid-cols-12 gap-4 px-2 py-1 font-medium text-sm text-muted-foreground border-b">
-                  <div className="col-span-8">Product *</div>
+                  <div className="col-span-7">Product *</div>
                   <div className="col-span-3">Quantity *</div>
-                  <div className="col-span-1"></div>
+                  <div className="col-span-2"></div>
                 </div>
                 {items.map((item, index) => (
                   <div key={index} className="grid grid-cols-12 gap-4 items-start relative overflow-visible px-2 py-2 border-b last:border-0">
-                    <div className="col-span-8 relative">
+                    <div className="col-span-7 relative">
                       <Input
                         value={item.productName}
                         onChange={e => {
@@ -355,7 +401,7 @@ export default function SalesPage() {
                                 {filteredBatches.map((b, i) => (
                                   <div 
                                     key={b.id + i} 
-                                    className={`px-3 py-2 cursor-pointer text-sm text-popover-foreground border-b last:border-0 ${selectedSuggestionIndex === i ? 'bg-accent' : 'hover:bg-accent'}`}
+                                    className={`px-3 py-2 cursor-pointer text-sm text-popover-foreground border-b last:border-0 ${selectedSuggestionIndex === i ? 'bg-accent' : 'hover:bg-accent'} ${b.isCancelled ? 'bg-destructive/10 hover:bg-destructive/20' : ''} ${b.isNil ? 'bg-blue-500/10 hover:bg-blue-500/20' : ''}`}
                                     onMouseDown={(e) => {
                                       e.preventDefault();
                                       updateItem(index, { 
@@ -370,7 +416,11 @@ export default function SalesPage() {
                                     <div className="font-medium">{b.productName}</div>
                                     <div className="flex justify-between text-xs text-muted-foreground mt-1">
                                       <span>Batch: {b.batchNumber}</span>
-                                      <span>Available: {b.availableQty}</span>
+                                      <span>
+                                        Available: {b.availableQty}
+                                        {b.damageQty > 0 && <span className="text-destructive font-medium ml-2">Damaged: {b.damageQty}</span>}
+                                        {(b.holdQty || 0) > 0 && <span className="text-amber-500 font-medium ml-2">Hold: {b.holdQty}</span>}
+                                      </span>
                                     </div>
                                     {b.description && (
                                       <div className="text-[11px] text-blue-600 italic mt-1 bg-blue-50/50 px-1.5 py-0.5 rounded border border-blue-100/50">
@@ -396,7 +446,11 @@ export default function SalesPage() {
                             );
                             return batch ? (
                               <div className="flex flex-col items-end text-right w-full">
-                                <span className="text-blue-700 font-bold">Stock Available: {batch.availableQty}</span>
+                                <span className="text-blue-700 font-bold">
+                                  Stock Available: {batch.availableQty}
+                                  {batch.damageQty > 0 && <span className="text-destructive ml-2">Damaged: {batch.damageQty}</span>}
+                                  {(batch.holdQty || 0) > 0 && <span className="text-amber-500 ml-2">Hold: {batch.holdQty}</span>}
+                                </span>
                                 {batch.description && (
                                   <span className="text-blue-600 italic text-[11px] mt-0.5">Note: {batch.description}</span>
                                 )}
@@ -409,7 +463,12 @@ export default function SalesPage() {
                     <div className="col-span-3">
                       <Input type="number" value={item.quantity || ''} onChange={e => updateItem(index, { quantity: +e.target.value })} onKeyDown={e => e.key === 'Enter' && e.currentTarget.blur()} placeholder="Qty" />
                     </div>
-                    <div className="col-span-1 flex justify-end">
+                    <div className="col-span-2 flex justify-end gap-2 items-center">
+                      {index === items.length - 1 && (
+                        <Button variant="outline" size="sm" onClick={addItem}>
+                          <Plus className="mr-1 h-4 w-4" /> Add
+                        </Button>
+                      )}
                       <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => removeItem(index)} disabled={items.length === 1}>
                         <Trash2 className="h-4 w-4" />
                       </Button>
@@ -419,7 +478,34 @@ export default function SalesPage() {
               </div>
             </div>
 
-            <Button className="w-full mt-4" onClick={handleSubmit}><Plus className="mr-2 h-4 w-4" />Record Sale & Save</Button>
+            <div className="flex justify-end gap-3 mt-6 border-t pt-4">
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button variant="outline" className="text-blue-600 hover:text-blue-700 hover:bg-blue-50 border-blue-200">
+                    <MessageCircle className="mr-2 h-4 w-4" /> Narration
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Add Narration / Notes</DialogTitle>
+                  </DialogHeader>
+                  <div className="py-4">
+                    <Label>Notes</Label>
+                    <Input 
+                      placeholder="Enter narration here..." 
+                      value={narration} 
+                      onChange={(e) => setNarration(e.target.value)} 
+                    />
+                  </div>
+                </DialogContent>
+              </Dialog>
+              <Button variant="outline" className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 border-amber-200" onClick={handleHold}>
+                <Hand className="mr-2 h-4 w-4" /> Hold
+              </Button>
+              <Button onClick={handleSubmit}>
+                <Plus className="mr-2 h-4 w-4" /> Record Sale & Save
+              </Button>
+            </div>
           </CardContent></Card>
         </TabsContent>
         <TabsContent value="history">

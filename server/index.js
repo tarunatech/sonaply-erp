@@ -184,16 +184,16 @@ app.get('/api/sales', async (req, res) => {
 });
 
 app.post('/api/sales', async (req, res) => {
-  const { client_name, client_phone, product_name, category, quantity, rate, total_price, order_date, value_category, batch_no } = req.body;
+  const { client_name, client_phone, product_name, category, quantity, rate, total_price, order_date, value_category, batch_no, narration } = req.body;
   try {
     // Start transaction
     await db.query('BEGIN');
 
     const result = await db.query(
       `INSERT INTO sales 
-      (client_name, client_phone, product_name, category, quantity, rate, total_price, order_date, value_category, batch_no) 
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
-      [client_name, client_phone, product_name, category, quantity, rate, total_price, order_date, value_category, batch_no]
+      (client_name, client_phone, product_name, category, quantity, rate, total_price, order_date, value_category, batch_no, narration) 
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+      [client_name, client_phone, product_name, category, quantity, rate, total_price, order_date, value_category, batch_no, narration]
     );
  
     // Automatically update or create client profile
@@ -276,13 +276,13 @@ app.get('/api/orders', async (req, res) => {
 });
 
 app.post('/api/orders', async (req, res) => {
-  const { order_number, client_name, client_phone, product_name, quantity, total_amount, order_date, status, batch_no, pending_qty, fulfilled_qty } = req.body;
+  const { order_number, client_name, client_phone, product_name, quantity, total_amount, order_date, status, batch_no, pending_qty, fulfilled_qty, narration } = req.body;
   try {
     const result = await db.query(
       `INSERT INTO orders 
-      (order_number, client_name, client_phone, product_name, quantity, total_amount, order_date, status, batch_no, pending_qty, fulfilled_qty) 
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
-      [order_number, client_name, client_phone, product_name, quantity, total_amount, order_date, status, batch_no, pending_qty || 0, fulfilled_qty || quantity]
+      (order_number, client_name, client_phone, product_name, quantity, total_amount, order_date, status, batch_no, pending_qty, fulfilled_qty, narration) 
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+      [order_number, client_name, client_phone, product_name, quantity, total_amount, order_date, status, batch_no, pending_qty || 0, fulfilled_qty || quantity, narration]
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -572,6 +572,89 @@ app.delete('/api/users/:id', async (req, res) => {
   }
 });
 
+
+// --- Holds ---
+app.get('/api/holds', async (req, res) => {
+  try {
+    const result = await db.query('SELECT * FROM holds ORDER BY hold_date DESC');
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/holds', async (req, res) => {
+  const { client_name, client_phone, product_name, category, quantity, batch_no, hold_date } = req.body;
+  try {
+    await db.query('BEGIN');
+
+    const result = await db.query(
+      `INSERT INTO holds (client_name, client_phone, product_name, category, quantity, batch_no, hold_date) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [client_name, client_phone, product_name, category, quantity, batch_no, hold_date || new Date().toISOString().split('T')[0]]
+    );
+
+    // Deduct stock from available and add to hold
+    let bQuery = 'SELECT id, batch_number, available_qty FROM batches WHERE product_name = $1';
+    let bParams = [product_name];
+    if (batch_no) {
+      bQuery += ' AND batch_number = $2';
+      bParams.push(batch_no);
+    }
+    bQuery += ' AND available_qty > 0 ORDER BY date ASC';
+    
+    const batchesResult = await db.query(bQuery, bParams);
+    let remainingToHold = quantity;
+    let lastBatchNo = batch_no;
+
+    for (const b of batchesResult.rows) {
+      if (remainingToHold <= 0) break;
+      const canHold = Math.min(remainingToHold, b.available_qty);
+      await db.query('UPDATE batches SET available_qty = available_qty - $1, hold_qty = hold_qty + $1 WHERE id = $2', [canHold, b.id]);
+      remainingToHold -= canHold;
+      lastBatchNo = b.batch_number;
+    }
+
+    if (!batch_no && lastBatchNo) {
+        await db.query('UPDATE holds SET batch_no = $1 WHERE id = $2', [lastBatchNo, result.rows[0].id]);
+        result.rows[0].batch_no = lastBatchNo;
+    }
+
+    await db.query('COMMIT');
+    res.json(result.rows[0]);
+  } catch (err) {
+    await db.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/holds/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    await db.query('BEGIN');
+    
+    const holdRes = await db.query('SELECT * FROM holds WHERE id = $1', [id]);
+    if (holdRes.rows.length > 0) {
+      const hold = holdRes.rows[0];
+      
+      // Return stock
+      if (hold.product_name) {
+        await db.query(
+          'UPDATE batches SET available_qty = available_qty + $1, hold_qty = GREATEST(0, hold_qty - $1) WHERE product_name = $2 AND batch_number = $3',
+          [hold.quantity, hold.product_name, hold.batch_no || '0']
+        );
+      }
+      
+      await db.query('DELETE FROM holds WHERE id = $1', [id]);
+    }
+
+    await db.query('COMMIT');
+    res.json({ success: true });
+  } catch (err) {
+    await db.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // Test database connection on startup
 db.query('SELECT NOW()', (err, res) => {

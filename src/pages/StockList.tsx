@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Search, Download, Printer, Plus, ClipboardList, Pencil, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -177,7 +178,7 @@ export default function StockList() {
 
             for (const [brand, prefixes] of Object.entries(brands)) {
               csvContent += `Brand: ${brand},,,,,,\n`;
-              csvContent += `Product Name,Product Number,Date,Quantity,Available,Nil,Damaged\n`;
+              csvContent += `Product Name,Product Number,Date,Quantity,Available,Display,Damaged\n`;
               
               const sortedPrefixes = Object.keys(prefixes).sort();
               for (const prefix of sortedPrefixes) {
@@ -247,14 +248,13 @@ export default function StockList() {
       </div>
       <Card>
         <CardContent className="p-0" id="stock-table">
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
+            <Table wrapperClassName="max-h-[calc(100vh-250px)]">
+              <TableHeader className="sticky top-0 bg-background z-10 shadow-sm">
                 <TableRow>
                   <TableHead>Product</TableHead><TableHead>Category</TableHead>
                   <TableHead>Batch</TableHead>
                   <TableHead className="text-right">Sold</TableHead>
-                  <TableHead className="text-right">Available</TableHead><TableHead className="text-right">Nil</TableHead><TableHead className="text-right">Damaged</TableHead>
+                  <TableHead className="text-right">Available</TableHead><TableHead className="text-right">Display</TableHead><TableHead className="text-right">Damaged</TableHead>
                   <TableHead>Description</TableHead>
                   <TableHead>Updated</TableHead><TableHead className="text-right no-print">Actions</TableHead>
                 </TableRow>
@@ -263,7 +263,10 @@ export default function StockList() {
                 {batches.length === 0 ? (
                   <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground py-8">No stock entries found</TableCell></TableRow>
                 ) : batches.map(b => (
-                  <TableRow key={b.id}>
+                  <TableRow 
+                    key={b.id} 
+                    className={`${b.isCancelled ? 'bg-destructive/10 hover:bg-destructive/20' : ''} ${b.isNil ? 'bg-blue-500/10 hover:bg-blue-500/20' : ''}`}
+                  >
                     <TableCell className="font-medium">{b.productName}</TableCell>
                     <TableCell>{b.category}</TableCell>
                     <TableCell>{b.batchNumber}</TableCell>
@@ -288,7 +291,6 @@ export default function StockList() {
                 ))}
               </TableBody>
             </Table>
-          </div>
         </CardContent>
       </Card>
 
@@ -324,7 +326,7 @@ export default function StockList() {
                 <Input type="number" className="col-span-3" value={editingBatch.availableQty} onChange={e => setEditingBatch({...editingBatch, availableQty: Number(e.target.value)})} />
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
-                <Label className="text-right">Nil Qty</Label>
+                <Label className="text-right">Display Qty</Label>
                 <Input type="number" className="col-span-3" value={editingBatch.nilQty || 0} onChange={e => setEditingBatch({...editingBatch, nilQty: Number(e.target.value)})} />
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
@@ -334,6 +336,19 @@ export default function StockList() {
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label className="text-right">Description</Label>
                 <Input className="col-span-3" value={editingBatch.description || ''} onChange={e => setEditingBatch({...editingBatch, description: e.target.value})} />
+              </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label className="text-right">Status</Label>
+                <div className="col-span-3 flex gap-6">
+                  <div className="flex items-center space-x-2">
+                    <Checkbox id="isNil" checked={editingBatch.isNil || false} onCheckedChange={(c) => setEditingBatch({...editingBatch, isNil: c as boolean})} />
+                    <Label htmlFor="isNil" className="text-blue-600 font-semibold cursor-pointer">Nil</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox id="isCancelled" checked={editingBatch.isCancelled || false} onCheckedChange={(c) => setEditingBatch({...editingBatch, isCancelled: c as boolean})} />
+                    <Label htmlFor="isCancelled" className="text-destructive font-semibold cursor-pointer">Cancelled</Label>
+                  </div>
+                </div>
               </div>
             </div>
           )}

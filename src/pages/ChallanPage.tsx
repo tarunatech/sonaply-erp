@@ -10,6 +10,7 @@ import { Download, Printer, Trash2, Pencil, CheckCircle2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
+import { format } from "date-fns";
 
 export default function ChallanPage() {
   const [challans, setChallans] = useState<Challan[]>([]);
@@ -108,7 +109,7 @@ export default function ChallanPage() {
           <div class="details">
             <div style="margin-bottom: 3mm; font-weight: 900; font-size: 14pt; border-bottom: 2px solid #000; padding-bottom: 1mm; text-align: center;">CLIENT: ${group.clientName}</div>
             <div class="row"><span>Challan:</span> <span>${group.challanNumber}</span></div>
-            <div class="row"><span>Date:</span> <span>${group.date}</span></div>
+            <div class="row"><span>Date:</span> <span>${group.date ? format(new Date(group.date), 'dd-MM-yyyy') : ''}</span></div>
             ${itemsHtml}
           </div>
           <div class="footer">AUTHORIZED SIGNATORY</div>
@@ -167,7 +168,7 @@ export default function ChallanPage() {
                     ))}
                   </div>
                 </TableCell>
-                <TableCell>{group.date}</TableCell>
+                <TableCell>{group.date ? format(new Date(group.date), 'dd-MM-yyyy') : ''}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex items-center justify-end gap-1">
                     <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => printChallan(group)} title="Print Full Challan">
@@ -191,7 +192,7 @@ export default function ChallanPage() {
                       <div style={{ marginBottom: '20px' }}>
                         <p><strong>CLIENT:</strong> {group.clientName}</p>
                         <p><strong>Challan No:</strong> {group.challanNumber}</p>
-                        <p><strong>Date:</strong> {group.date}</p>
+                        <p><strong>Date:</strong> {group.date ? format(new Date(group.date), 'dd-MM-yyyy') : ''}</p>
                       </div>
                       <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '20px' }}>
                         <thead>

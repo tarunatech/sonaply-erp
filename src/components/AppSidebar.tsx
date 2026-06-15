@@ -12,6 +12,7 @@ const items = [
   { title: "Stock Entry", url: "/stock-entry", icon: PackagePlus },
   { title: "Purchases", url: "/purchases", icon: ShoppingCart },
   { title: "Sales", url: "/sales", icon: TrendingUp },
+  { title: "Holds", url: "/holds", icon: ClipboardList },
   { title: "Orders", url: "/orders", icon: ClipboardList },
   { title: "Pending Orders", url: "/pending-orders", icon: ClipboardList },
   { title: "Challans", url: "/challans", icon: FileText },

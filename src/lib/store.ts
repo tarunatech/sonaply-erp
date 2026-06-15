@@ -4,7 +4,12 @@ export interface Product {
 export interface StockBatch {
   id: string; productId: string; productCode?: string; productName: string; category: string;
   batchNumber: string; supplier: string; quantity: number; rate: number; date: string;
-  availableQty: number; damageQty: number; nilQty?: number; description?: string;
+  availableQty: number; damageQty: number; nilQty?: number; holdQty?: number; description?: string;
+  isNil?: boolean; isCancelled?: boolean;
+}
+export interface Hold {
+  id: string; clientName: string; clientPhone: string; productName: string;
+  category: string; quantity: number; batchNo: string; holdDate: string; status: string;
 }
 export interface Purchase {
   id: string; supplierName: string; supplierPhone: string; productName: string; category: string;
@@ -15,12 +20,14 @@ export interface Sale {
   category: string; quantity: number; rate?: number; totalPrice: number; orderDate: string;
   valueCategory: string; batchNo?: string;
   pendingQty?: number; fulfilledQty?: number;
+  narration?: string;
 }
 export interface Order {
   id: string; orderNumber: string; clientName: string; clientPhone: string; productName: string;
   quantity: number; totalAmount: number; orderDate: string; status: 'Pending' | 'Confirmed' | 'Delivered' | 'Cancelled';
   batchNo?: string; isChallanGenerated?: boolean;
   pendingQty?: number; fulfilledQty?: number;
+  narration?: string;
 }
 export interface Challan {
   id: string; challanNumber: string; orderNumber: string; clientName: string; clientPhone: string;
@@ -55,7 +62,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 const mapBatch = (b: any): StockBatch => ({
   id: b.id, productId: b.product_id, productCode: b.product_code, productName: b.product_name,
   category: b.category, batchNumber: b.batch_number, supplier: b.supplier, quantity: b.quantity,
-  rate: Number(b.rate), date: b.date, availableQty: b.available_qty, damageQty: b.damage_qty, nilQty: b.nil_qty, description: b.description
+  rate: Number(b.rate), date: b.date, availableQty: b.available_qty, damageQty: b.damage_qty, nilQty: b.nil_qty, holdQty: b.hold_qty, description: b.description,
+  isNil: b.is_nil, isCancelled: b.is_cancelled
 });
 
 const mapOrder = (o: any): Order => ({
@@ -103,7 +111,8 @@ export const addBatch = (b: Omit<StockBatch, 'id'>) => {
     product_id: b.productId, product_code: b.productCode, product_name: b.productName,
     category: b.category, batch_number: b.batchNumber, supplier: b.supplier,
     quantity: b.quantity, rate: b.rate, date: b.date, available_qty: b.availableQty,
-    damage_qty: b.damageQty, nil_qty: b.nilQty, description: b.description
+    damage_qty: b.damageQty, nil_qty: b.nilQty, description: b.description,
+    is_nil: b.isNil || false, is_cancelled: b.isCancelled || false
   };
   return request<any>('/batches', { method: 'POST', body: JSON.stringify(body) }).then(mapBatch);
 };
@@ -119,6 +128,8 @@ export const updateBatch = (id: string, updates: Partial<StockBatch>) => {
   if (updates.batchNumber) body.batch_number = updates.batchNumber;
   if (updates.supplier) body.supplier = updates.supplier;
   if (updates.description !== undefined) body.description = updates.description;
+  if (updates.isNil !== undefined) body.is_nil = updates.isNil;
+  if (updates.isCancelled !== undefined) body.is_cancelled = updates.isCancelled;
   
   return request<any>(`/batches/${id}`, { method: 'PUT', body: JSON.stringify(body) }).then(mapBatch);
 };
@@ -147,13 +158,28 @@ export const updatePurchase = (id: string, updates: Partial<Purchase>) => {
 export const deletePurchase = (id: string) => request(`/purchases/${id}`, { method: 'DELETE' });
 
 
+// Holds
+const mapHold = (h: any): Hold => ({
+  id: h.id, clientName: h.client_name, clientPhone: h.client_phone, productName: h.product_name,
+  category: h.category, quantity: h.quantity, batchNo: h.batch_no, holdDate: h.hold_date, status: h.status
+});
+export const getHolds = async () => (await request<any[]>('/holds')).map(mapHold);
+export const addHold = (h: Omit<Hold, 'id' | 'status'>) => {
+  const body = {
+    client_name: h.clientName, client_phone: h.clientPhone, product_name: h.productName,
+    category: h.category, quantity: h.quantity, batch_no: h.batchNo, hold_date: h.holdDate
+  };
+  return request<any>('/holds', { method: 'POST', body: JSON.stringify(body) }).then(mapHold);
+};
+export const releaseHold = (id: string) => request(`/holds/${id}`, { method: 'DELETE' });
+
 // Sales
 export const getSales = async () => (await request<any[]>('/sales')).map(mapSale);
-export const addSale = (s: Omit<Sale, 'id'>) => {
+export const addSale = (s: Omit<Sale, 'id' | 'pendingQty' | 'fulfilledQty'>) => {
   const body = {
     client_name: s.clientName, client_phone: s.clientPhone, product_name: s.productName,
     category: s.category, quantity: s.quantity, rate: s.rate, total_price: s.totalPrice,
-    order_date: s.orderDate, value_category: s.valueCategory, batch_no: s.batchNo
+    order_date: s.orderDate, value_category: s.valueCategory, batch_no: s.batchNo, narration: s.narration
   };
   return request<any>('/sales', { method: 'POST', body: JSON.stringify(body) }).then(mapSale);
 };
@@ -164,18 +190,19 @@ export const updateSale = (id: string, updates: Partial<Sale>) => {
   if (updates.productName) body.product_name = updates.productName;
   if (updates.quantity) body.quantity = updates.quantity;
   if (updates.category) body.category = updates.category;
+  if (updates.narration !== undefined) body.narration = updates.narration;
   return request<any>(`/sales/${id}`, { method: 'PUT', body: JSON.stringify(body) }).then(mapSale);
 };
 export const deleteSale = (id: string) => request(`/sales/${id}`, { method: 'DELETE' });
 
 // Orders
 export const getOrders = async () => (await request<any[]>('/orders')).map(mapOrder);
-export const addOrder = (o: Omit<Order, 'id'>) => {
+export const addOrder = (o: Omit<Order, 'id' | 'pendingQty' | 'fulfilledQty'>) => {
   const body = {
     order_number: o.orderNumber, client_name: o.clientName, client_phone: o.clientPhone,
     product_name: o.productName, quantity: o.quantity, total_amount: o.totalAmount,
     order_date: o.orderDate, status: o.status, batch_no: o.batchNo,
-    pending_qty: o.pendingQty, fulfilled_qty: o.fulfilledQty
+    pending_qty: o.quantity, fulfilled_qty: 0, narration: o.narration
   };
   return request<any>('/orders', { method: 'POST', body: JSON.stringify(body) }).then(mapOrder);
 };
