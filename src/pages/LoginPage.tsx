@@ -29,7 +29,6 @@ export default function LoginPage({ onLogin }: { onLogin: () => void }) {
           <Input placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleLogin()} />
           <Input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleLogin()} />
           <Button className="w-full" onClick={handleLogin}><LogIn className="mr-2 h-4 w-4" />Sign In</Button>
-          <p className="text-xs text-muted-foreground text-center">Demo: admin@erp.com / admin123 or staff@erp.com / staff123</p>
         </CardContent>
       </Card>
     </div>

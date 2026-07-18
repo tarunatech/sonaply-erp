@@ -65,7 +65,7 @@ export default function StockEntry() {
       });
       toast({ title: "Stock updated (Merged with existing batch)" });
     } else {
-      await addBatch({ ...form, rate: 0, productId: null as any, availableQty: form.quantity, damageQty: 0, nilQty: 0 });
+      await addBatch({ ...form, rate: 0, productId: null as any, availableQty: form.quantity, damageQty: 0, displayQty: 0 });
       toast({ title: "Stock batch added successfully!" });
     }
 

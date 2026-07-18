@@ -30,6 +30,7 @@ export default function PendingOrders() {
 
   const handleCreateChallan = async () => {
     if (!currentOrder) return;
+    setShowChallanDialog(false);
 
     const allChallans = await getChallans();
     let maxNum = 0;
@@ -52,15 +53,22 @@ export default function PendingOrders() {
       batchNo: challanForm.batchNo,
       notes: challanForm.notes,
       shouldFulfill: true,
+      skipStockUpdate: false,
+      stockCategory: currentOrder.stockCategory,
     });
 
     toast({ title: "Fulfillment Complete!", description: `Challan ${challanNum} generated. Order marked as fulfilled.` });
     
-    // Also update order status to Delivered
-    await updateOrder(currentOrder.id, { status: 'Delivered' });
+    // Also update order status to Delivered without changing stock again
+    await updateOrder(currentOrder.id, {
+      status: 'Delivered',
+      pendingQty: 0,
+      fulfilledQty: currentOrder.quantity,
+      skipStockUpdate: true,
+    } as any);
+    window.dispatchEvent(new CustomEvent("erp-stock-updated"));
 
     setChallanForm({ batchNo: '', notes: '' });
-    setShowChallanDialog(false);
     setCurrentOrder(null);
     refresh();
   };
@@ -77,6 +85,7 @@ export default function PendingOrders() {
       }
       await updateOrder(orderId, updates);
       toast({ title: "Status Updated", description: `Order status changed to ${newStatus}` });
+      window.dispatchEvent(new CustomEvent("erp-stock-updated"));
       refresh();
     } catch (error) {
       toast({ title: "Error", description: "Failed to update status", variant: "destructive" });
@@ -95,6 +104,22 @@ export default function PendingOrders() {
              categoryMatch;
     }).sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
   }, [orders, filter, batches]);
+
+  const currentProductBatches = useMemo(() => {
+    if (!currentOrder) return [];
+    return batches.filter(b => b.productName === currentOrder.productName);
+  }, [currentOrder, batches]);
+
+  const currentBatchOptions = useMemo(() => {
+    const list = new Set<string>();
+    if (currentOrder?.batchNo) {
+      list.add(currentOrder.batchNo);
+    }
+    currentProductBatches.forEach(b => {
+      if (b.batchNumber) list.add(b.batchNumber);
+    });
+    return Array.from(list);
+  }, [currentOrder, currentProductBatches]);
 
   return (
     <div className="space-y-4">
@@ -144,8 +169,19 @@ export default function PendingOrders() {
                     <TableCell className="font-medium">{o.clientName}</TableCell>
                     <TableCell>
                       <div className="font-medium">{o.productName}</div>
+                      {o.batchNo && (
+                        <div className="text-[10px] text-muted-foreground mt-0.5 font-semibold">
+                          Batch: {o.batchNo}
+                        </div>
+                      )}
                       <div className="text-[10px] text-blue-600 font-bold mt-1 uppercase">
-                        Stock Available: {batches.filter(b => b.productName === o.productName).reduce((sum, b) => sum + b.availableQty, 0)}
+                        Stock Available: {(() => {
+                          const matched = batches.find(b => 
+                            b.productName.trim().toLowerCase() === o.productName.trim().toLowerCase() && 
+                            (b.batchNumber || '').trim().toLowerCase() === (o.batchNo || '').trim().toLowerCase()
+                          );
+                          return matched ? matched.availableQty : 0;
+                        })()}
                       </div>
                     </TableCell>
                     <TableCell className="text-right">{o.quantity}</TableCell>
@@ -200,7 +236,27 @@ export default function PendingOrders() {
           <div className="grid gap-4 py-4">
             <div className="grid grid-cols-4 items-center gap-4">
               <Label htmlFor="batch" className="text-right text-xs uppercase font-bold">Batch No</Label>
-              <Input id="batch" className="col-span-3" value={challanForm.batchNo} onChange={e => setChallanForm({ ...challanForm, batchNo: e.target.value })} />
+              <div className="col-span-3">
+                <Select
+                  value={challanForm.batchNo}
+                  onValueChange={v => setChallanForm({ ...challanForm, batchNo: v })}
+                >
+                  <SelectTrigger id="batch">
+                    <SelectValue placeholder="Select Batch" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {currentBatchOptions.map(bNo => {
+                      const matchedBatch = currentProductBatches.find(b => b.batchNumber === bNo);
+                      const avail = matchedBatch ? matchedBatch.availableQty : 0;
+                      return (
+                        <SelectItem key={bNo} value={bNo}>
+                          {bNo} {matchedBatch ? `(Avail: ${avail})` : ""}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
             <div className="grid grid-cols-4 items-center gap-4">
               <Label htmlFor="notes" className="text-right text-xs uppercase font-bold">Notes</Label>

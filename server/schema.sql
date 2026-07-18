@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS batches (
   date DATE DEFAULT CURRENT_DATE,
   available_qty INTEGER DEFAULT 0,
   damage_qty INTEGER DEFAULT 0,
-  nil_qty INTEGER DEFAULT 0,
+  display_qty INTEGER DEFAULT 0,
   description TEXT
 );
 
@@ -57,7 +57,21 @@ CREATE TABLE IF NOT EXISTS sales (
   total_price NUMERIC,
   order_date DATE DEFAULT CURRENT_DATE,
   value_category TEXT,
-  batch_no TEXT
+  batch_no TEXT,
+  stock_category TEXT DEFAULT 'Available'
+);
+
+CREATE TABLE IF NOT EXISTS sales_returns (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_name TEXT NOT NULL,
+  client_phone TEXT,
+  price_category TEXT,
+  receive_date DATE DEFAULT CURRENT_DATE,
+  product_name TEXT NOT NULL,
+  quantity INTEGER NOT NULL,
+  batch_no TEXT,
+  notes TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS orders (
@@ -70,7 +84,8 @@ CREATE TABLE IF NOT EXISTS orders (
   total_amount NUMERIC,
   order_date DATE DEFAULT CURRENT_DATE,
   status TEXT NOT NULL CHECK (status IN ('Pending', 'Confirmed', 'Delivered', 'Cancelled')),
-  batch_no TEXT
+  batch_no TEXT,
+  stock_category TEXT DEFAULT 'Available'
 );
 
 CREATE TABLE IF NOT EXISTS challans (
@@ -84,7 +99,8 @@ CREATE TABLE IF NOT EXISTS challans (
   date DATE DEFAULT CURRENT_DATE,
   batch_no TEXT,
   notes TEXT,
-  is_printed BOOLEAN DEFAULT FALSE
+  is_printed BOOLEAN DEFAULT FALSE,
+  stock_category TEXT DEFAULT 'Available'
 );
  
 CREATE TABLE IF NOT EXISTS clients (

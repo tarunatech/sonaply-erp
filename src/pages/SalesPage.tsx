@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
-import { addSale, addOrder, addClient, getBatches, getClients, getSales, addHold, updateSale, deleteSale, exportCSV, Sale, Client, StockBatch } from "@/lib/store";
+import { addSale, addOrder, addClient, getBatches, getClients, getSales, addHold, updateSale, deleteSale, exportCSV, Sale, Client, StockBatch, generateWhatsAppLink } from "@/lib/store";
 import { Hand } from "lucide-react";
 
 import { printElement } from "@/lib/print";
@@ -14,16 +14,18 @@ import { useToast } from "@/hooks/use-toast";
 import { Download, Printer, MessageCircle, Plus, Trash2, Pencil } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 
+
 const PRICE_CATEGORIES = ['Regular', 'Premium', 'Only Cash'];
 
 interface SaleItem {
   productName: string;
   quantity: number;
+  stockCategory: 'Available' | 'Display' | 'Damage';
   batchNo?: string;
   isProductSelected?: boolean;
 }
 
-const defaultItem: SaleItem = { productName: '', quantity: 0, isProductSelected: false };
+const defaultItem: SaleItem = { productName: '', quantity: 0, stockCategory: 'Available', isProductSelected: false };
 
 export default function SalesPage() {
   const [clientName, setClientName] = useState('');
@@ -39,11 +41,23 @@ export default function SalesPage() {
   const [editingSale, setEditingSale] = useState<any>(null);
   const [productFilter, setProductFilter] = useState('');
   const [showClientSuggestions, setShowClientSuggestions] = useState(false);
-  const [selectedClientIndex, setSelectedClientIndex] = useState(-1);
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [allClients, setAllClients] = useState<Client[]>([]);
-  const clientContainerRef = useRef<HTMLDivElement>(null);
   const suggestionContainerRef = useRef<HTMLDivElement>(null);
+  const [selectedClientIndex, setSelectedClientIndex] = useState<number>(-1);
   const { toast } = useToast();
+  const clientContainerRef = useRef<HTMLDivElement>(null);
+
+  const scrollToSelected = (containerRef: React.RefObject<HTMLDivElement>, index: number) => {
+    if (index >= 0 && containerRef.current) {
+      const activeElement = containerRef.current.children[index] as HTMLElement;
+      if (activeElement) {
+        activeElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+  };
+
+  useEffect(() => scrollToSelected(clientContainerRef, selectedClientIndex), [selectedClientIndex]);
 
   const refreshSales = useCallback(() => getSales().then(setSales), []);
   const refreshBatches = useCallback(() => getBatches().then(setAllBatches), []);
@@ -59,6 +73,16 @@ export default function SalesPage() {
     return allClients.sort((a, b) => a.name.localeCompare(b.name));
   }, [allClients]);
 
+  const filteredClients = useMemo(() => {
+    const q = clientName.toLowerCase().trim();
+    if (!q) return uniqueClients;
+    return uniqueClients.filter(c =>
+      c.name.toLowerCase().includes(q) ||
+      c.phone.toLowerCase().includes(q) ||
+      (c.priceCategory || '').toLowerCase().includes(q)
+    );
+  }, [uniqueClients, clientName]);
+
   const filteredSales = useMemo(() => {
     return sales.filter(s => {
       const f = productFilter.toLowerCase();
@@ -71,16 +95,6 @@ export default function SalesPage() {
     }).sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
   }, [sales, productFilter, allBatches]);
 
-  const scrollToSelected = (containerRef: React.RefObject<HTMLDivElement>, index: number) => {
-    if (index >= 0 && containerRef.current) {
-      const activeElement = containerRef.current.children[index] as HTMLElement;
-      if (activeElement) {
-        activeElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      }
-    }
-  };
-
-  useEffect(() => scrollToSelected(clientContainerRef, selectedClientIndex), [selectedClientIndex]);
   useEffect(() => scrollToSelected(suggestionContainerRef, selectedSuggestionIndex), [selectedSuggestionIndex]);
   
   useEffect(() => {
@@ -122,6 +136,41 @@ export default function SalesPage() {
     });
   };
 
+  const getSelectedBatch = (item: SaleItem) => {
+    if (!item.productName) return undefined;
+    return allBatches.find(b =>
+      b.productName === item.productName &&
+      (item.batchNo ? b.batchNumber === item.batchNo : true)
+    );
+  };
+
+  const getSuggestionsList = useCallback((query: string) => {
+    const q = query.toLowerCase().trim();
+    const filtered = allBatches.filter(b =>
+      !q ||
+      b.productName.toLowerCase().includes(q) ||
+      (b.productCode && b.productCode.toLowerCase().includes(q))
+    );
+
+    const list: { batch: StockBatch; category: 'Available' | 'Display' | 'Damage'; label: string }[] = [];
+    filtered.forEach(b => {
+      const hasAvailable = b.availableQty > 0;
+      const hasDisplay = (b.displayQty || 0) > 0;
+      const hasDamage = (b.damageQty || 0) > 0;
+
+      if (hasAvailable || (!hasDisplay && !hasDamage)) {
+        list.push({ batch: b, category: 'Available', label: 'Available' });
+      }
+      if (hasDisplay) {
+        list.push({ batch: b, category: 'Display', label: 'Display' });
+      }
+      if (hasDamage) {
+        list.push({ batch: b, category: 'Damage', label: 'Damage' });
+      }
+    });
+    return list;
+  }, [allBatches]);
+
   const handleDelete = async (id: string) => {
     const password = window.prompt("Please enter admin password to delete:");
     if (password !== 'admin') {
@@ -149,7 +198,9 @@ export default function SalesPage() {
       toast({ title: "Please enter client name", variant: "destructive" }); return;
     }
 
-    const selectedClient = uniqueClients.find(c => c.name === clientName);
+    const selectedClient = selectedClientId
+      ? uniqueClients.find(c => c.id === selectedClientId)
+      : filteredClients.find(c => c.name === clientName);
     if (!selectedClient) {
       toast({ title: "Please select an existing client from the suggestions", variant: "destructive" }); return;
     }
@@ -157,6 +208,11 @@ export default function SalesPage() {
     const validItems = items.filter(item => item.productName && item.quantity > 0);
     if (validItems.length === 0) {
       toast({ title: "Please add at least one valid product", variant: "destructive" }); return;
+    }
+
+    const itemsWithoutBatch = validItems.filter(item => !item.batchNo);
+    if (itemsWithoutBatch.length > 0) {
+      toast({ title: "Please select a batch for all products", variant: "destructive" }); return;
     }
 
     const total = 0; // Removed total amount field
@@ -170,11 +226,13 @@ export default function SalesPage() {
         productName: item.productName,
         category: priceCategory,
         quantity: item.quantity,
+        damageQty: item.stockCategory === 'Damage' ? item.quantity : 0,
         totalPrice: total,
         orderDate,
         valueCategory,
         batchNo: item.batchNo,
         narration,
+        stockCategory: item.stockCategory
       });
 
       await addOrder({
@@ -187,19 +245,22 @@ export default function SalesPage() {
         orderDate,
         status: 'Pending',
         batchNo: sale.batchNo || item.batchNo,
-        pendingQty: item.quantity,
-        fulfilledQty: 0,
+        pendingQty: sale.pendingQty,
+        fulfilledQty: sale.fulfilledQty,
         narration,
+        stockCategory: item.stockCategory
       });
     }
 
     toast({ title: "Sale recorded!", description: "Orders created automatically." });
+    window.dispatchEvent(new CustomEvent("erp-stock-updated"));
     
     // Reset form
     setClientName('');
     setClientPhone('');
     setItems([{ ...defaultItem }]);
     setNarration('');
+    setSelectedClientId(null);
     refreshSales();
     refreshClients();
   };
@@ -209,7 +270,9 @@ export default function SalesPage() {
       toast({ title: "Please enter client name", variant: "destructive" }); return;
     }
 
-    const selectedClient = uniqueClients.find(c => c.name === clientName);
+    const selectedClient = selectedClientId
+      ? uniqueClients.find(c => c.id === selectedClientId)
+      : filteredClients.find(c => c.name === clientName);
     if (!selectedClient) {
       toast({ title: "Please select an existing client from the suggestions", variant: "destructive" }); return;
     }
@@ -217,6 +280,11 @@ export default function SalesPage() {
     const validItems = items.filter(item => item.productName && item.quantity > 0);
     if (validItems.length === 0) {
       toast({ title: "Please add at least one valid product", variant: "destructive" }); return;
+    }
+
+    const itemsWithoutBatch = validItems.filter(item => !item.batchNo);
+    if (itemsWithoutBatch.length > 0) {
+      toast({ title: "Please select a batch for all products", variant: "destructive" }); return;
     }
 
     for (const item of validItems) {
@@ -232,11 +300,13 @@ export default function SalesPage() {
     }
 
     toast({ title: "Products put on hold!" });
+    window.dispatchEvent(new CustomEvent("erp-stock-updated"));
     
     // Reset form
     setClientName('');
     setClientPhone('');
     setItems([{ ...defaultItem }]);
+    setSelectedClientId(null);
     refreshSales(); // To refresh batches
     refreshClients();
   };
@@ -257,6 +327,7 @@ export default function SalesPage() {
                   onChange={e => {
                     setClientName(e.target.value);
                     setShowClientSuggestions(true);
+                    setSelectedClientId(null);
                   }} 
                   onFocus={() => {
                     setShowClientSuggestions(true);
@@ -267,7 +338,7 @@ export default function SalesPage() {
                     setSelectedClientIndex(-1);
                   }, 200)}
                   onKeyDown={e => {
-                    const filtered = uniqueClients.filter(c => !clientName || c.name.toLowerCase().includes(clientName.toLowerCase()));
+                    const filtered = filteredClients;
                     if (e.key === 'ArrowDown') {
                       e.preventDefault();
                       setSelectedClientIndex(prev => (prev < filtered.length - 1 ? prev + 1 : prev));
@@ -281,6 +352,17 @@ export default function SalesPage() {
                         setClientName(c.name);
                         setClientPhone(c.phone);
                         if (c.priceCategory) setPriceCategory(c.priceCategory);
+                        setSelectedClientId(c.id);
+                        setShowClientSuggestions(false);
+                        setSelectedClientIndex(-1);
+                      }
+                    } else if (e.key === 'Tab') {
+                      if (showClientSuggestions && selectedClientIndex >= 0 && selectedClientIndex < filtered.length) {
+                        const c = filtered[selectedClientIndex];
+                        setClientName(c.name);
+                        setClientPhone(c.phone);
+                        if (c.priceCategory) setPriceCategory(c.priceCategory);
+                        setSelectedClientId(c.id);
                         setShowClientSuggestions(false);
                         setSelectedClientIndex(-1);
                       }
@@ -294,25 +376,28 @@ export default function SalesPage() {
                 />
                 {showClientSuggestions && (
                   <div ref={clientContainerRef} className="absolute z-[110] w-full mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-y-auto">
-                    {uniqueClients
-                      .filter(c => !clientName || c.name.toLowerCase().includes(clientName.toLowerCase()))
+                    {filteredClients
                       .map((c, i) => (
                         <div 
-                          key={c.name} 
+                          key={c.id} 
                           className={`px-3 py-2 cursor-pointer text-sm text-popover-foreground border-b last:border-0 ${selectedClientIndex === i ? 'bg-accent' : 'hover:bg-accent'}`}
                           onMouseDown={(e) => {
                             e.preventDefault();
                             setClientName(c.name);
                             setClientPhone(c.phone);
                             if (c.priceCategory) setPriceCategory(c.priceCategory);
+                            setSelectedClientId(c.id);
                             setShowClientSuggestions(false);
                           }}
                         >
                           <div className="font-medium">{c.name}</div>
-                          {c.phone && <div className="text-xs text-muted-foreground">{c.phone}</div>}
+                          <div className="text-xs text-muted-foreground flex flex-wrap gap-2">
+                            <span>{c.phone || 'No phone'}</span>
+                            <span>{c.priceCategory || 'No price category'}</span>
+                          </div>
                         </div>
                     ))}
-                    {uniqueClients.filter(c => !clientName || c.name.toLowerCase().includes(clientName.toLowerCase())).length === 0 && (
+                    {filteredClients.length === 0 && (
                       <div className="px-3 py-2 text-sm text-muted-foreground text-center">No matching clients</div>
                     )}
                   </div>
@@ -320,10 +405,22 @@ export default function SalesPage() {
               </div>
               <div><Label>Client Phone</Label><Input value={clientPhone} onChange={e => setClientPhone(e.target.value)} placeholder="919876543210" /></div>
               <div><Label>Price Category</Label>
-                <Select value={priceCategory} onValueChange={setPriceCategory} disabled>
+                <Select value={PRICE_CATEGORIES.includes(priceCategory) ? priceCategory : 'custom'} onValueChange={v => {
+                  if (v === 'custom') return;
+                  setPriceCategory(v);
+                }}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>{PRICE_CATEGORIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+                  <SelectContent>
+                    {PRICE_CATEGORIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                    <SelectItem value="custom">Custom value</SelectItem>
+                  </SelectContent>
                 </Select>
+                <Input
+                  className="mt-2"
+                  placeholder="Or type a custom price category"
+                  value={PRICE_CATEGORIES.includes(priceCategory) ? '' : priceCategory}
+                  onChange={e => setPriceCategory(e.target.value)}
+                />
               </div>
               <div><Label>Order Date</Label><Input type="date" value={orderDate} onChange={e => setOrderDate(e.target.value)} /></div>
             </div>
@@ -334,147 +431,225 @@ export default function SalesPage() {
               </div>
 
               <div className="space-y-2">
-                <div className="grid grid-cols-12 gap-4 px-2 py-1 font-medium text-sm text-muted-foreground border-b">
-                  <div className="col-span-7">Product *</div>
-                  <div className="col-span-3">Quantity *</div>
+                <div className="grid grid-cols-12 gap-3 px-2 py-1 font-medium text-sm text-muted-foreground border-b">
+                  <div className="col-span-4">Product *</div>
+                  <div className="col-span-2">Batch No</div>
+                  <div className="col-span-2">Quantity *</div>
+                  <div className="col-span-2">Category</div>
                   <div className="col-span-2"></div>
                 </div>
-                {items.map((item, index) => (
-                  <div key={index} className="grid grid-cols-12 gap-4 items-start relative overflow-visible px-2 py-2 border-b last:border-0">
-                    <div className="col-span-7 relative">
-                      <Input
-                        value={item.productName}
-                        onChange={e => {
-                          updateItem(index, { productName: e.target.value, batchNo: '', isProductSelected: false });
-                          setActiveSuggestionIndex(index);
-                        }}
-                        onFocus={() => {
-                          setActiveSuggestionIndex(index);
-                          setSelectedSuggestionIndex(-1);
-                        }}
-                        onBlur={() => setTimeout(() => {
-                          setActiveSuggestionIndex(null);
-                          setSelectedSuggestionIndex(-1);
-                        }, 200)}
-                        onKeyDown={e => {
-                          const filtered = allBatches.filter(b => !item.productName || b.productName.toLowerCase().includes(item.productName.toLowerCase()) || (b.productCode && b.productCode.toLowerCase().includes(item.productName.toLowerCase())));
-                          
-                          if (e.key === 'ArrowDown') {
-                            e.preventDefault();
-                            setSelectedSuggestionIndex(prev => (prev < filtered.length - 1 ? prev + 1 : prev));
-                          } else if (e.key === 'ArrowUp') {
-                            e.preventDefault();
-                            setSelectedSuggestionIndex(prev => (prev > 0 ? prev - 1 : prev));
-                          } else if (e.key === 'Enter') {
-                            if (selectedSuggestionIndex >= 0 && selectedSuggestionIndex < filtered.length) {
-                              e.preventDefault();
-                              const b = filtered[selectedSuggestionIndex];
-                              updateItem(index, { 
-                                productName: b.productName, 
-                                batchNo: b.batchNumber,
-                                isProductSelected: true
-                              });
-                              setActiveSuggestionIndex(null);
-                              setSelectedSuggestionIndex(-1);
-                            } else {
-                              e.currentTarget.blur();
-                            }
-                          } else if (e.key === 'Escape') {
+                {items.map((item, index) => {
+                  const productBatches = allBatches.filter(b => b.productName === item.productName);
+
+                  return (
+                    <div key={index} className="grid grid-cols-12 gap-3 items-start relative overflow-visible px-2 py-2 border-b last:border-0">
+                      <div className="col-span-4 relative min-w-0">
+                        <Input
+                          value={item.productName}
+                          onChange={e => {
+                            updateItem(index, { productName: e.target.value, batchNo: '', isProductSelected: false });
+                            setActiveSuggestionIndex(index);
+                          }}
+                          onFocus={() => {
+                            setActiveSuggestionIndex(index);
+                            setSelectedSuggestionIndex(-1);
+                          }}
+                          onBlur={() => setTimeout(() => {
                             setActiveSuggestionIndex(null);
                             setSelectedSuggestionIndex(-1);
-                          }
-                        }}
-                        placeholder="Search product..."
-                        autoComplete="off"
-                        className="w-full"
-                      />
-                        {activeSuggestionIndex === index && (
-                        <div 
-                          ref={suggestionContainerRef}
-                          className="absolute left-0 right-0 top-full z-[100] mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-y-auto min-w-[250px]"
-                        >
-                          {(() => {
-                            const filteredBatches = allBatches.filter(b => !item.productName || b.productName.toLowerCase().includes(item.productName.toLowerCase()) || (b.productCode && b.productCode.toLowerCase().includes(item.productName.toLowerCase())));
+                          }, 200)}
+                          onKeyDown={e => {
+                            const filtered = allBatches.filter(b => !item.productName || b.productName.toLowerCase().includes(item.productName.toLowerCase()) || (b.productCode && b.productCode.toLowerCase().includes(item.productName.toLowerCase())));
                             
-                            return (
-                              <>
-                                {filteredBatches.map((b, i) => (
-                                  <div 
-                                    key={b.id + i} 
-                                    className={`px-3 py-2 cursor-pointer text-sm text-popover-foreground border-b last:border-0 ${selectedSuggestionIndex === i ? 'bg-accent' : 'hover:bg-accent'} ${b.isCancelled ? 'bg-destructive/10 hover:bg-destructive/20' : ''} ${b.isNil ? 'bg-blue-500/10 hover:bg-blue-500/20' : ''}`}
-                                    onMouseDown={(e) => {
-                                      e.preventDefault();
-                                      updateItem(index, { 
-                                        productName: b.productName, 
-                                        batchNo: b.batchNumber,
-                                        isProductSelected: true
-                                      });
-                                      setActiveSuggestionIndex(null);
-                                      setSelectedSuggestionIndex(-1);
-                                    }}
-                                  >
-                                    <div className="font-medium">{b.productName}</div>
-                                    <div className="flex justify-between text-xs text-muted-foreground mt-1">
-                                      <span>Batch: {b.batchNumber}</span>
-                                      <span>
-                                        Available: {b.availableQty}
-                                        {b.damageQty > 0 && <span className="text-destructive font-medium ml-2">Damaged: {b.damageQty}</span>}
-                                        {(b.holdQty || 0) > 0 && <span className="text-amber-500 font-medium ml-2">Hold: {b.holdQty}</span>}
-                                      </span>
-                                    </div>
-                                    {b.description && (
-                                      <div className="text-[11px] text-blue-600 italic mt-1 bg-blue-50/50 px-1.5 py-0.5 rounded border border-blue-100/50">
-                                        {b.description}
+                            if (e.key === 'ArrowDown') {
+                              e.preventDefault();
+                              const sugList = getSuggestionsList(item.productName);
+                              setSelectedSuggestionIndex(prev => (prev < sugList.length - 1 ? prev + 1 : prev));
+                            } else if (e.key === 'ArrowUp') {
+                              e.preventDefault();
+                              setSelectedSuggestionIndex(prev => (prev > 0 ? prev - 1 : prev));
+                            } else if (e.key === 'Enter') {
+                              const sugList = getSuggestionsList(item.productName);
+                              if (selectedSuggestionIndex >= 0 && selectedSuggestionIndex < sugList.length) {
+                                e.preventDefault();
+                                const sug = sugList[selectedSuggestionIndex];
+                                updateItem(index, { 
+                                  productName: sug.batch.productName, 
+                                  batchNo: sug.batch.batchNumber,
+                                  stockCategory: sug.category,
+                                  isProductSelected: true
+                                });
+                                setActiveSuggestionIndex(null);
+                                setSelectedSuggestionIndex(-1);
+                              } else {
+                                e.currentTarget.blur();
+                              }
+                            } else if (e.key === 'Tab') {
+                              const sugList = getSuggestionsList(item.productName);
+                              if (activeSuggestionIndex === index && selectedSuggestionIndex >= 0 && selectedSuggestionIndex < sugList.length) {
+                                const sug = sugList[selectedSuggestionIndex];
+                                updateItem(index, { 
+                                  productName: sug.batch.productName, 
+                                  batchNo: sug.batch.batchNumber,
+                                  stockCategory: sug.category,
+                                  isProductSelected: true
+                                });
+                                setActiveSuggestionIndex(null);
+                                setSelectedSuggestionIndex(-1);
+                              }
+                            } else if (e.key === 'Escape') {
+                              setActiveSuggestionIndex(null);
+                              setSelectedSuggestionIndex(-1);
+                            }
+                          }}
+                          placeholder="Search product..."
+                          autoComplete="off"
+                          className="w-full"
+                        />
+                        {activeSuggestionIndex === index && (
+                          <div 
+                            ref={suggestionContainerRef}
+                            className="absolute left-0 right-0 top-full z-[100] mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-y-auto min-w-[220px]"
+                          >
+                            {(() => {
+                              const sugList = getSuggestionsList(item.productName);
+                              
+                              return (
+                                <>
+                                  {sugList.map((sug, i) => {
+                                    const { batch: b, category, label } = sug;
+                                    return (
+                                      <div 
+                                        key={`${b.id}-${category}-${i}`} 
+                                        className={`px-3 py-2 cursor-pointer text-sm text-popover-foreground border-b last:border-0 ${selectedSuggestionIndex === i ? 'bg-accent' : 'hover:bg-accent'} ${b.isCancelled ? 'bg-destructive/10 hover:bg-destructive/20' : ''} ${b.isNil ? 'bg-blue-500/10 hover:bg-blue-500/20' : ''}`}
+                                        onMouseDown={(e) => {
+                                          e.preventDefault();
+                                          updateItem(index, { 
+                                            productName: b.productName, 
+                                            batchNo: b.batchNumber,
+                                            stockCategory: category,
+                                            isProductSelected: true
+                                          });
+                                          setActiveSuggestionIndex(null);
+                                          setSelectedSuggestionIndex(-1);
+                                        }}
+                                      >
+                                        <div className="font-semibold text-primary">{b.productName}</div>
+                                        <div className="text-xs text-muted-foreground mt-0.5 font-medium">
+                                          Batch: {b.batchNumber} | <span className="text-blue-600 font-bold bg-blue-50 px-1 rounded">{label}</span>
+                                        </div>
+                                        <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-xs text-muted-foreground mt-1 bg-muted/30 p-1 rounded">
+                                          {category === 'Available' && (
+                                            <span>Avail: <span className="font-semibold text-foreground">{b.availableQty}</span></span>
+                                          )}
+                                          {category === 'Display' && (
+                                            <span>Disp: <span className="font-semibold text-foreground">{b.displayQty || 0}</span></span>
+                                          )}
+                                          {category === 'Damage' && (
+                                            <span>Dmg: <span className="font-semibold text-foreground">{b.damageQty || 0}</span></span>
+                                          )}
+                                        </div>
+                                        {b.description && (
+                                          <div className="text-[11px] text-blue-600 italic mt-1 bg-blue-50/50 px-1.5 py-0.5 rounded border border-blue-100/50">
+                                            {b.description}
+                                          </div>
+                                        )}
                                       </div>
+                                    );
+                                  })}
+                                  {sugList.length === 0 && (
+                                    <div className="px-3 py-2 text-sm text-muted-foreground text-center">No matches</div>
+                                  )}
+                                </>
+                              );
+                            })()}
+                          </div>
+                        )}
+                        {item.isProductSelected && item.productName && (
+                          <div className="text-xs text-muted-foreground mt-1 ml-1 flex justify-end items-center bg-blue-50/50 p-1.5 rounded-sm border border-blue-100/50">
+                            {(() => {
+                              if (item.batchNo) {
+                                const batch = productBatches.find(b => b.batchNumber === item.batchNo);
+                                return batch ? (
+                                  <div className="flex flex-col items-end text-right w-full">
+                                    <span className="text-blue-700 font-bold text-[11px]">
+                                      Stock Available: {batch.availableQty} | Display: {batch.displayQty || 0} | Damaged: {batch.damageQty}
+                                    </span>
+                                    <span className="text-[11px] text-muted-foreground mt-0.5">
+                                      Category selected: <span className="font-bold text-primary">{item.stockCategory || 'Available'}</span>
+                                    </span>
+                                    {batch.description && (
+                                      <span className="text-blue-600 italic text-[11px] mt-0.5">Note: {batch.description}</span>
                                     )}
                                   </div>
-                                ))}
-                                {filteredBatches.length === 0 && (
-                                  <div className="px-3 py-2 text-sm text-muted-foreground text-center">No matches</div>
-                                )}
-                              </>
-                            );
-                          })()}
-                        </div>
-                      )}
-                      {item.isProductSelected && item.productName && (
-                        <div className="text-xs text-muted-foreground mt-1 ml-1 flex justify-end items-center bg-blue-50/50 p-1.5 rounded-sm border border-blue-100/50">
-                          {(() => {
-                            const batch = allBatches.find(b => 
-                              b.productName === item.productName && 
-                              (item.batchNo ? b.batchNumber === item.batchNo : true)
-                            );
-                            return batch ? (
-                              <div className="flex flex-col items-end text-right w-full">
-                                <span className="text-blue-700 font-bold">
-                                  Stock Available: {batch.availableQty}
-                                  {batch.damageQty > 0 && <span className="text-destructive ml-2">Damaged: {batch.damageQty}</span>}
-                                  {(batch.holdQty || 0) > 0 && <span className="text-amber-500 ml-2">Hold: {batch.holdQty}</span>}
-                                </span>
-                                {batch.description && (
-                                  <span className="text-blue-600 italic text-[11px] mt-0.5">Note: {batch.description}</span>
-                                )}
-                              </div>
-                            ) : null;
-                          })()}
-                        </div>
-                      )}
-                    </div>
-                    <div className="col-span-3">
-                      <Input type="number" value={item.quantity || ''} onChange={e => updateItem(index, { quantity: +e.target.value })} onKeyDown={e => e.key === 'Enter' && e.currentTarget.blur()} placeholder="Qty" />
-                    </div>
-                    <div className="col-span-2 flex justify-end gap-2 items-center">
-                      {index === items.length - 1 && (
-                        <Button variant="outline" size="sm" onClick={addItem}>
-                          <Plus className="mr-1 h-4 w-4" /> Add
+                                ) : null;
+                              } else {
+                                return (
+                                  <div className="flex flex-col items-end text-right w-full">
+                                    <span className="text-destructive font-semibold text-[11px]">
+                                      Please select a batch from the dropdown
+                                    </span>
+                                  </div>
+                                );
+                              }
+                            })()}
+                          </div>
+                        )}
+                      </div>
+                      <div className="col-span-2 min-w-0">
+                        <Label className="text-xs text-muted-foreground mb-1 block">Batch No</Label>
+                        <Select
+                          value={item.batchNo || ""}
+                          onValueChange={v => {
+                            updateItem(index, { batchNo: v });
+                          }}
+                          disabled={!item.isProductSelected}
+                        >
+                          <SelectTrigger className="h-9">
+                            <SelectValue placeholder="Select Batch" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {productBatches.map(b => (
+                              <SelectItem key={b.id} value={b.batchNumber}>
+                                {b.batchNumber} (Avail: {b.availableQty})
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="col-span-2 min-w-0">
+                        <Label className="text-xs text-muted-foreground mb-1 block">Total Qty to sell</Label>
+                        <Input
+                          type="number"
+                          value={item.quantity || ''}
+                          onChange={e => updateItem(index, { quantity: +e.target.value })}
+                          onKeyDown={e => e.key === 'Enter' && e.currentTarget.blur()}
+                          placeholder="Enter total quantity"
+                        />
+                      </div>
+                      <div className="col-span-2 min-w-0">
+                        <Label className="text-xs text-muted-foreground mb-1 block">
+                          Category selected
+                        </Label>
+                        <Input
+                          value={item.stockCategory || 'Available'}
+                          disabled
+                          className="bg-muted text-foreground font-semibold"
+                        />
+                      </div>
+                      <div className="col-span-2 flex justify-end gap-2 items-center pt-7">
+                        {index === items.length - 1 && (
+                          <Button variant="outline" size="sm" onClick={addItem} className="shrink-0 whitespace-nowrap">
+                            <Plus className="mr-1 h-4 w-4" /> Add
+                          </Button>
+                        )}
+                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10 shrink-0" onClick={() => removeItem(index)} disabled={items.length === 1}>
+                          <Trash2 className="h-4 w-4" />
                         </Button>
-                      )}
-                      <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => removeItem(index)} disabled={items.length === 1}>
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
@@ -539,7 +714,20 @@ export default function SalesPage() {
                   <TableRow key={s.id}>
                     <TableCell className="font-medium">{s.clientName}</TableCell>
                     <TableCell className="text-muted-foreground">{s.clientPhone || '-'}</TableCell>
-                    <TableCell>{s.productName}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span>{s.productName}</span>
+                        {s.stockCategory && (
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
+                            s.stockCategory === 'Display' ? 'bg-amber-100 text-amber-800' :
+                            s.stockCategory === 'Damage' ? 'bg-red-100 text-red-800' :
+                            'bg-blue-100 text-blue-800'
+                          }`}>
+                            {s.stockCategory}
+                          </span>
+                        )}
+                      </div>
+                    </TableCell>
                     <TableCell>{s.category}</TableCell><TableCell className="text-right">{s.quantity}</TableCell>
                     <TableCell>{s.orderDate}</TableCell>
                     <TableCell className="text-right">
@@ -569,6 +757,10 @@ export default function SalesPage() {
                                 <div className="grid gap-2">
                                   <Label>Quantity</Label>
                                   <Input type="number" value={editingSale?.quantity || ''} onChange={e => setEditingSale({...editingSale, quantity: +e.target.value})} />
+                                </div>
+                                <div className="grid gap-2">
+                                  <Label>Damaged Quantity</Label>
+                                  <Input type="number" value={editingSale?.damageQty || 0} onChange={e => setEditingSale({...editingSale, damageQty: +e.target.value})} />
                                 </div>
                                 <div className="grid gap-2">
                                   <Label>Price Category</Label>

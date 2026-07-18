@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback, Fragment } from "react";
 import { useNavigate } from "react-router-dom";
-import { getOrders, updateOrder, deleteOrder, exportCSV, generateWhatsAppLink, addChallan, getBatches, Order, StockBatch } from "@/lib/store";
+import { getOrders, updateOrder, deleteOrder, exportCSV, generateWhatsAppLink, addChallan, getBatches, getChallans, Order, StockBatch } from "@/lib/store";
 
 import { printElement } from "@/lib/print";
 import { Card, CardContent } from "@/components/ui/card";
@@ -82,6 +82,7 @@ export default function OrderTracking() {
       }
       await updateOrder(id, updates);
       toast({ title: "Status Updated", description: `Order status changed to ${status}` });
+      window.dispatchEvent(new CustomEvent("erp-stock-updated"));
       refresh();
     } catch (error) {
       toast({ title: "Error", description: "Failed to update status", variant: "destructive" });
@@ -117,7 +118,15 @@ export default function OrderTracking() {
 
   const handleCreateChallan = async () => {
     if (selectedOrders.length === 0) return;
-    const challanNum = `CHL-${Date.now().toString(36).toUpperCase()}`;
+    const allChallans = await getChallans();
+    let maxNum = 0;
+    for (const c of allChallans) {
+      const numPart = c.challanNumber.split('-')[1];
+      if (numPart && !isNaN(parseInt(numPart, 10))) {
+        maxNum = Math.max(maxNum, parseInt(numPart, 10));
+      }
+    }
+    const challanNum = `CHL-${maxNum + 1}`;
     
     for (const order of selectedOrders) {
       await addChallan({
@@ -131,15 +140,50 @@ export default function OrderTracking() {
         batchNo: challanForm.batchNo,
         notes: challanForm.notes,
         skipStockUpdate: (order.fulfilledQty || 0) > 0,
+        stockCategory: order.stockCategory,
       });
     }
 
     toast({ title: "Challan Created!", description: `Challan ${challanNum} has been generated with ${selectedOrders.length} items.` });
+    window.dispatchEvent(new CustomEvent("erp-stock-updated"));
     setSelectedOrders([]);
     setChallanForm({ batchNo: '', notes: '' });
     setShowChallanDialog(false);
     refresh();
   };
+
+  const editingOrderProductBatches = useMemo(() => {
+    if (!editingOrder) return [];
+    return batches.filter(b => b.productName === editingOrder.productName);
+  }, [editingOrder, batches]);
+
+  const editingOrderBatchOptions = useMemo(() => {
+    const list = new Set<string>();
+    if (editingOrder?.batchNo) {
+      list.add(editingOrder.batchNo);
+    }
+    editingOrderProductBatches.forEach(b => {
+      if (b.batchNumber) list.add(b.batchNumber);
+    });
+    return Array.from(list);
+  }, [editingOrder, editingOrderProductBatches]);
+
+  const selectedProductBatches = useMemo(() => {
+    if (selectedOrders.length === 0) return [];
+    const productNames = Array.from(new Set(selectedOrders.map(o => o.productName)));
+    return batches.filter(b => productNames.includes(b.productName));
+  }, [selectedOrders, batches]);
+
+  const selectedOrdersBatchOptions = useMemo(() => {
+    const list = new Set<string>();
+    selectedOrders.forEach(o => {
+      if (o.batchNo) list.add(o.batchNo);
+    });
+    selectedProductBatches.forEach(b => {
+      if (b.batchNumber) list.add(b.batchNumber);
+    });
+    return Array.from(list);
+  }, [selectedOrders, selectedProductBatches]);
 
   return (
     <div className="space-y-4">
@@ -232,14 +276,29 @@ export default function OrderTracking() {
                     <TableCell className="font-medium pl-8">
                       <div className="flex items-center gap-2">
                         {o.orderNumber}
-                        {o.isChallanGenerated && <CheckCircle2 className="h-4 w-4 text-green-500" title="Challan already generated" />}
+                        {o.isChallanGenerated && (
+                          <span title="Challan already generated" className="inline-flex">
+                            <CheckCircle2 className="h-4 w-4 text-green-500" />
+                          </span>
+                        )}
                       </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground italic">Entry Details</TableCell>
                     <TableCell>
                       <div className="font-medium">{o.productName}</div>
+                      {o.batchNo && (
+                        <div className="text-[10px] text-muted-foreground mt-0.5 font-semibold">
+                          Batch: {o.batchNo}
+                        </div>
+                      )}
                       <div className="text-[10px] text-blue-600 font-bold mt-1 uppercase">
-                        Stock Available: {batches.filter(b => b.productName === o.productName).reduce((sum, b) => sum + b.availableQty, 0)}
+                        Stock Available: {(() => {
+                          const matched = batches.find(b => 
+                            b.productName.trim().toLowerCase() === o.productName.trim().toLowerCase() && 
+                            (b.batchNumber || '').trim().toLowerCase() === (o.batchNo || '').trim().toLowerCase()
+                          );
+                          return matched ? matched.availableQty : 0;
+                        })()}
                       </div>
                     </TableCell>
                     <TableCell className="text-right">
@@ -348,7 +407,25 @@ export default function OrderTracking() {
             </div>
             <div className="grid gap-2">
               <Label>Batch Number</Label>
-              <Input value={editingOrder?.batchNo || ''} onChange={e => setEditingOrder({...editingOrder, batchNo: e.target.value})} />
+              <Select
+                value={editingOrder?.batchNo || ''}
+                onValueChange={v => setEditingOrder({...editingOrder, batchNo: v})}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select Batch" />
+                </SelectTrigger>
+                <SelectContent>
+                  {editingOrderBatchOptions.map(bNo => {
+                    const matchedBatch = editingOrderProductBatches.find(b => b.batchNumber === bNo);
+                    const avail = matchedBatch ? matchedBatch.availableQty : 0;
+                    return (
+                      <SelectItem key={bNo} value={bNo}>
+                        {bNo} {matchedBatch ? `(Avail: ${avail})` : ""}
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <DialogFooter><Button onClick={handleEditSave}>Save Changes</Button></DialogFooter>
@@ -378,7 +455,25 @@ export default function OrderTracking() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Batch No</Label>
-                  <Input placeholder="Enter Batch No" value={challanForm.batchNo} onChange={e => setChallanForm({...challanForm, batchNo: e.target.value})} />
+                  <Select
+                    value={challanForm.batchNo}
+                    onValueChange={v => setChallanForm({...challanForm, batchNo: v})}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select Batch" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {selectedOrdersBatchOptions.map(bNo => {
+                        const matchedBatch = selectedProductBatches.find(b => b.batchNumber === bNo);
+                        const avail = matchedBatch ? matchedBatch.availableQty : 0;
+                        return (
+                          <SelectItem key={bNo} value={bNo}>
+                            {bNo} {matchedBatch ? `(Avail: ${avail})` : ""}
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-2">
                   <Label>Notes</Label>
