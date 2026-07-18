@@ -250,7 +250,13 @@ export default function StockList() {
       const category = mapKeys.category ? row[mapKeys.category]?.trim() : "";
       if (!productName || !category) continue;
 
-      const batchNumber = mapKeys.batchNumber ? row[mapKeys.batchNumber]?.trim() || "0" : "0";
+      const batchNumberRaw = mapKeys.batchNumber ? row[mapKeys.batchNumber]?.trim() || "0" : "0";
+      let batchNumbers = batchNumberRaw.split(/[,/|;]+/).map(b => b.trim()).filter(Boolean);
+      if (batchNumbers.length === 0) {
+        batchNumbers = ["0"];
+      }
+      const count = batchNumbers.length;
+
       const supplier = mapKeys.supplier ? row[mapKeys.supplier]?.trim() || "" : "";
       const date = mapKeys.date ? row[mapKeys.date]?.trim() || new Date().toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
       
@@ -280,19 +286,26 @@ export default function StockList() {
 
       if (Number.isNaN(quantity) || quantity <= 0) continue;
 
-      parsedRows.push({
-        productName,
-        category,
-        batchNumber,
-        supplier,
-        quantity,
-        date,
-        availableQty,
-        damageQty,
-        displayQty,
-        description,
-        isNil,
-        isCancelled
+      batchNumbers.forEach((bNum, idx) => {
+        const qtyForBatch = Math.floor(quantity / count) + (idx === 0 ? quantity % count : 0);
+        const availForBatch = Math.floor(availableQty / count) + (idx === 0 ? availableQty % count : 0);
+        const dmgForBatch = Math.floor(damageQty / count) + (idx === 0 ? damageQty % count : 0);
+        const dispForBatch = Math.floor(displayQty / count) + (idx === 0 ? displayQty % count : 0);
+
+        parsedRows.push({
+          productName,
+          category,
+          batchNumber: bNum,
+          supplier,
+          quantity: qtyForBatch,
+          date,
+          availableQty: availForBatch,
+          damageQty: dmgForBatch,
+          displayQty: dispForBatch,
+          description,
+          isNil,
+          isCancelled
+        });
       });
     }
 

@@ -50,6 +50,11 @@ export default function SalesReturnPage() {
 
   const filteredReturns = useMemo(() => [...returns].sort((a, b) => new Date(b.receiveDate).getTime() - new Date(a.receiveDate).getTime()), [returns]);
 
+  const currentProductBatches = useMemo(() => {
+    if (!productName) return [];
+    return batches.filter(b => b.productName === productName);
+  }, [productName, batches]);
+
   const filteredClients = useMemo(() => {
     const q = clientName.toLowerCase().trim();
     if (!q) return clients.slice(0, 10);
@@ -275,7 +280,22 @@ export default function SalesReturnPage() {
             </div>
             <div>
               <Label>Batch No</Label>
-              <Input value={batchNo} onChange={e => setBatchNo(e.target.value)} placeholder="Optional batch number" />
+              {productName ? (
+                <Select value={batchNo} onValueChange={setBatchNo}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select Batch" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {currentProductBatches.map(b => (
+                      <SelectItem key={b.id} value={b.batchNumber}>
+                        {b.batchNumber} (Avail: {b.availableQty})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input disabled placeholder="Select product first" />
+              )}
             </div>
             <div>
               <Label>Return Quantity *</Label>

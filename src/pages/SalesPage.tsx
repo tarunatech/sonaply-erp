@@ -210,6 +210,11 @@ export default function SalesPage() {
       toast({ title: "Please add at least one valid product", variant: "destructive" }); return;
     }
 
+    const itemsWithoutBatch = validItems.filter(item => !item.batchNo);
+    if (itemsWithoutBatch.length > 0) {
+      toast({ title: "Please select a batch for all products", variant: "destructive" }); return;
+    }
+
     const total = 0; // Removed total amount field
     const valueCategory = 'Standard';
 
@@ -275,6 +280,11 @@ export default function SalesPage() {
     const validItems = items.filter(item => item.productName && item.quantity > 0);
     if (validItems.length === 0) {
       toast({ title: "Please add at least one valid product", variant: "destructive" }); return;
+    }
+
+    const itemsWithoutBatch = validItems.filter(item => !item.batchNo);
+    if (itemsWithoutBatch.length > 0) {
+      toast({ title: "Please select a batch for all products", variant: "destructive" }); return;
     }
 
     for (const item of validItems) {
@@ -423,190 +433,223 @@ export default function SalesPage() {
               <div className="space-y-2">
                 <div className="grid grid-cols-12 gap-3 px-2 py-1 font-medium text-sm text-muted-foreground border-b">
                   <div className="col-span-4">Product *</div>
-                  <div className="col-span-3">Quantity *</div>
-                  <div className="col-span-3">Damaged *</div>
+                  <div className="col-span-2">Batch No</div>
+                  <div className="col-span-2">Quantity *</div>
+                  <div className="col-span-2">Category</div>
                   <div className="col-span-2"></div>
                 </div>
-                {items.map((item, index) => (
-                  <div key={index} className="grid grid-cols-12 gap-3 items-start relative overflow-visible px-2 py-2 border-b last:border-0">
-                    <div className="col-span-4 relative min-w-0">
-                      <Input
-                        value={item.productName}
-                        onChange={e => {
-                          updateItem(index, { productName: e.target.value, batchNo: '', isProductSelected: false });
-                          setActiveSuggestionIndex(index);
-                        }}
-                        onFocus={() => {
-                          setActiveSuggestionIndex(index);
-                          setSelectedSuggestionIndex(-1);
-                        }}
-                        onBlur={() => setTimeout(() => {
-                          setActiveSuggestionIndex(null);
-                          setSelectedSuggestionIndex(-1);
-                        }, 200)}
-                        onKeyDown={e => {
-                          const filtered = allBatches.filter(b => !item.productName || b.productName.toLowerCase().includes(item.productName.toLowerCase()) || (b.productCode && b.productCode.toLowerCase().includes(item.productName.toLowerCase())));
-                          
-                          if (e.key === 'ArrowDown') {
-                            e.preventDefault();
-                            const sugList = getSuggestionsList(item.productName);
-                            setSelectedSuggestionIndex(prev => (prev < sugList.length - 1 ? prev + 1 : prev));
-                          } else if (e.key === 'ArrowUp') {
-                            e.preventDefault();
-                            setSelectedSuggestionIndex(prev => (prev > 0 ? prev - 1 : prev));
-                          } else if (e.key === 'Enter') {
-                            const sugList = getSuggestionsList(item.productName);
-                            if (selectedSuggestionIndex >= 0 && selectedSuggestionIndex < sugList.length) {
-                              e.preventDefault();
-                              const sug = sugList[selectedSuggestionIndex];
-                              updateItem(index, { 
-                                productName: sug.batch.productName, 
-                                batchNo: sug.batch.batchNumber,
-                                stockCategory: sug.category,
-                                isProductSelected: true
-                              });
-                              setActiveSuggestionIndex(null);
-                              setSelectedSuggestionIndex(-1);
-                            } else {
-                              e.currentTarget.blur();
-                            }
-                          } else if (e.key === 'Tab') {
-                            const sugList = getSuggestionsList(item.productName);
-                            if (activeSuggestionIndex === index && selectedSuggestionIndex >= 0 && selectedSuggestionIndex < sugList.length) {
-                              const sug = sugList[selectedSuggestionIndex];
-                              updateItem(index, { 
-                                productName: sug.batch.productName, 
-                                batchNo: sug.batch.batchNumber,
-                                stockCategory: sug.category,
-                                isProductSelected: true
-                              });
-                              setActiveSuggestionIndex(null);
-                              setSelectedSuggestionIndex(-1);
-                            }
-                          } else if (e.key === 'Escape') {
+                {items.map((item, index) => {
+                  const productBatches = allBatches.filter(b => b.productName === item.productName);
+
+                  return (
+                    <div key={index} className="grid grid-cols-12 gap-3 items-start relative overflow-visible px-2 py-2 border-b last:border-0">
+                      <div className="col-span-4 relative min-w-0">
+                        <Input
+                          value={item.productName}
+                          onChange={e => {
+                            updateItem(index, { productName: e.target.value, batchNo: '', isProductSelected: false });
+                            setActiveSuggestionIndex(index);
+                          }}
+                          onFocus={() => {
+                            setActiveSuggestionIndex(index);
+                            setSelectedSuggestionIndex(-1);
+                          }}
+                          onBlur={() => setTimeout(() => {
                             setActiveSuggestionIndex(null);
                             setSelectedSuggestionIndex(-1);
-                          }
-                        }}
-                        placeholder="Search product..."
-                        autoComplete="off"
-                        className="w-full"
-                      />
-                        {activeSuggestionIndex === index && (
-                        <div 
-                          ref={suggestionContainerRef}
-                          className="absolute left-0 right-0 top-full z-[100] mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-y-auto min-w-[220px]"
-                        >
-                          {(() => {
-                            const sugList = getSuggestionsList(item.productName);
+                          }, 200)}
+                          onKeyDown={e => {
+                            const filtered = allBatches.filter(b => !item.productName || b.productName.toLowerCase().includes(item.productName.toLowerCase()) || (b.productCode && b.productCode.toLowerCase().includes(item.productName.toLowerCase())));
                             
-                            return (
-                              <>
-                                {sugList.map((sug, i) => {
-                                  const { batch: b, category, label } = sug;
-                                  return (
-                                    <div 
-                                      key={`${b.id}-${category}-${i}`} 
-                                      className={`px-3 py-2 cursor-pointer text-sm text-popover-foreground border-b last:border-0 ${selectedSuggestionIndex === i ? 'bg-accent' : 'hover:bg-accent'} ${b.isCancelled ? 'bg-destructive/10 hover:bg-destructive/20' : ''} ${b.isNil ? 'bg-blue-500/10 hover:bg-blue-500/20' : ''}`}
-                                      onMouseDown={(e) => {
-                                        e.preventDefault();
-                                        updateItem(index, { 
-                                          productName: b.productName, 
-                                          batchNo: b.batchNumber,
-                                          stockCategory: category,
-                                          isProductSelected: true
-                                        });
-                                        setActiveSuggestionIndex(null);
-                                        setSelectedSuggestionIndex(-1);
-                                      }}
-                                    >
-                                      <div className="font-semibold text-primary">{b.productName}</div>
-                                      <div className="text-xs text-muted-foreground mt-0.5 font-medium">
-                                        Batch: {b.batchNumber} | <span className="text-blue-600 font-bold bg-blue-50 px-1 rounded">{label}</span>
-                                      </div>
-                                      <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-xs text-muted-foreground mt-1 bg-muted/30 p-1 rounded">
-                                        {category === 'Available' && (
-                                          <span>Avail: <span className="font-semibold text-foreground">{b.availableQty}</span></span>
-                                        )}
-                                        {category === 'Display' && (
-                                          <span>Disp: <span className="font-semibold text-foreground">{b.displayQty || 0}</span></span>
-                                        )}
-                                        {category === 'Damage' && (
-                                          <span>Dmg: <span className="font-semibold text-foreground">{b.damageQty || 0}</span></span>
-                                        )}
-                                      </div>
-                                      {b.description && (
-                                        <div className="text-[11px] text-blue-600 italic mt-1 bg-blue-50/50 px-1.5 py-0.5 rounded border border-blue-100/50">
-                                          {b.description}
+                            if (e.key === 'ArrowDown') {
+                              e.preventDefault();
+                              const sugList = getSuggestionsList(item.productName);
+                              setSelectedSuggestionIndex(prev => (prev < sugList.length - 1 ? prev + 1 : prev));
+                            } else if (e.key === 'ArrowUp') {
+                              e.preventDefault();
+                              setSelectedSuggestionIndex(prev => (prev > 0 ? prev - 1 : prev));
+                            } else if (e.key === 'Enter') {
+                              const sugList = getSuggestionsList(item.productName);
+                              if (selectedSuggestionIndex >= 0 && selectedSuggestionIndex < sugList.length) {
+                                e.preventDefault();
+                                const sug = sugList[selectedSuggestionIndex];
+                                updateItem(index, { 
+                                  productName: sug.batch.productName, 
+                                  batchNo: sug.batch.batchNumber,
+                                  stockCategory: sug.category,
+                                  isProductSelected: true
+                                });
+                                setActiveSuggestionIndex(null);
+                                setSelectedSuggestionIndex(-1);
+                              } else {
+                                e.currentTarget.blur();
+                              }
+                            } else if (e.key === 'Tab') {
+                              const sugList = getSuggestionsList(item.productName);
+                              if (activeSuggestionIndex === index && selectedSuggestionIndex >= 0 && selectedSuggestionIndex < sugList.length) {
+                                const sug = sugList[selectedSuggestionIndex];
+                                updateItem(index, { 
+                                  productName: sug.batch.productName, 
+                                  batchNo: sug.batch.batchNumber,
+                                  stockCategory: sug.category,
+                                  isProductSelected: true
+                                });
+                                setActiveSuggestionIndex(null);
+                                setSelectedSuggestionIndex(-1);
+                              }
+                            } else if (e.key === 'Escape') {
+                              setActiveSuggestionIndex(null);
+                              setSelectedSuggestionIndex(-1);
+                            }
+                          }}
+                          placeholder="Search product..."
+                          autoComplete="off"
+                          className="w-full"
+                        />
+                        {activeSuggestionIndex === index && (
+                          <div 
+                            ref={suggestionContainerRef}
+                            className="absolute left-0 right-0 top-full z-[100] mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-y-auto min-w-[220px]"
+                          >
+                            {(() => {
+                              const sugList = getSuggestionsList(item.productName);
+                              
+                              return (
+                                <>
+                                  {sugList.map((sug, i) => {
+                                    const { batch: b, category, label } = sug;
+                                    return (
+                                      <div 
+                                        key={`${b.id}-${category}-${i}`} 
+                                        className={`px-3 py-2 cursor-pointer text-sm text-popover-foreground border-b last:border-0 ${selectedSuggestionIndex === i ? 'bg-accent' : 'hover:bg-accent'} ${b.isCancelled ? 'bg-destructive/10 hover:bg-destructive/20' : ''} ${b.isNil ? 'bg-blue-500/10 hover:bg-blue-500/20' : ''}`}
+                                        onMouseDown={(e) => {
+                                          e.preventDefault();
+                                          updateItem(index, { 
+                                            productName: b.productName, 
+                                            batchNo: b.batchNumber,
+                                            stockCategory: category,
+                                            isProductSelected: true
+                                          });
+                                          setActiveSuggestionIndex(null);
+                                          setSelectedSuggestionIndex(-1);
+                                        }}
+                                      >
+                                        <div className="font-semibold text-primary">{b.productName}</div>
+                                        <div className="text-xs text-muted-foreground mt-0.5 font-medium">
+                                          Batch: {b.batchNumber} | <span className="text-blue-600 font-bold bg-blue-50 px-1 rounded">{label}</span>
                                         </div>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                                {sugList.length === 0 && (
-                                  <div className="px-3 py-2 text-sm text-muted-foreground text-center">No matches</div>
-                                )}
-                              </>
-                            );
-                          })()}
-                        </div>
-                      )}
-                      {item.isProductSelected && item.productName && (
-                        <div className="text-xs text-muted-foreground mt-1 ml-1 flex justify-end items-center bg-blue-50/50 p-1.5 rounded-sm border border-blue-100/50">
-                          {(() => {
-                            const batch = allBatches.find(b => 
-                              b.productName === item.productName && 
-                              (item.batchNo ? b.batchNumber === item.batchNo : true)
-                            );
-                            return batch ? (
-                              <div className="flex flex-col items-end text-right w-full">
-                                <span className="text-blue-700 font-bold text-[11px]">
-                                  Stock Available: {batch.availableQty} | Display: {batch.displayQty || 0} | Damaged: {batch.damageQty}
-                                </span>
-                                <span className="text-[11px] text-muted-foreground mt-0.5">
-                                  Category selected: <span className="font-bold text-primary">{item.stockCategory || 'Available'}</span>
-                                </span>
-                                {batch.description && (
-                                  <span className="text-blue-600 italic text-[11px] mt-0.5">Note: {batch.description}</span>
-                                )}
-                              </div>
-                            ) : null;
-                          })()}
-                        </div>
-                      )}
-                    </div>
-                    <div className="col-span-3 min-w-0">
-                      <Label className="text-xs text-muted-foreground mb-1 block">Total Qty to sell</Label>
-                      <Input
-                        type="number"
-                        value={item.quantity || ''}
-                        onChange={e => updateItem(index, { quantity: +e.target.value })}
-                        onKeyDown={e => e.key === 'Enter' && e.currentTarget.blur()}
-                        placeholder="Enter total quantity"
-                      />
-                    </div>
-                    <div className="col-span-3 min-w-0">
-                      <Label className="text-xs text-muted-foreground mb-1 block">
-                        Category selected
-                      </Label>
-                      <Input
-                        value={item.stockCategory || 'Available'}
-                        disabled
-                        className="bg-muted text-foreground font-semibold"
-                      />
-                    </div>
-                    <div className="col-span-2 flex justify-end gap-2 items-center pt-7">
-                      {index === items.length - 1 && (
-                        <Button variant="outline" size="sm" onClick={addItem} className="shrink-0 whitespace-nowrap">
-                          <Plus className="mr-1 h-4 w-4" /> Add
+                                        <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-xs text-muted-foreground mt-1 bg-muted/30 p-1 rounded">
+                                          {category === 'Available' && (
+                                            <span>Avail: <span className="font-semibold text-foreground">{b.availableQty}</span></span>
+                                          )}
+                                          {category === 'Display' && (
+                                            <span>Disp: <span className="font-semibold text-foreground">{b.displayQty || 0}</span></span>
+                                          )}
+                                          {category === 'Damage' && (
+                                            <span>Dmg: <span className="font-semibold text-foreground">{b.damageQty || 0}</span></span>
+                                          )}
+                                        </div>
+                                        {b.description && (
+                                          <div className="text-[11px] text-blue-600 italic mt-1 bg-blue-50/50 px-1.5 py-0.5 rounded border border-blue-100/50">
+                                            {b.description}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                  {sugList.length === 0 && (
+                                    <div className="px-3 py-2 text-sm text-muted-foreground text-center">No matches</div>
+                                  )}
+                                </>
+                              );
+                            })()}
+                          </div>
+                        )}
+                        {item.isProductSelected && item.productName && (
+                          <div className="text-xs text-muted-foreground mt-1 ml-1 flex justify-end items-center bg-blue-50/50 p-1.5 rounded-sm border border-blue-100/50">
+                            {(() => {
+                              if (item.batchNo) {
+                                const batch = productBatches.find(b => b.batchNumber === item.batchNo);
+                                return batch ? (
+                                  <div className="flex flex-col items-end text-right w-full">
+                                    <span className="text-blue-700 font-bold text-[11px]">
+                                      Stock Available: {batch.availableQty} | Display: {batch.displayQty || 0} | Damaged: {batch.damageQty}
+                                    </span>
+                                    <span className="text-[11px] text-muted-foreground mt-0.5">
+                                      Category selected: <span className="font-bold text-primary">{item.stockCategory || 'Available'}</span>
+                                    </span>
+                                    {batch.description && (
+                                      <span className="text-blue-600 italic text-[11px] mt-0.5">Note: {batch.description}</span>
+                                    )}
+                                  </div>
+                                ) : null;
+                              } else {
+                                return (
+                                  <div className="flex flex-col items-end text-right w-full">
+                                    <span className="text-destructive font-semibold text-[11px]">
+                                      Please select a batch from the dropdown
+                                    </span>
+                                  </div>
+                                );
+                              }
+                            })()}
+                          </div>
+                        )}
+                      </div>
+                      <div className="col-span-2 min-w-0">
+                        <Label className="text-xs text-muted-foreground mb-1 block">Batch No</Label>
+                        <Select
+                          value={item.batchNo || ""}
+                          onValueChange={v => {
+                            updateItem(index, { batchNo: v });
+                          }}
+                          disabled={!item.isProductSelected}
+                        >
+                          <SelectTrigger className="h-9">
+                            <SelectValue placeholder="Select Batch" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {productBatches.map(b => (
+                              <SelectItem key={b.id} value={b.batchNumber}>
+                                {b.batchNumber} (Avail: {b.availableQty})
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="col-span-2 min-w-0">
+                        <Label className="text-xs text-muted-foreground mb-1 block">Total Qty to sell</Label>
+                        <Input
+                          type="number"
+                          value={item.quantity || ''}
+                          onChange={e => updateItem(index, { quantity: +e.target.value })}
+                          onKeyDown={e => e.key === 'Enter' && e.currentTarget.blur()}
+                          placeholder="Enter total quantity"
+                        />
+                      </div>
+                      <div className="col-span-2 min-w-0">
+                        <Label className="text-xs text-muted-foreground mb-1 block">
+                          Category selected
+                        </Label>
+                        <Input
+                          value={item.stockCategory || 'Available'}
+                          disabled
+                          className="bg-muted text-foreground font-semibold"
+                        />
+                      </div>
+                      <div className="col-span-2 flex justify-end gap-2 items-center pt-7">
+                        {index === items.length - 1 && (
+                          <Button variant="outline" size="sm" onClick={addItem} className="shrink-0 whitespace-nowrap">
+                            <Plus className="mr-1 h-4 w-4" /> Add
+                          </Button>
+                        )}
+                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10 shrink-0" onClick={() => removeItem(index)} disabled={items.length === 1}>
+                          <Trash2 className="h-4 w-4" />
                         </Button>
-                      )}
-                      <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10 shrink-0" onClick={() => removeItem(index)} disabled={items.length === 1}>
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 

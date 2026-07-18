@@ -261,7 +261,14 @@ export default function DeliveredOrders() {
                   <TableRow key={o.id} className="animate-in fade-in slide-in-from-top-1 duration-200 border-l-4 border-l-success/40 bg-card/50">
                     <TableCell className="font-mono text-xs pl-8">{o.orderNumber}</TableCell>
                     <TableCell className="text-muted-foreground italic">Entry Details</TableCell>
-                    <TableCell className="font-medium">{o.productName}</TableCell>
+                    <TableCell>
+                      <div className="font-medium">{o.productName}</div>
+                      {o.batchNo && (
+                        <div className="text-[10px] text-muted-foreground mt-0.5 font-semibold">
+                          Batch: {o.batchNo}
+                        </div>
+                      )}
+                    </TableCell>
                     <TableCell className="text-right">{o.quantity}</TableCell>
                     <TableCell className="text-right font-semibold">Rs. {o.totalAmount.toLocaleString()}</TableCell>
                     <TableCell>

@@ -408,6 +408,11 @@ export default function ChallanPage() {
                             >
                               <span className="text-muted-foreground flex items-center gap-1.5 flex-wrap">
                                 <span>{item.productName}</span>
+                                {item.batchNo && (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-muted text-muted-foreground border border-muted-foreground/20">
+                                    Batch: {item.batchNo}
+                                  </span>
+                                )}
                                 {item.stockCategory && (
                                   <span className={`text-[10px] px-1 rounded font-bold ${
                                     item.stockCategory === 'Display' ? 'bg-amber-100 text-amber-800' :
