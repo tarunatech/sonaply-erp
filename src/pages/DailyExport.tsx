@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo } from "react";
 import { 
   getSales, getPurchases, getBatches, getOrders, exportCSV, 
-  deleteSale, deletePurchase, deleteBatch, 
-  StockBatch, Sale, Purchase 
+  deleteSale, deletePurchase, deleteBatch, getSalesReturns,
+  getChallans, StockBatch, Sale, Purchase, SaleReturn, Challan 
 } from "@/lib/store";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,7 @@ interface LedgerTransaction {
   type: 'Addition' | 'Subtraction';
   qty: number;
   description: string;
-  source: 'purchase' | 'batch' | 'sale';
+  source: 'purchase' | 'batch' | 'sale' | 'sales_return' | 'challan_cancel';
 }
 
 export default function DailyExport() {
@@ -41,6 +41,8 @@ export default function DailyExport() {
   const [allBatches, setAllBatches] = useState<StockBatch[]>([]);
   const [allSales, setAllSales] = useState<Sale[]>([]);
   const [allPurchases, setAllPurchases] = useState<Purchase[]>([]);
+  const [allSalesReturns, setAllSalesReturns] = useState<SaleReturn[]>([]);
+  const [allChallans, setAllChallans] = useState<Challan[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
   // Modal State for viewing specific product's transactions
@@ -49,10 +51,18 @@ export default function DailyExport() {
   const loadLedgerData = async () => {
     setIsLoading(true);
     try {
-      const [b, s, p] = await Promise.all([getBatches(), getSales(), getPurchases()]);
+      const [b, s, p, r, c] = await Promise.all([
+        getBatches(), 
+        getSales(), 
+        getPurchases(), 
+        getSalesReturns(),
+        getChallans()
+      ]);
       setAllBatches(b);
       setAllSales(s);
       setAllPurchases(p);
+      setAllSalesReturns(r);
+      setAllChallans(c);
     } catch (e) {
       console.error("Failed to load export data", e);
     } finally {
@@ -116,7 +126,7 @@ export default function DailyExport() {
       allBatches.forEach(b => {
         if (b.productName === productName && b.date >= fromDate && b.date <= toDate) {
           // Avoid double counting if this batch was created from a purchase
-          const hasPurchase = allPurchases.some(p => p.productName === b.productName && p.batchNumber === b.batchNumber && p.date === b.date);
+          const hasPurchase = allPurchases.some(p => p.productName === b.productName && p.batchNumber === b.batchNumber);
           if (!hasPurchase) {
             transactions.push({
               id: b.id,
@@ -144,8 +154,44 @@ export default function DailyExport() {
         }
       });
 
+      // D. Sales Returns (Stock Addition)
+      allSalesReturns.forEach(r => {
+        if (r.productName === productName && r.receiveDate >= fromDate && r.receiveDate <= toDate) {
+          transactions.push({
+            id: r.id,
+            date: r.receiveDate,
+            type: 'Addition',
+            qty: r.quantity,
+            description: `Sales Return (Client: ${r.clientName}, Batch: ${r.batchNo || 'N/A'}, Notes: ${r.notes || ''})`,
+            source: 'sales_return'
+          });
+        }
+      });
+
+      // E. Cancelled Challans (Stock Addition)
+      allChallans.forEach(c => {
+        const cancelDate = c.cancelledAt ? c.cancelledAt.slice(0, 10) : c.date;
+        if (c.productName === productName && c.isCancelled && cancelDate >= fromDate && cancelDate <= toDate) {
+          const qty = c.restoredQty ?? (c.quantity - (c.returnedQty || 0));
+          if (qty > 0) {
+            transactions.push({
+              id: c.id,
+              date: cancelDate,
+              type: 'Addition',
+              qty: qty,
+              description: `Challan Cancelled (Challan: ${c.challanNumber}, Client: ${c.clientName}, Batch: ${c.batchNo || 'N/A'})`,
+              source: 'challan_cancel'
+            });
+          }
+        }
+      });
+
       // Sort chronologically
-      transactions.sort((a, b) => a.date.localeCompare(b.date));
+      transactions.sort((a, b) => {
+        const dateA = a.date ? new Date(a.date).getTime() : 0;
+        const dateB = b.date ? new Date(b.date).getTime() : 0;
+        return dateA - dateB;
+      });
 
       let totalAdditions = 0;
       let totalSubtractions = 0;
@@ -160,10 +206,10 @@ export default function DailyExport() {
       // Format sequence like "2+ 5- 4+"
       const sequence = transactions.map(t => `${t.qty}${t.type === 'Addition' ? '+' : '-'}`).join(' ');
 
-      // Current total available stock
+      // Current total physical stock (Available + Display + Damage)
       const currentAvailable = allBatches
         .filter(b => b.productName === productName)
-        .reduce((sum, b) => sum + (b.availableQty || 0), 0);
+        .reduce((sum, b) => sum + (b.availableQty || 0) + (b.displayQty || 0) + (b.damageQty || 0), 0);
 
       const details = transactions
         .map(t => `[${t.date}] ${t.qty}${t.type === 'Addition' ? '+' : '-'} (${t.description})`)
@@ -181,7 +227,7 @@ export default function DailyExport() {
         transactions
       };
     }).sort((a, b) => a.productName.localeCompare(b.productName));
-  }, [allBatches, allSales, allPurchases, fromDate, toDate]);
+  }, [allBatches, allSales, allPurchases, allSalesReturns, allChallans, fromDate, toDate]);
 
   // Filtered ledger data for live search preview
   const filteredLedger = useMemo(() => {
@@ -441,15 +487,19 @@ export default function DailyExport() {
                           {t.description}
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-destructive hover:text-red-700 hover:bg-red-50"
-                            onClick={() => handleDeleteTransaction(t)}
-                            title="Delete Transaction & Revert Stock"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                          {t.source !== 'sales_return' && t.source !== 'challan_cancel' ? (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-destructive hover:text-red-700 hover:bg-red-50"
+                              onClick={() => handleDeleteTransaction(t)}
+                              title="Delete Transaction & Revert Stock"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          ) : (
+                            <span className="text-[11px] text-muted-foreground italic px-2">System-locked</span>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))

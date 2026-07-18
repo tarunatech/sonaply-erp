@@ -5,17 +5,22 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Download, Printer, MessageCircle, CheckCircle2, Pencil, Trash2, ChevronDown, ChevronRight, User } from "lucide-react";
+import { Download, Printer, MessageCircle, CheckCircle2, Pencil, Trash2, ChevronDown, ChevronRight, ChevronLeft, User } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
+import { format } from "date-fns";
+
+const DELIVERY_TIME_ZONE = "Asia/Kolkata";
 
 export default function DeliveredOrders() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [editingOrder, setEditingOrder] = useState<any>(null);
   const [filter, setFilter] = useState('');
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 8;
   const { toast } = useToast();
 
   const refresh = useCallback(() => {
@@ -32,27 +37,118 @@ export default function DeliveredOrders() {
         o.orderNumber.toLowerCase().includes(filter.toLowerCase())
       )
       .sort((a, b) => {
-        const dateA = new Date(a.orderDate).getTime();
-        const dateB = new Date(b.orderDate).getTime();
+        const dateA = new Date(a.orderDate).getTime() || 0;
+        const dateB = new Date(b.orderDate).getTime() || 0;
         if (dateB !== dateA) return dateB - dateA;
-        return b.orderNumber.localeCompare(a.orderNumber);
+        return b.id.localeCompare(a.id);
       });
   }, [orders, filter]);
 
   const groupedOrders = useMemo(() => {
-    const groups: Record<string, { clientName: string, orders: Order[], date: string }> = {};
+    const groups: Record<string, { clientName: string, orders: Order[], date: string, deliveredAt: string }> = {};
     filteredOrders.forEach(o => {
       const key = o.orderNumber;
-      if (!groups[key]) groups[key] = { clientName: o.clientName, orders: [], date: o.orderDate };
+      if (!groups[key]) groups[key] = { clientName: o.clientName, orders: [], date: o.orderDate, deliveredAt: o.deliveredAt || "" };
       groups[key].orders.push(o);
+      if (o.deliveredAt) {
+        const current = groups[key].deliveredAt ? new Date(groups[key].deliveredAt).getTime() : 0;
+        const next = new Date(o.deliveredAt).getTime();
+        if (next > current) groups[key].deliveredAt = o.deliveredAt;
+      }
     });
     return Object.entries(groups).map(([orderNumber, group]) => ({
       orderNumber,
       clientName: group.clientName,
       orders: group.orders,
-      date: group.date
-    })).sort((a, b) => b.orderNumber.localeCompare(a.orderNumber));
+      date: group.date,
+      deliveredAt: group.deliveredAt
+    })).sort((a, b) => {
+      const aTime = new Date(a.deliveredAt || a.date).getTime() || 0;
+      const bTime = new Date(b.deliveredAt || b.date).getTime() || 0;
+      return bTime - aTime;
+    });
   }, [filteredOrders]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filter]);
+
+  const totalPages = Math.max(1, Math.ceil(groupedOrders.length / pageSize));
+  const pagedOrders = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return groupedOrders.slice(start, start + pageSize);
+  }, [groupedOrders, currentPage]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages);
+  }, [currentPage, totalPages]);
+
+  const parseDateValue = (value: string | Date | null | undefined) => {
+    if (!value) return null;
+    if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+    const normalized = value.includes("T") ? value : value.replace(" ", "T");
+    const d = new Date(normalized);
+    return Number.isNaN(d.getTime()) ? null : d;
+  };
+
+  const formatInDeliveryTimeZone = (value: string | Date | null | undefined, options: Intl.DateTimeFormatOptions) => {
+    const d = parseDateValue(value);
+    if (!d) return null;
+    return new Intl.DateTimeFormat("en-GB", {
+      timeZone: DELIVERY_TIME_ZONE,
+      ...options,
+    }).format(d);
+  };
+
+  const formatDateTime = (value: string | Date | null | undefined): string => {
+    if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      return value ? format(new Date(value), 'dd-MM-yyyy') : '-';
+    }
+    return formatInDeliveryTimeZone(value, {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    }) || (value ? String(value) : '-');
+  };
+
+  const formatOrderTime = (value: string | Date | null | undefined): string => {
+    if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) return 'Time not available';
+    return formatInDeliveryTimeZone(value, {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    }) || '-';
+  };
+
+  const formatDeliveryTime = (order: Order): string => {
+    if (order.deliveredAt) {
+      const time = formatInDeliveryTimeZone(order.deliveredAt, {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+      });
+      if (time) return time;
+    }
+    return formatOrderTime(order.orderDate);
+  };
+
+  const formatDeliveryDateTime = (order: Order): string => {
+    if (order.deliveredAt) {
+      const time = formatInDeliveryTimeZone(order.deliveredAt, {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+      });
+      if (time) return time;
+    }
+    return formatDateTime(order.orderDate);
+  };
 
   const toggleGroup = (orderNumber: string) => {
     setExpandedGroups(prev => ({ ...prev, [orderNumber]: !prev[orderNumber] }));
@@ -84,6 +180,20 @@ export default function DeliveredOrders() {
     window.open(generateWhatsAppLink(o.clientPhone, msg), '_blank');
   };
 
+  const exportRows = groupedOrders.flatMap(group =>
+    group.orders.map(o => ({
+      orderNumber: o.orderNumber,
+      clientName: o.clientName,
+      productName: o.productName,
+      quantity: o.quantity,
+      totalAmount: o.totalAmount,
+      orderDate: o.orderDate,
+      deliveredAt: o.deliveredAt || '',
+      deliveredDateTime: formatDeliveryDateTime(o),
+      status: o.status,
+    }))
+  );
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -100,7 +210,7 @@ export default function DeliveredOrders() {
               className="h-9"
             />
           </div>
-          <Button variant="outline" size="sm" onClick={() => exportCSV(filteredOrders as any, `delivered-orders-${new Date().toISOString().slice(0,10)}.csv`)}><Download className="mr-1 h-4 w-4" />Export</Button>
+          <Button variant="outline" size="sm" onClick={() => exportCSV(exportRows as any, `delivered-orders-${new Date().toISOString().slice(0,10)}.csv`)}><Download className="mr-1 h-4 w-4" />Export</Button>
           <Button variant="outline" size="sm" onClick={() => printElement('delivered-table')}><Printer className="mr-1 h-4 w-4" />Print</Button>
         </div>
       </div>
@@ -112,8 +222,8 @@ export default function DeliveredOrders() {
             <TableHead>Date</TableHead><TableHead>Status</TableHead><TableHead>Actions</TableHead>
           </TableRow></TableHeader>
           <TableBody>
-            {groupedOrders.length === 0 ? <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">No delivered orders found</TableCell></TableRow>
-            : groupedOrders.map(group => (
+            {pagedOrders.length === 0 ? <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">No delivered orders found</TableCell></TableRow>
+            : pagedOrders.map(group => (
               <Fragment key={group.orderNumber}>
                 <TableRow 
                   className="cursor-pointer bg-muted/30 hover:bg-muted/50 transition-colors group"
@@ -134,9 +244,14 @@ export default function DeliveredOrders() {
                         </div>
                       </div>
                       
-                      <div className="flex items-center gap-2 text-muted-foreground group-hover:text-foreground transition-colors">
-                        <span className="text-sm font-medium hidden sm:inline">{expandedGroups[group.orderNumber] ? 'Click to collapse' : 'Click to expand'}</span>
-                        {expandedGroups[group.orderNumber] ? <ChevronDown className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}
+                      <div className="flex flex-col items-end gap-1 text-muted-foreground group-hover:text-foreground transition-colors">
+                        <span className="text-xs sm:text-sm font-medium">
+                          {formatDateTime(group.deliveredAt || group.date)}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium hidden sm:inline">{expandedGroups[group.orderNumber] ? 'Click to collapse' : 'Click to expand'}</span>
+                          {expandedGroups[group.orderNumber] ? <ChevronDown className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}
+                        </div>
                       </div>
                     </div>
                   </TableCell>
@@ -148,8 +263,15 @@ export default function DeliveredOrders() {
                     <TableCell className="text-muted-foreground italic">Entry Details</TableCell>
                     <TableCell className="font-medium">{o.productName}</TableCell>
                     <TableCell className="text-right">{o.quantity}</TableCell>
-                    <TableCell className="text-right font-semibold">₹{o.totalAmount.toLocaleString()}</TableCell>
-                    <TableCell>{o.orderDate}</TableCell>
+                    <TableCell className="text-right font-semibold">Rs. {o.totalAmount.toLocaleString()}</TableCell>
+                    <TableCell>
+                      <div className="flex flex-col">
+                        <span>{formatDateTime(o.deliveredAt || o.orderDate)}</span>
+                        <span className="text-xs text-muted-foreground">
+                          Delivered at {formatDeliveryTime(o)}
+                        </span>
+                      </div>
+                    </TableCell>
                     <TableCell><Badge className="bg-success text-success-foreground">Delivered</Badge></TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
@@ -200,7 +322,28 @@ export default function DeliveredOrders() {
             ))}
           </TableBody>
         </Table>
+        {groupedOrders.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t p-3">
+            <div className="text-sm text-muted-foreground">
+              Showing {Math.min((currentPage - 1) * pageSize + 1, groupedOrders.length)} to {Math.min(currentPage * pageSize, groupedOrders.length)} of {groupedOrders.length} deliveries
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}>
+                <ChevronLeft className="mr-1 h-4 w-4" />
+                Prev
+              </Button>
+              <span className="text-sm font-medium">Page {currentPage} of {totalPages}</span>
+              <Button variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}>
+                Next
+                <ChevronRight className="ml-1 h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
       </div></CardContent></Card>
     </div>
   );
 }
+
+
+

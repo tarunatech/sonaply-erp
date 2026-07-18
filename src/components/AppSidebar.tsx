@@ -1,4 +1,4 @@
-import { LayoutDashboard, Package, PackagePlus, ShoppingCart, TrendingUp, ClipboardList, Download, Users, FileText, CheckCircle2, UserCircle } from "lucide-react";
+import { LayoutDashboard, Package, PackagePlus, ShoppingCart, TrendingUp, ClipboardList, Download, Users, FileText, CheckCircle2, UserCircle, RotateCcw } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
 import {
@@ -12,6 +12,7 @@ const items = [
   { title: "Stock Entry", url: "/stock-entry", icon: PackagePlus },
   { title: "Purchases", url: "/purchases", icon: ShoppingCart },
   { title: "Sales", url: "/sales", icon: TrendingUp },
+  { title: "Sales Return", url: "/sales-returns", icon: RotateCcw },
   { title: "Holds", url: "/holds", icon: ClipboardList },
   { title: "Orders", url: "/orders", icon: ClipboardList },
   { title: "Pending Orders", url: "/pending-orders", icon: ClipboardList },

@@ -16,6 +16,7 @@ import StockList from "./pages/StockList";
 import StockEntry from "./pages/StockEntry";
 import PurchasePage from "./pages/PurchasePage";
 import SalesPage from "./pages/SalesPage";
+import SalesReturnPage from "./pages/SalesReturnPage";
 import OrderTracking from "./pages/OrderTracking";
 import HoldPage from "./pages/HoldPage";
 import PendingOrders from "./pages/PendingOrders";
@@ -110,6 +111,7 @@ const App = () => {
                     <Route path="/stock-entry" element={<StockEntry />} />
                     <Route path="/purchases" element={<PurchasePage />} />
                     <Route path="/sales" element={<SalesPage />} />
+                    <Route path="/sales-returns" element={<SalesReturnPage />} />
                     <Route path="/orders" element={<OrderTracking />} />
                     <Route path="/holds" element={<HoldPage />} />
                     <Route path="/pending-orders" element={<PendingOrders />} />

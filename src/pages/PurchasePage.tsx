@@ -231,6 +231,12 @@ export default function PurchasePage() {
                         setShowSupplierSuggestions(false);
                         setSelectedSupplierIndex(-1);
                       }
+                    } else if (e.key === 'Tab') {
+                      if (selectedSupplierIndex >= 0 && selectedSupplierIndex < filtered.length) {
+                        setSupplierName(filtered[selectedSupplierIndex]);
+                        setShowSupplierSuggestions(false);
+                        setSelectedSupplierIndex(-1);
+                      }
                     } else if (e.key === 'Escape') {
                       setShowSupplierSuggestions(false);
                       setSelectedSupplierIndex(-1);
@@ -315,6 +321,12 @@ export default function PurchasePage() {
                             } else {
                               e.currentTarget.blur();
                             }
+                          } else if (e.key === 'Tab') {
+                            if (selectedProductSuggestionIndex >= 0 && selectedProductSuggestionIndex < filtered.length) {
+                              updateItem(index, 'productName', filtered[selectedProductSuggestionIndex]);
+                              setActiveProductIndex(null);
+                              setSelectedProductSuggestionIndex(-1);
+                            }
                           } else if (e.key === 'Escape') {
                             setActiveProductIndex(null);
                             setSelectedProductSuggestionIndex(-1);
@@ -374,6 +386,12 @@ export default function PurchasePage() {
                               setSelectedCategorySuggestionIndex(-1);
                             } else {
                               e.currentTarget.blur();
+                            }
+                          } else if (e.key === 'Tab') {
+                            if (selectedCategorySuggestionIndex >= 0 && selectedCategorySuggestionIndex < filtered.length) {
+                              updateItem(index, 'category', filtered[selectedCategorySuggestionIndex]);
+                              setActiveCategoryIndex(null);
+                              setSelectedCategorySuggestionIndex(-1);
                             }
                           } else if (e.key === 'Escape') {
                             setActiveCategoryIndex(null);

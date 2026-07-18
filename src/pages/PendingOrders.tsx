@@ -30,6 +30,7 @@ export default function PendingOrders() {
 
   const handleCreateChallan = async () => {
     if (!currentOrder) return;
+    setShowChallanDialog(false);
 
     const allChallans = await getChallans();
     let maxNum = 0;
@@ -52,15 +53,22 @@ export default function PendingOrders() {
       batchNo: challanForm.batchNo,
       notes: challanForm.notes,
       shouldFulfill: true,
+      skipStockUpdate: false,
+      stockCategory: currentOrder.stockCategory,
     });
 
     toast({ title: "Fulfillment Complete!", description: `Challan ${challanNum} generated. Order marked as fulfilled.` });
     
-    // Also update order status to Delivered
-    await updateOrder(currentOrder.id, { status: 'Delivered' });
+    // Also update order status to Delivered without changing stock again
+    await updateOrder(currentOrder.id, {
+      status: 'Delivered',
+      pendingQty: 0,
+      fulfilledQty: currentOrder.quantity,
+      skipStockUpdate: true,
+    } as any);
+    window.dispatchEvent(new CustomEvent("erp-stock-updated"));
 
     setChallanForm({ batchNo: '', notes: '' });
-    setShowChallanDialog(false);
     setCurrentOrder(null);
     refresh();
   };
@@ -77,6 +85,7 @@ export default function PendingOrders() {
       }
       await updateOrder(orderId, updates);
       toast({ title: "Status Updated", description: `Order status changed to ${newStatus}` });
+      window.dispatchEvent(new CustomEvent("erp-stock-updated"));
       refresh();
     } catch (error) {
       toast({ title: "Error", description: "Failed to update status", variant: "destructive" });

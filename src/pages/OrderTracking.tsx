@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback, Fragment } from "react";
 import { useNavigate } from "react-router-dom";
-import { getOrders, updateOrder, deleteOrder, exportCSV, generateWhatsAppLink, addChallan, getBatches, Order, StockBatch } from "@/lib/store";
+import { getOrders, updateOrder, deleteOrder, exportCSV, generateWhatsAppLink, addChallan, getBatches, getChallans, Order, StockBatch } from "@/lib/store";
 
 import { printElement } from "@/lib/print";
 import { Card, CardContent } from "@/components/ui/card";
@@ -82,6 +82,7 @@ export default function OrderTracking() {
       }
       await updateOrder(id, updates);
       toast({ title: "Status Updated", description: `Order status changed to ${status}` });
+      window.dispatchEvent(new CustomEvent("erp-stock-updated"));
       refresh();
     } catch (error) {
       toast({ title: "Error", description: "Failed to update status", variant: "destructive" });
@@ -117,7 +118,15 @@ export default function OrderTracking() {
 
   const handleCreateChallan = async () => {
     if (selectedOrders.length === 0) return;
-    const challanNum = `CHL-${Date.now().toString(36).toUpperCase()}`;
+    const allChallans = await getChallans();
+    let maxNum = 0;
+    for (const c of allChallans) {
+      const numPart = c.challanNumber.split('-')[1];
+      if (numPart && !isNaN(parseInt(numPart, 10))) {
+        maxNum = Math.max(maxNum, parseInt(numPart, 10));
+      }
+    }
+    const challanNum = `CHL-${maxNum + 1}`;
     
     for (const order of selectedOrders) {
       await addChallan({
@@ -131,10 +140,12 @@ export default function OrderTracking() {
         batchNo: challanForm.batchNo,
         notes: challanForm.notes,
         skipStockUpdate: (order.fulfilledQty || 0) > 0,
+        stockCategory: order.stockCategory,
       });
     }
 
     toast({ title: "Challan Created!", description: `Challan ${challanNum} has been generated with ${selectedOrders.length} items.` });
+    window.dispatchEvent(new CustomEvent("erp-stock-updated"));
     setSelectedOrders([]);
     setChallanForm({ batchNo: '', notes: '' });
     setShowChallanDialog(false);
@@ -232,7 +243,11 @@ export default function OrderTracking() {
                     <TableCell className="font-medium pl-8">
                       <div className="flex items-center gap-2">
                         {o.orderNumber}
-                        {o.isChallanGenerated && <CheckCircle2 className="h-4 w-4 text-green-500" title="Challan already generated" />}
+                        {o.isChallanGenerated && (
+                          <span title="Challan already generated" className="inline-flex">
+                            <CheckCircle2 className="h-4 w-4 text-green-500" />
+                          </span>
+                        )}
                       </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground italic">Entry Details</TableCell>
