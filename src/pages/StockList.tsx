@@ -72,7 +72,11 @@ export default function StockList() {
         (i.category || '').toLowerCase().includes(s)
       );
     }
-    return [...b].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    return [...b].sort((a, b) => {
+      const nameCompare = (a.productName || '').localeCompare(b.productName || '', undefined, { numeric: true, sensitivity: 'base' });
+      if (nameCompare !== 0) return nameCompare;
+      return (a.batchNumber || '').localeCompare(b.batchNumber || '', undefined, { numeric: true, sensitivity: 'base' });
+    });
   }, [allBatches, search, selectedCategory]);
 
   const handleDelete = async (id: string) => {

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { getHolds, releaseHold, Hold } from "@/lib/store";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,6 +9,7 @@ import { toast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 
 export default function HoldPage() {
+  const navigate = useNavigate();
   const [holds, setHolds] = useState<Hold[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -30,8 +32,8 @@ export default function HoldPage() {
   const handleRelease = async (id: string) => {
     try {
       await releaseHold(id);
-      toast({ title: "Hold released successfully", description: "Stock returned to available inventory." });
-      fetchHolds();
+      toast({ title: "Hold released", description: "Order moved to Tracking." });
+      navigate("/orders");
     } catch (error) {
       toast({ title: "Failed to release hold", variant: "destructive" });
     }

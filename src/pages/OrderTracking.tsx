@@ -14,6 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
+import { format } from "date-fns";
 
 const STATUS_COLORS: Record<string, string> = {
   Pending: 'bg-warning text-warning-foreground',
@@ -104,10 +105,14 @@ export default function OrderTracking() {
 
   const handleEditSave = async () => {
     if (!editingOrder) return;
-    await updateOrder(editingOrder.id, editingOrder);
+    // Recalculate pendingQty based on new quantity and current fulfilledQty
+    const fulfilledQty = editingOrder.fulfilledQty ?? 0;
+    const newPendingQty = Math.max(0, (editingOrder.quantity ?? 0) - fulfilledQty);
+    const updatedOrder = { ...editingOrder, pendingQty: newPendingQty };
+    await updateOrder(editingOrder.id, updatedOrder);
     refresh();
     setEditingOrder(null);
-    toast({ title: "Order updated" });
+    toast({ title: "Order updated", description: `Pending qty updated to ${newPendingQty}` });
   };
 
 
@@ -224,50 +229,52 @@ export default function OrderTracking() {
                   className="cursor-pointer bg-muted/30 hover:bg-muted/50 transition-colors group"
                   onClick={() => toggleGroup(group.orderNumber)}
                 >
-                  <TableCell colSpan={7} className="py-3 px-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-full bg-primary/10 text-primary">
-                          <User className="h-4 w-4" />
-                        </div>
-                        <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3">
-                          <span className="font-bold text-lg">{group.clientName}</span>
-                          <span className="text-xs font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded border">{group.orderNumber}</span>
-                          <div className="flex gap-2">
-                            <Badge variant="outline" className="bg-background w-fit">
-                              {group.orders.length} {group.orders.length === 1 ? 'Item' : 'Items'}
-                            </Badge>
-                            {group.orders.some(o => o.isChallanGenerated) && (
-                              <Badge variant="secondary" className="bg-green-100 text-green-700 hover:bg-green-100 flex gap-1 h-6 px-2 border-green-200">
-                                <CheckCircle2 className="h-3 w-3" /> Challan Generated
-                              </Badge>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      
-                      <div className="flex items-center gap-4">
-                        <div className="flex gap-2 no-print" onClick={e => e.stopPropagation()}>
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
-                            className="h-8 w-8 p-0"
-                            onClick={() => {
-                              setChallanForm({ batchNo: group.orders[0].batchNo || '0', notes: '' });
-                              setSelectedOrders(group.orders);
-                              setShowChallanDialog(true);
-                            }} 
-                            title="Create Challan for all items"
-                          >
-                            <FileText className="h-4 w-4" />
-                          </Button>
-                        </div>
-
-                        <div className="flex items-center gap-2 text-muted-foreground group-hover:text-foreground transition-colors border-l pl-4 h-8">
-                          <span className="text-sm font-medium hidden sm:inline">{expandedGroups[group.orderNumber] ? 'Click to collapse' : 'Click to expand'}</span>
-                          {expandedGroups[group.orderNumber] ? <ChevronDown className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}
-                        </div>
-                      </div>
+                  <TableCell className="font-mono text-xs font-semibold py-3 px-4">
+                    <div className="flex items-center gap-2">
+                      {expandedGroups[group.orderNumber] ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
+                      {group.orderNumber}
+                    </div>
+                  </TableCell>
+                  <TableCell className="font-bold py-3 px-4">
+                    <div className="flex items-center gap-2">
+                      <User className="h-4 w-4 text-primary shrink-0" />
+                      <span>{group.clientName}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell className="py-3 px-4 text-muted-foreground text-xs font-medium">
+                    {group.orders.length} {group.orders.length === 1 ? 'Item' : 'Items'}
+                  </TableCell>
+                  <TableCell className="py-3 px-4 text-right font-medium text-muted-foreground">
+                    {group.orders.reduce((sum, o) => sum + (o.quantity || 0), 0)}
+                  </TableCell>
+                  <TableCell className="py-3 px-4 text-right font-semibold text-primary">
+                    ₹{group.orders.reduce((sum, o) => sum + (o.totalAmount || 0), 0).toLocaleString()}
+                  </TableCell>
+                  <TableCell className="py-3 px-4 text-sm font-semibold text-muted-foreground">
+                    {group.date ? format(new Date(group.date), 'dd-MM-yyyy') : ''}
+                  </TableCell>
+                  <TableCell className="py-3 px-4">
+                    {group.orders.some(o => o.isChallanGenerated) && (
+                      <Badge variant="secondary" className="bg-green-100 text-green-700 hover:bg-green-100 flex gap-1 h-6 px-2 border-green-200 w-fit text-[10px]">
+                        <CheckCircle2 className="h-3 w-3" /> Challan
+                      </Badge>
+                    )}
+                  </TableCell>
+                  <TableCell className="py-3 px-4" onClick={e => e.stopPropagation()}>
+                    <div className="flex gap-2 no-print">
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        className="h-8 w-8 p-0"
+                        onClick={() => {
+                          setChallanForm({ batchNo: group.orders[0].batchNo || '0', notes: '' });
+                          setSelectedOrders(group.orders);
+                          setShowChallanDialog(true);
+                        }} 
+                        title="Create Challan for all items"
+                      >
+                        <FileText className="h-4 w-4" />
+                      </Button>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -289,6 +296,11 @@ export default function OrderTracking() {
                       {o.batchNo && (
                         <div className="text-[10px] text-muted-foreground mt-0.5 font-semibold">
                           Batch: {o.batchNo}
+                        </div>
+                      )}
+                      {o.narration && (
+                        <div className="text-[10px] text-amber-600 bg-amber-50 border border-amber-100 rounded px-1.5 py-0.5 mt-1 font-semibold w-fit">
+                          Narration: {o.narration}
                         </div>
                       )}
                       <div className="text-[10px] text-blue-600 font-bold mt-1 uppercase">
@@ -329,7 +341,7 @@ export default function OrderTracking() {
                       </div>
                     </TableCell>
                     <TableCell className="text-right font-semibold text-primary">₹{o.totalAmount.toLocaleString()}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{o.orderDate}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{o.orderDate ? format(new Date(o.orderDate), 'dd-MM-yyyy') : ''}</TableCell>
                     <TableCell>
                       <Select
                         value={o.status}
@@ -388,7 +400,16 @@ export default function OrderTracking() {
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label>Total Quantity</Label>
-                <Input type="number" value={editingOrder?.quantity || ''} onChange={e => setEditingOrder({...editingOrder, quantity: +e.target.value})} />
+                <Input
+                  type="number"
+                  value={editingOrder?.quantity || ''}
+                  onChange={e => {
+                    const newQty = +e.target.value;
+                    const fulfilled = editingOrder?.fulfilledQty ?? 0;
+                    const newPending = Math.max(0, newQty - fulfilled);
+                    setEditingOrder({ ...editingOrder, quantity: newQty, pendingQty: newPending });
+                  }}
+                />
               </div>
               <div className="grid gap-2">
                 <Label>Amount (₹)</Label>
@@ -398,11 +419,11 @@ export default function OrderTracking() {
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label className="text-success font-bold">Fulfilled Qty (Deducted)</Label>
-                <Input type="number" value={editingOrder?.fulfilledQty || 0} onChange={e => setEditingOrder({...editingOrder, fulfilledQty: +e.target.value})} />
+                <Input type="number" value={editingOrder?.fulfilledQty || 0} readOnly className="bg-muted cursor-not-allowed" />
               </div>
               <div className="grid gap-2">
-                <Label className="text-red-600 font-bold">Pending Qty</Label>
-                <Input type="number" value={editingOrder?.pendingQty || 0} onChange={e => setEditingOrder({...editingOrder, pendingQty: +e.target.value})} />
+                <Label className="text-red-600 font-bold">Pending Qty <span className="text-xs font-normal text-muted-foreground">(auto-calculated)</span></Label>
+                <Input type="number" value={editingOrder?.pendingQty ?? 0} readOnly className="bg-muted cursor-not-allowed" />
               </div>
             </div>
             <div className="grid gap-2">
@@ -426,6 +447,10 @@ export default function OrderTracking() {
                   })}
                 </SelectContent>
               </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label>Narration / Notes</Label>
+              <Input value={editingOrder?.narration || ''} onChange={e => setEditingOrder({...editingOrder, narration: e.target.value})} placeholder="Narration" />
             </div>
           </div>
           <DialogFooter><Button onClick={handleEditSave}>Save Changes</Button></DialogFooter>

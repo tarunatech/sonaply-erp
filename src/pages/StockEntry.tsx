@@ -7,6 +7,20 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { PackagePlus } from "lucide-react";
 
+const STOCK_CATEGORIES = [
+  "FINE TOUCH",
+  "FINE TOUCH LITE",
+  "FINOBLE",
+  "REAL PLUS",
+  "REAL TOUCH",
+  "ROXX LAM",
+  "KIWI DECOR",
+  "ELITE LAM",
+  "ACRIKA",
+  "KALAA",
+  "YOUR DECOR"
+];
+
 const defaultForm = { productCode: '', productName: '', category: '', batchNumber: '', supplier: '', quantity: 0, date: new Date().toISOString().slice(0, 10), description: '' };
 
 export default function StockEntry() {
@@ -23,6 +37,9 @@ export default function StockEntry() {
   const nameContainerRef = useRef<HTMLDivElement>(null);
   const categoryContainerRef = useRef<HTMLDivElement>(null);
   const supplierContainerRef = useRef<HTMLDivElement>(null);
+  const [showBatchSuggestions, setShowBatchSuggestions] = useState(false);
+  const [selectedBatchIndex, setSelectedBatchIndex] = useState(-1);
+  const batchContainerRef = useRef<HTMLDivElement>(null);
 
   const { toast } = useToast();
   
@@ -33,6 +50,43 @@ export default function StockEntry() {
   const uniqueCodes = useMemo(() => Array.from(new Set(batches.map(b => b.productCode).filter(Boolean))), [batches]);
   const uniqueCategories = useMemo(() => Array.from(new Set(batches.map(b => b.category).filter(Boolean))).sort(), [batches]);
   const uniqueSuppliers = useMemo(() => Array.from(new Set(batches.map(b => b.supplier).filter(Boolean))).sort(), [batches]);
+
+  const categoriesToShow = useMemo(() => {
+    if (form.productName) {
+      const matches = batches.filter(b => b.productName.toLowerCase().trim() === form.productName.toLowerCase().trim());
+      if (matches.length > 0) {
+        return Array.from(new Set(matches.map(b => b.category).filter(Boolean))).sort();
+      }
+    }
+    return Array.from(new Set([...STOCK_CATEGORIES, ...uniqueCategories])).sort();
+  }, [form.productName, uniqueCategories, batches]);
+
+  const batchesToShow = useMemo(() => {
+    if (!form.productName) return Array.from(new Set(batches.map(b => b.batchNumber).filter(Boolean))).sort();
+    const matches = batches.filter(b => b.productName.toLowerCase().trim() === form.productName.toLowerCase().trim());
+    const filteredByCat = form.category 
+      ? matches.filter(b => b.category.toLowerCase().trim() === form.category.toLowerCase().trim())
+      : matches;
+    const source = filteredByCat.length > 0 ? filteredByCat : matches;
+    return Array.from(new Set(source.map(b => b.batchNumber).filter(Boolean))).sort();
+  }, [form.productName, form.category, batches]);
+
+  const handleSelectProductName = (name: string) => {
+    const matches = batches.filter(b => b.productName.toLowerCase().trim() === name.toLowerCase().trim());
+    const categories = Array.from(new Set(matches.map(b => b.category).filter(Boolean))).sort();
+    const batchesList = Array.from(new Set(matches.map(b => b.batchNumber).filter(Boolean))).sort();
+
+    const newCategory = categories.length === 1 ? categories[0] : '';
+    const newBatch = batchesList.length === 1 ? batchesList[0] : '';
+
+    setForm(prev => ({
+      ...prev,
+      productName: name,
+      category: newCategory || prev.category,
+      batchNumber: newBatch || prev.batchNumber
+    }));
+    setShowNameSuggestions(false);
+  };
 
   const scrollToSelected = (containerRef: React.RefObject<HTMLDivElement>, index: number) => {
     if (index >= 0 && containerRef.current) {
@@ -46,6 +100,7 @@ export default function StockEntry() {
   useEffect(() => scrollToSelected(nameContainerRef, selectedNameIndex), [selectedNameIndex]);
   useEffect(() => scrollToSelected(categoryContainerRef, selectedCategoryIndex), [selectedCategoryIndex]);
   useEffect(() => scrollToSelected(supplierContainerRef, selectedSupplierIndex), [selectedSupplierIndex]);
+  useEffect(() => scrollToSelected(batchContainerRef, selectedBatchIndex), [selectedBatchIndex]);
 
   const handleSubmit = async () => {
     if (!form.productName || form.quantity <= 0) {
@@ -108,8 +163,7 @@ export default function StockEntry() {
                   } else if (e.key === 'Enter') {
                     if (selectedNameIndex >= 0 && selectedNameIndex < filtered.length) {
                       e.preventDefault();
-                      setForm(prev => ({ ...prev, productName: filtered[selectedNameIndex] }));
-                      setShowNameSuggestions(false);
+                      handleSelectProductName(filtered[selectedNameIndex]);
                       setSelectedNameIndex(-1);
                     }
                   } else if (e.key === 'Escape') {
@@ -129,8 +183,7 @@ export default function StockEntry() {
                         className={`px-3 py-2 cursor-pointer text-sm text-popover-foreground border-b last:border-0 ${selectedNameIndex === i ? 'bg-accent' : 'hover:bg-accent'}`}
                         onMouseDown={(e) => {
                           e.preventDefault();
-                          setForm(prev => ({ ...prev, productName: n }));
-                          setShowNameSuggestions(false);
+                          handleSelectProductName(n);
                         }}
                       >
                         {n}
@@ -159,7 +212,7 @@ export default function StockEntry() {
                   setSelectedCategoryIndex(-1);
                 }, 200)}
                 onKeyDown={e => {
-                  const filtered = uniqueCategories.filter(c => !form.category || c.toLowerCase().includes(form.category.toLowerCase()));
+                  const filtered = categoriesToShow.filter(c => !form.category || c.toLowerCase().includes(form.category.toLowerCase()));
                   if (e.key === 'ArrowDown') {
                     e.preventDefault();
                     setSelectedCategoryIndex(prev => (prev < filtered.length - 1 ? prev + 1 : prev));
@@ -183,7 +236,7 @@ export default function StockEntry() {
               />
               {showCategorySuggestions && (
                 <div ref={categoryContainerRef} className="absolute z-10 w-full mt-1 bg-popover border rounded-md shadow-md max-h-60 overflow-y-auto">
-                  {uniqueCategories
+                  {categoriesToShow
                     .filter(c => !form.category || c.toLowerCase().includes(form.category.toLowerCase()))
                     .map((c, i) => (
                       <div 
@@ -198,14 +251,75 @@ export default function StockEntry() {
                         {c}
                       </div>
                   ))}
-                  {uniqueCategories.filter(c => !form.category || c.toLowerCase().includes(form.category.toLowerCase())).length === 0 && (
+                  {categoriesToShow.filter(c => !form.category || c.toLowerCase().includes(form.category.toLowerCase())).length === 0 && (
                     <div className="px-3 py-2 text-sm text-muted-foreground">No matches found.</div>
                   )}
                 </div>
               )}
             </div>
 
-            <div><Label>Batch Number</Label><Input value={form.batchNumber} onChange={e => u('batchNumber', e.target.value)} /></div>
+            <div className="relative">
+              <Label>Batch Number</Label>
+              <Input 
+                value={form.batchNumber} 
+                onChange={e => {
+                  u('batchNumber', e.target.value);
+                  setShowBatchSuggestions(true);
+                }} 
+                onFocus={() => {
+                  setShowBatchSuggestions(true);
+                  setSelectedBatchIndex(-1);
+                }}
+                onBlur={() => setTimeout(() => {
+                  setShowBatchSuggestions(false);
+                  setSelectedBatchIndex(-1);
+                }, 200)}
+                onKeyDown={e => {
+                  const filtered = batchesToShow.filter(b => !form.batchNumber || b.toLowerCase().includes(form.batchNumber.toLowerCase()));
+                  if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    setSelectedBatchIndex(prev => (prev < filtered.length - 1 ? prev + 1 : prev));
+                  } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    setSelectedBatchIndex(prev => (prev > 0 ? prev - 1 : prev));
+                  } else if (e.key === 'Enter') {
+                    if (selectedBatchIndex >= 0 && selectedBatchIndex < filtered.length) {
+                      e.preventDefault();
+                      u('batchNumber', filtered[selectedBatchIndex]);
+                      setShowBatchSuggestions(false);
+                      setSelectedBatchIndex(-1);
+                    }
+                  } else if (e.key === 'Escape') {
+                    setShowBatchSuggestions(false);
+                    setSelectedBatchIndex(-1);
+                  }
+                }}
+                placeholder="Batch Number"
+                autoComplete="off"
+              />
+              {showBatchSuggestions && (
+                <div ref={batchContainerRef} className="absolute z-10 w-full mt-1 bg-popover border rounded-md shadow-md max-h-60 overflow-y-auto">
+                  {batchesToShow
+                    .filter(b => !form.batchNumber || b.toLowerCase().includes(form.batchNumber.toLowerCase()))
+                    .map((b, i) => (
+                      <div 
+                        key={b} 
+                        className={`px-3 py-2 cursor-pointer text-sm text-popover-foreground border-b last:border-0 ${selectedBatchIndex === i ? 'bg-accent' : 'hover:bg-accent'}`}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          u('batchNumber', b);
+                          setShowBatchSuggestions(false);
+                        }}
+                      >
+                        {b}
+                      </div>
+                  ))}
+                  {batchesToShow.filter(b => !form.batchNumber || b.toLowerCase().includes(form.batchNumber.toLowerCase())).length === 0 && (
+                    <div className="px-3 py-2 text-sm text-muted-foreground">No matches found.</div>
+                  )}
+                </div>
+              )}
+            </div>
             <div className="relative">
               <Label>Supplier / Party</Label>
               <Input 

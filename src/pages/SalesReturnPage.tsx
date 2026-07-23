@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 import { Download, Plus } from "lucide-react";
+import { format } from "date-fns";
 
 const PRICE_CATEGORIES = ['Regular', 'Premium', 'Only Cash'];
 
@@ -30,6 +31,7 @@ export default function SalesReturnPage() {
   const clientContainerRef = useRef<HTMLDivElement>(null);
   const productContainerRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
+  const receiveDateInputRef = useRef<HTMLInputElement>(null);
 
   const refresh = async () => {
     const [r, c, b] = await Promise.all([getSalesReturns(), getClients(), getBatches()]);
@@ -85,6 +87,9 @@ export default function SalesReturnPage() {
     setPriceCategory(client.priceCategory || 'Regular');
     setShowClientSuggestions(false);
     setSelectedClientIndex(-1);
+    setTimeout(() => {
+      receiveDateInputRef.current?.focus();
+    }, 0);
   };
 
   const pickProduct = (name: string) => {
@@ -138,8 +143,13 @@ export default function SalesReturnPage() {
                 <Input
                   value={clientName}
                   onChange={e => {
-                    setClientName(e.target.value);
+                    const value = e.target.value;
+                    setClientName(value);
                     setShowClientSuggestions(true);
+                    if (!value) {
+                      setClientPhone('');
+                      setPriceCategory('Regular');
+                    }
                   }}
                   onFocus={() => {
                     setShowClientSuggestions(true);
@@ -192,16 +202,13 @@ export default function SalesReturnPage() {
             </div>
             <div>
               <Label>Client Phone</Label>
-              <Input value={clientPhone} onChange={e => setClientPhone(e.target.value)} placeholder="Phone number" />
+              <Input value={clientPhone} placeholder="Phone number" disabled />
             </div>
             <div>
               <Label>Price Category</Label>
               <Select
                 value={PRICE_CATEGORIES.includes(priceCategory) ? priceCategory : 'custom'}
-                onValueChange={v => {
-                  if (v === 'custom') return;
-                  setPriceCategory(v);
-                }}
+                disabled
               >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -213,12 +220,12 @@ export default function SalesReturnPage() {
                 className="mt-2"
                 placeholder="Or type a custom price category"
                 value={PRICE_CATEGORIES.includes(priceCategory) ? '' : priceCategory}
-                onChange={e => setPriceCategory(e.target.value)}
+                disabled
               />
             </div>
             <div>
               <Label>Receive Date</Label>
-              <Input type="date" value={receiveDate} onChange={e => setReceiveDate(e.target.value)} />
+              <Input ref={receiveDateInputRef} type="date" value={receiveDate} onChange={e => setReceiveDate(e.target.value)} />
             </div>
             <div className="sm:col-span-2">
               <Label>Product Name *</Label>
@@ -347,7 +354,7 @@ export default function SalesReturnPage() {
                   <TableCell>{item.productName}</TableCell>
                   <TableCell className="text-right">{item.quantity}</TableCell>
                   <TableCell>{item.batchNo || "-"}</TableCell>
-                  <TableCell>{item.receiveDate}</TableCell>
+                  <TableCell>{item.receiveDate ? format(new Date(item.receiveDate), 'dd-MM-yyyy') : "-"}</TableCell>
                   <TableCell className="max-w-[220px] truncate" title={item.notes}>{item.notes || "-"}</TableCell>
                 </TableRow>
               ))}

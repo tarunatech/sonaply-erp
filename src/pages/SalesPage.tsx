@@ -39,6 +39,7 @@ export default function SalesPage() {
   const [sales, setSales] = useState<Sale[]>([]);
   const [allBatches, setAllBatches] = useState<StockBatch[]>([]);
   const [editingSale, setEditingSale] = useState<any>(null);
+  const [showNarrationDialog, setShowNarrationDialog] = useState(false);
   const [productFilter, setProductFilter] = useState('');
   const [showClientSuggestions, setShowClientSuggestions] = useState(false);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
@@ -325,9 +326,14 @@ export default function SalesPage() {
                 <Input 
                   value={clientName} 
                   onChange={e => {
-                    setClientName(e.target.value);
+                    const value = e.target.value;
+                    setClientName(value);
                     setShowClientSuggestions(true);
                     setSelectedClientId(null);
+                    if (!value) {
+                      setClientPhone('');
+                      setPriceCategory('Regular');
+                    }
                   }} 
                   onFocus={() => {
                     setShowClientSuggestions(true);
@@ -403,12 +409,9 @@ export default function SalesPage() {
                   </div>
                 )}
               </div>
-              <div><Label>Client Phone</Label><Input value={clientPhone} onChange={e => setClientPhone(e.target.value)} placeholder="919876543210" /></div>
+              <div><Label>Client Phone</Label><Input value={clientPhone} placeholder="919876543210" disabled /></div>
               <div><Label>Price Category</Label>
-                <Select value={PRICE_CATEGORIES.includes(priceCategory) ? priceCategory : 'custom'} onValueChange={v => {
-                  if (v === 'custom') return;
-                  setPriceCategory(v);
-                }}>
+                <Select value={PRICE_CATEGORIES.includes(priceCategory) ? priceCategory : 'custom'} disabled>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {PRICE_CATEGORIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
@@ -419,7 +422,7 @@ export default function SalesPage() {
                   className="mt-2"
                   placeholder="Or type a custom price category"
                   value={PRICE_CATEGORIES.includes(priceCategory) ? '' : priceCategory}
-                  onChange={e => setPriceCategory(e.target.value)}
+                  disabled
                 />
               </div>
               <div><Label>Order Date</Label><Input type="date" value={orderDate} onChange={e => setOrderDate(e.target.value)} /></div>
@@ -631,11 +634,37 @@ export default function SalesPage() {
                         <Label className="text-xs text-muted-foreground mb-1 block">
                           Category selected
                         </Label>
-                        <Input
+                        <Select
                           value={item.stockCategory || 'Available'}
-                          disabled
-                          className="bg-muted text-foreground font-semibold"
-                        />
+                          onValueChange={v => {
+                            updateItem(index, { stockCategory: v as any });
+                          }}
+                          disabled={!item.isProductSelected}
+                        >
+                          <SelectTrigger className="h-9 font-semibold">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Available">
+                              Available ({(() => {
+                                const batch = productBatches.find(b => b.batchNumber === item.batchNo);
+                                return batch ? batch.availableQty : 0;
+                              })()})
+                            </SelectItem>
+                            <SelectItem value="Display">
+                              Display ({(() => {
+                                const batch = productBatches.find(b => b.batchNumber === item.batchNo);
+                                return batch ? batch.displayQty || 0 : 0;
+                              })()})
+                            </SelectItem>
+                            <SelectItem value="Damage">
+                              Damage ({(() => {
+                                const batch = productBatches.find(b => b.batchNumber === item.batchNo);
+                                return batch ? batch.damageQty || 0 : 0;
+                              })()})
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
                       <div className="col-span-2 flex justify-end gap-2 items-center pt-7">
                         {index === items.length - 1 && (
@@ -654,7 +683,7 @@ export default function SalesPage() {
             </div>
 
             <div className="flex justify-end gap-3 mt-6 border-t pt-4">
-              <Dialog>
+              <Dialog open={showNarrationDialog} onOpenChange={setShowNarrationDialog}>
                 <DialogTrigger asChild>
                   <Button variant="outline" className="text-blue-600 hover:text-blue-700 hover:bg-blue-50 border-blue-200">
                     <MessageCircle className="mr-2 h-4 w-4" /> Narration
@@ -670,8 +699,19 @@ export default function SalesPage() {
                       placeholder="Enter narration here..." 
                       value={narration} 
                       onChange={(e) => setNarration(e.target.value)} 
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          setShowNarrationDialog(false);
+                        }
+                      }}
                     />
                   </div>
+                  <DialogFooter>
+                    <Button onClick={() => setShowNarrationDialog(false)}>
+                      Add Narration
+                    </Button>
+                  </DialogFooter>
                 </DialogContent>
               </Dialog>
               <Button variant="outline" className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 border-amber-200" onClick={handleHold}>
