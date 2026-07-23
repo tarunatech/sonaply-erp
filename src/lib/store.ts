@@ -199,6 +199,7 @@ const mapOrder = (o: any): Order => ({
   fulfilledQty: o.fulfilled_qty,
   deliveredAt: o.delivered_at,
   stockCategory: o.stock_category,
+  narration: o.narration,
 });
 
 const mapSale = (s: any): Sale => ({
@@ -496,6 +497,7 @@ export const updateOrder = (id: string, updates: Partial<Order>) => {
   if (updates.skipStockUpdate !== undefined)
     body.skip_stock_update = updates.skipStockUpdate;
   if (updates.stockCategory) body.stock_category = updates.stockCategory;
+  if (updates.narration !== undefined) body.narration = updates.narration;
   if (updates.status === "Delivered")
     body.delivered_at = new Date().toISOString();
   return request<any>(`/orders/${id}`, {

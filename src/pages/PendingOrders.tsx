@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { getOrders, updateOrder, exportCSV, addChallan, getBatches, getChallans, Order, StockBatch } from "@/lib/store";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { format } from "date-fns";
 import { printElement } from "@/lib/print";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -186,7 +187,7 @@ export default function PendingOrders() {
                     </TableCell>
                     <TableCell className="text-right">{o.quantity}</TableCell>
                     <TableCell className="text-right font-black text-red-600 text-lg">{o.pendingQty}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{o.orderDate}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{o.orderDate ? format(new Date(o.orderDate), 'dd-MM-yyyy') : ''}</TableCell>
                     <TableCell>
                       <Select
                         value={o.status}

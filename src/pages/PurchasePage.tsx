@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { addPurchase, addBatch, getPurchases, updatePurchase, deletePurchase, exportCSV, Purchase } from "@/lib/store";
+import { addPurchase, addBatch, getPurchases, updatePurchase, deletePurchase, exportCSV, Purchase, getBatches, StockBatch } from "@/lib/store";
 import { printElement } from "@/lib/print";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -52,8 +52,37 @@ export default function PurchasePage() {
   const productContainerRef = useRef<HTMLDivElement>(null);
   const [expandedSuppliers, setExpandedSuppliers] = useState<Record<string, boolean>>({});
   const { toast } = useToast();
+  const addProductBtnRef = useRef<HTMLButtonElement>(null);
+  const productInputsRef = useRef<(HTMLInputElement | null)[]>([]);
+  const [allBatches, setAllBatches] = useState<StockBatch[]>([]);
+  const [activeBatchIndex, setActiveBatchIndex] = useState<number | null>(null);
+  const [selectedBatchSuggestionIndex, setSelectedBatchSuggestionIndex] = useState<number>(-1);
+  const batchContainerRef = useRef<HTMLDivElement>(null);
+  const recordPurchaseBtnRef = useRef<HTMLButtonElement>(null);
 
-  const refresh = useCallback(() => getPurchases().then(setPurchases), []);
+  useEffect(() => {
+    if (selectedBatchSuggestionIndex >= 0 && batchContainerRef.current) {
+      const activeElement = batchContainerRef.current.children[selectedBatchSuggestionIndex] as HTMLElement;
+      if (activeElement) {
+        activeElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+  }, [selectedBatchSuggestionIndex]);
+
+  useEffect(() => {
+    if (items.length > 1) {
+      const lastIndex = items.length - 1;
+      const lastInput = productInputsRef.current[lastIndex];
+      if (lastInput && !lastInput.value) {
+        lastInput.focus();
+      }
+    }
+  }, [items.length]);
+
+  const refresh = useCallback(() => {
+    getPurchases().then(setPurchases);
+    getBatches().then(setAllBatches);
+  }, []);
   useEffect(() => { refresh(); }, [refresh]);
 
   const uniqueSuppliers = useMemo(() => {
@@ -276,7 +305,25 @@ export default function PurchasePage() {
             <div className="space-y-4 pb-48">
               <div className="flex justify-between items-center">
                 <h3 className="font-semibold">Products</h3>
-                <Button variant="outline" size="sm" onClick={addItem}><Plus className="mr-1 h-4 w-4" /> Add Product</Button>
+                <Button 
+                  ref={addProductBtnRef} 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={addItem}
+                  onKeyDown={e => {
+                    if (e.key === 'Tab' && !e.shiftKey) {
+                      e.preventDefault();
+                      const isFirstRowEmpty = !items[0]?.productName;
+                      if (isFirstRowEmpty) {
+                        productInputsRef.current[0]?.focus();
+                      } else {
+                        recordPurchaseBtnRef.current?.focus();
+                      }
+                    }
+                  }}
+                >
+                  <Plus className="mr-1 h-4 w-4" /> Add Product
+                </Button>
               </div>
               
               <div className="space-y-2">
@@ -291,6 +338,7 @@ export default function PurchasePage() {
                   <div key={index} className="grid grid-cols-12 gap-4 items-start relative px-2 py-2 border-b last:border-0">
                     <div className="col-span-4 relative">
                       <Input 
+                        ref={el => { productInputsRef.current[index] = el; }}
                         value={item.productName} 
                         onChange={e => {
                           updateItem(index, 'productName', e.target.value);
@@ -423,8 +471,91 @@ export default function PurchasePage() {
                     <div className="col-span-2">
                       <Input type="number" value={item.quantity || ''} onChange={e => updateItem(index, 'quantity', +e.target.value)} onKeyDown={e => e.key === 'Enter' && e.currentTarget.blur()} placeholder="Qty" />
                     </div>
-                    <div className="col-span-2">
-                      <Input value={item.batchNumber} onChange={e => updateItem(index, 'batchNumber', e.target.value)} onKeyDown={e => e.key === 'Enter' && e.currentTarget.blur()} placeholder="Batch" />
+                    <div className="col-span-2 relative">
+                      <Input 
+                        value={item.batchNumber} 
+                        onChange={e => {
+                          updateItem(index, 'batchNumber', e.target.value);
+                          setActiveBatchIndex(index);
+                        }} 
+                        onFocus={() => {
+                          setActiveBatchIndex(index);
+                          setSelectedBatchSuggestionIndex(-1);
+                        }}
+                        onBlur={() => setTimeout(() => {
+                          setActiveBatchIndex(null);
+                          setSelectedBatchSuggestionIndex(-1);
+                        }, 200)}
+                        onKeyDown={e => {
+                          const rowBatches = Array.from(new Set(
+                            allBatches
+                              .filter(b => !item.productName || b.productName.trim().toLowerCase() === item.productName.trim().toLowerCase())
+                              .map(b => b.batchNumber)
+                              .filter(Boolean)
+                          )).sort();
+                          const filtered = rowBatches.filter(b => !item.batchNumber || b.toLowerCase().includes(item.batchNumber.toLowerCase()));
+                          if (e.key === 'ArrowDown') {
+                            e.preventDefault();
+                            setSelectedBatchSuggestionIndex(prev => (prev < filtered.length - 1 ? prev + 1 : prev));
+                          } else if (e.key === 'ArrowUp') {
+                            e.preventDefault();
+                            setSelectedBatchSuggestionIndex(prev => (prev > 0 ? prev - 1 : prev));
+                          } else if (e.key === 'Enter') {
+                            if (selectedBatchSuggestionIndex >= 0 && selectedBatchSuggestionIndex < filtered.length) {
+                              e.preventDefault();
+                              updateItem(index, 'batchNumber', filtered[selectedBatchSuggestionIndex]);
+                              setActiveBatchIndex(null);
+                              setSelectedBatchSuggestionIndex(-1);
+                            } else {
+                              e.currentTarget.blur();
+                            }
+                          } else if (e.key === 'Tab') {
+                            if (selectedBatchSuggestionIndex >= 0 && selectedBatchSuggestionIndex < filtered.length) {
+                              updateItem(index, 'batchNumber', filtered[selectedBatchSuggestionIndex]);
+                              setActiveBatchIndex(null);
+                              setSelectedBatchSuggestionIndex(-1);
+                              if (!e.shiftKey && index === items.length - 1) {
+                                e.preventDefault();
+                                addProductBtnRef.current?.focus();
+                              }
+                            } else if (!e.shiftKey && index === items.length - 1) {
+                              e.preventDefault();
+                              addProductBtnRef.current?.focus();
+                            }
+                          } else if (e.key === 'Escape') {
+                            setActiveBatchIndex(null);
+                            setSelectedBatchSuggestionIndex(-1);
+                          }
+                        }}
+                        placeholder="Batch No" 
+                        autoComplete="off"
+                      />
+                      {activeBatchIndex === index && (
+                        <div ref={batchContainerRef} className="absolute z-[110] w-full mt-1 bg-popover border rounded-md shadow-lg max-h-40 overflow-y-auto">
+                          {(() => {
+                            const rowBatches = Array.from(new Set(
+                              allBatches
+                                .filter(b => !item.productName || b.productName.trim().toLowerCase() === item.productName.trim().toLowerCase())
+                                .map(b => b.batchNumber)
+                                .filter(Boolean)
+                            )).sort();
+                            const filtered = rowBatches.filter(b => !item.batchNumber || b.toLowerCase().includes(item.batchNumber.toLowerCase()));
+                            return filtered.map((b, i) => (
+                              <div 
+                                key={b} 
+                                className={`px-3 py-2 cursor-pointer text-sm text-popover-foreground border-b last:border-0 ${selectedBatchSuggestionIndex === i ? 'bg-accent' : 'hover:bg-accent'}`}
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  updateItem(index, 'batchNumber', b);
+                                  setActiveBatchIndex(null);
+                                }}
+                              >
+                                {b}
+                              </div>
+                            ));
+                          })()}
+                        </div>
+                      )}
                     </div>
                     <div className="col-span-1 flex justify-end">
                       <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => removeItem(index)} disabled={items.length === 1}>
@@ -436,7 +567,7 @@ export default function PurchasePage() {
               </div>
             </div>
 
-            <Button className="w-full mt-4" onClick={handleSubmit}>Record Purchase</Button>
+            <Button ref={recordPurchaseBtnRef} className="w-full mt-4" onClick={handleSubmit}>Record Purchase</Button>
           </CardContent></Card>
         </TabsContent>
         <TabsContent value="history">

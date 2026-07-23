@@ -114,6 +114,34 @@ async function migrate() {
       await db.query(`ALTER TABLE challans DROP CONSTRAINT "${row.constraint_name}"`);
     }
 
+    // 9. Alterations for recent schema additions (delivered_at, challan cancel, sales_returns, display_qty, stock_category)
+    console.log('Step 9: Adding delivered_at, challan cancel fields, sales_returns, display_qty, and stock_category...');
+    await db.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP');
+    await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS is_cancelled BOOLEAN DEFAULT FALSE');
+    await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP');
+    await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS is_built BOOLEAN DEFAULT FALSE');
+    await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS restored_qty INTEGER');
+    await db.query('ALTER TABLE sales ADD COLUMN IF NOT EXISTS damage_qty INTEGER DEFAULT 0');
+    await db.query('ALTER TABLE holds ADD COLUMN IF NOT EXISTS held_qty INTEGER');
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS sales_returns (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        client_name TEXT NOT NULL,
+        client_phone TEXT,
+        price_category TEXT,
+        receive_date DATE DEFAULT CURRENT_DATE,
+        product_name TEXT NOT NULL,
+        quantity INTEGER NOT NULL,
+        batch_no TEXT,
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await db.query('ALTER TABLE batches ADD COLUMN IF NOT EXISTS display_qty INTEGER DEFAULT 0');
+    await db.query("ALTER TABLE sales ADD COLUMN IF NOT EXISTS stock_category TEXT DEFAULT 'Available'");
+    await db.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS stock_category TEXT DEFAULT 'Available'");
+    await db.query("ALTER TABLE challans ADD COLUMN IF NOT EXISTS stock_category TEXT DEFAULT 'Available'");
+
     console.log('✅ All migrations applied successfully!');
   } catch (err) {
     console.error('❌ Database migration failed:', err);
