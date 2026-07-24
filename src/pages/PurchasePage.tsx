@@ -210,7 +210,7 @@ export default function PurchasePage() {
         quantity: item.quantity, 
         rate: 0, 
         totalAmount: 0, 
-        batchNumber: item.batchNumber, 
+        batchNumber: item.batchNumber?.trim() || '0', 
         date 
       });
     }

@@ -437,11 +437,12 @@ export default function OrderTracking() {
                 </SelectTrigger>
                 <SelectContent>
                   {editingOrderBatchOptions.map(bNo => {
-                    const matchedBatch = editingOrderProductBatches.find(b => b.batchNumber === bNo);
+                    const batchVal = bNo || "0";
+                    const matchedBatch = editingOrderProductBatches.find(b => (b.batchNumber || "0") === batchVal);
                     const avail = matchedBatch ? matchedBatch.availableQty : 0;
                     return (
-                      <SelectItem key={bNo} value={bNo}>
-                        {bNo} {matchedBatch ? `(Avail: ${avail})` : ""}
+                      <SelectItem key={batchVal} value={batchVal}>
+                        {batchVal} {matchedBatch ? `(Avail: ${avail})` : ""}
                       </SelectItem>
                     );
                   })}
@@ -489,11 +490,12 @@ export default function OrderTracking() {
                     </SelectTrigger>
                     <SelectContent>
                       {selectedOrdersBatchOptions.map(bNo => {
-                        const matchedBatch = selectedProductBatches.find(b => b.batchNumber === bNo);
+                        const batchVal = bNo || "0";
+                        const matchedBatch = selectedProductBatches.find(b => (b.batchNumber || "0") === batchVal);
                         const avail = matchedBatch ? matchedBatch.availableQty : 0;
                         return (
-                          <SelectItem key={bNo} value={bNo}>
-                            {bNo} {matchedBatch ? `(Avail: ${avail})` : ""}
+                          <SelectItem key={batchVal} value={batchVal}>
+                            {batchVal} {matchedBatch ? `(Avail: ${avail})` : ""}
                           </SelectItem>
                         );
                       })}

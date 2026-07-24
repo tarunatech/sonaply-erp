@@ -107,10 +107,13 @@ export default function StockEntry() {
       toast({ title: "Please fill all required fields", variant: "destructive" }); return;
     }
 
-    // Check for existing batch to merge (Match: Name, Category)
+    const batchNum = form.batchNumber?.trim() || '0';
+
+    // Check for existing batch to merge (Match: Name, Category, BatchNumber)
     const existing = batches.find(b => 
       b.productName.toLowerCase().trim() === form.productName.toLowerCase().trim() &&
-      b.category.toLowerCase().trim() === form.category.toLowerCase().trim()
+      b.category.toLowerCase().trim() === form.category.toLowerCase().trim() &&
+      (b.batchNumber || '0').toLowerCase().trim() === batchNum.toLowerCase()
     );
 
     if (existing) {
@@ -120,7 +123,7 @@ export default function StockEntry() {
       });
       toast({ title: "Stock updated (Merged with existing batch)" });
     } else {
-      await addBatch({ ...form, rate: 0, productId: null as any, availableQty: form.quantity, damageQty: 0, displayQty: 0 });
+      await addBatch({ ...form, batchNumber: batchNum, rate: 0, productId: null as any, availableQty: form.quantity, damageQty: 0, displayQty: 0 });
       toast({ title: "Stock batch added successfully!" });
     }
 

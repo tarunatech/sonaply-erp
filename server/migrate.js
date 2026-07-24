@@ -142,6 +142,11 @@ async function migrate() {
     await db.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS stock_category TEXT DEFAULT 'Available'");
     await db.query("ALTER TABLE challans ADD COLUMN IF NOT EXISTS stock_category TEXT DEFAULT 'Available'");
 
+    // 10. Clean up empty/NULL batch numbers
+    console.log('Step 10: Cleaning up empty or NULL batch numbers in batches and purchases...');
+    await db.query("UPDATE batches SET batch_number = '0' WHERE batch_number IS NULL OR batch_number = '' OR TRIM(batch_number) = ''");
+    await db.query("UPDATE purchases SET batch_number = '0' WHERE batch_number IS NULL OR batch_number = '' OR TRIM(batch_number) = ''");
+
     console.log('✅ All migrations applied successfully!');
   } catch (err) {
     console.error('❌ Database migration failed:', err);
