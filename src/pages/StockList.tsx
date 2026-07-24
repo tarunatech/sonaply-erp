@@ -94,21 +94,25 @@ export default function StockList() {
 
   const handleEditSave = async () => {
     if (editingBatch) {
-      const originalBatch = batches.find(b => b.id === editingBatch.id);
+      const finalBatch = {
+        ...editingBatch,
+        batchNumber: editingBatch.batchNumber?.trim() || '0'
+      };
+      const originalBatch = batches.find(b => b.id === finalBatch.id);
       if (originalBatch) {
         const oldAvailable = Number(originalBatch.availableQty || 0);
         const oldDisplay = Number(originalBatch.displayQty || 0);
         const oldDamage = Number(originalBatch.damageQty || 0);
         
-        const newAvailable = Number(editingBatch.availableQty || 0);
-        const newDisplay = Number(editingBatch.displayQty || 0);
-        const newDamage = Number(editingBatch.damageQty || 0);
+        const newAvailable = Number(finalBatch.availableQty || 0);
+        const newDisplay = Number(finalBatch.displayQty || 0);
+        const newDamage = Number(finalBatch.damageQty || 0);
 
         const diff = (newAvailable + newDisplay + newDamage) - (oldAvailable + oldDisplay + oldDamage);
         
-        editingBatch.quantity = (originalBatch.quantity || 0) + diff;
+        finalBatch.quantity = (originalBatch.quantity || 0) + diff;
       }
-      await updateBatch(editingBatch.id, editingBatch);
+      await updateBatch(finalBatch.id, finalBatch);
       refreshData();
       setEditingBatch(null);
     }
@@ -638,6 +642,15 @@ export default function StockList() {
                     </SelectContent>
                   </Select>
                 </div>
+              </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label className="text-right">Batch Number</Label>
+                <Input 
+                  className="col-span-3" 
+                  value={editingBatch.batchNumber || ''} 
+                  onChange={e => setEditingBatch({...editingBatch, batchNumber: e.target.value})} 
+                  placeholder="Batch Number"
+                />
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label className="text-right">Available Qty</Label>

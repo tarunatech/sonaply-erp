@@ -169,7 +169,7 @@ const mapBatch = (b: any): StockBatch => ({
   productCode: b.product_code,
   productName: b.product_name,
   category: b.category,
-  batchNumber: b.batch_number,
+  batchNumber: (b.batch_number && String(b.batch_number).trim()) ? String(b.batch_number).trim() : '0',
   supplier: b.supplier,
   quantity: b.quantity,
   rate: Number(b.rate),
@@ -263,7 +263,7 @@ const mapPurchase = (p: any): Purchase => ({
   quantity: p.quantity,
   rate: Number(p.rate),
   totalAmount: Number(p.total_amount),
-  batchNumber: p.batch_number,
+  batchNumber: (p.batch_number && String(p.batch_number).trim()) ? String(p.batch_number).trim() : '0',
   date: p.date,
 });
 
@@ -309,7 +309,7 @@ export const updateBatch = (id: string, updates: Partial<StockBatch>) => {
   if (updates.rate !== undefined) body.rate = updates.rate;
   if (updates.productName) body.product_name = updates.productName;
   if (updates.category) body.category = updates.category;
-  if (updates.batchNumber) body.batch_number = updates.batchNumber;
+  if (updates.batchNumber !== undefined) body.batch_number = updates.batchNumber || '0';
   if (updates.supplier) body.supplier = updates.supplier;
   if (updates.description !== undefined) body.description = updates.description;
   if (updates.isNil !== undefined) body.is_nil = updates.isNil;

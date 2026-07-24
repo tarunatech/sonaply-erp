@@ -77,6 +77,8 @@ async function ensureDisplayQtyAndStockCategory() {
   await db.query("ALTER TABLE sales ADD COLUMN IF NOT EXISTS stock_category TEXT DEFAULT 'Available'");
   await db.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS stock_category TEXT DEFAULT 'Available'");
   await db.query("ALTER TABLE challans ADD COLUMN IF NOT EXISTS stock_category TEXT DEFAULT 'Available'");
+  await db.query("UPDATE batches SET batch_number = '0' WHERE batch_number IS NULL OR batch_number = '' OR TRIM(batch_number) = ''");
+  await db.query("UPDATE purchases SET batch_number = '0' WHERE batch_number IS NULL OR batch_number = '' OR TRIM(batch_number) = ''");
 }
 
 ensureDisplayQtyAndStockCategory().catch((err) => {
@@ -192,31 +194,30 @@ app.get('/api/purchases', async (req, res) => {
 
 app.post('/api/purchases', async (req, res) => {
   const { supplier_name, supplier_phone, product_name, category, quantity, rate, total_amount, batch_number, date } = req.body;
+  const finalBatchNumber = (batch_number && String(batch_number).trim()) ? String(batch_number).trim() : '0';
   try {
     await db.query('BEGIN');
     
     const result = await db.query(
       `INSERT INTO purchases (supplier_name, supplier_phone, product_name, category, quantity, rate, total_amount, batch_number, date)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-      [supplier_name, supplier_phone, product_name, category, quantity, rate, total_amount, batch_number, date]
+      [supplier_name, supplier_phone, product_name, category, quantity, rate, total_amount, finalBatchNumber, date]
     );
 
     // Upsert stock in batches
-    if (batch_number) {
-      const updateResult = await db.query(
-        'UPDATE batches SET available_qty = available_qty + $1, quantity = quantity + $1 WHERE batch_number = $2 AND product_name = $3',
-        [quantity, batch_number, product_name]
+    const updateResult = await db.query(
+      'UPDATE batches SET available_qty = available_qty + $1, quantity = quantity + $1 WHERE batch_number = $2 AND product_name = $3',
+      [quantity, finalBatchNumber, product_name]
+    );
+    
+    if (updateResult.rowCount === 0) {
+      // Create new batch if it doesn't exist
+      await db.query(
+        `INSERT INTO batches 
+        (product_name, category, batch_number, supplier, quantity, available_qty, date) 
+        VALUES ($1, $2, $3, $4, $5, $5, $6)`,
+        [product_name, category, finalBatchNumber, supplier_name, quantity, date]
       );
-      
-      if (updateResult.rowCount === 0) {
-        // Create new batch if it doesn't exist
-        await db.query(
-          `INSERT INTO batches 
-          (product_name, category, batch_number, supplier, quantity, available_qty, date) 
-          VALUES ($1, $2, $3, $4, $5, $5, $6)`,
-          [product_name, category, batch_number, supplier_name, quantity, date]
-        );
-      }
     }
 
     await db.query('COMMIT');

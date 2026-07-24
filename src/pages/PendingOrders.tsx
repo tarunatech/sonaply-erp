@@ -247,11 +247,12 @@ export default function PendingOrders() {
                   </SelectTrigger>
                   <SelectContent>
                     {currentBatchOptions.map(bNo => {
-                      const matchedBatch = currentProductBatches.find(b => b.batchNumber === bNo);
+                      const batchVal = bNo || "0";
+                      const matchedBatch = currentProductBatches.find(b => (b.batchNumber || "0") === batchVal);
                       const avail = matchedBatch ? matchedBatch.availableQty : 0;
                       return (
-                        <SelectItem key={bNo} value={bNo}>
-                          {bNo} {matchedBatch ? `(Avail: ${avail})` : ""}
+                        <SelectItem key={batchVal} value={batchVal}>
+                          {batchVal} {matchedBatch ? `(Avail: ${avail})` : ""}
                         </SelectItem>
                       );
                     })}

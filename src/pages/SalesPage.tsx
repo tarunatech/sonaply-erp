@@ -612,11 +612,14 @@ export default function SalesPage() {
                             <SelectValue placeholder="Select Batch" />
                           </SelectTrigger>
                           <SelectContent>
-                            {productBatches.map(b => (
-                              <SelectItem key={b.id} value={b.batchNumber}>
-                                {b.batchNumber} (Avail: {b.availableQty})
-                              </SelectItem>
-                            ))}
+                            {productBatches.map(b => {
+                              const batchVal = b.batchNumber || "0";
+                              return (
+                                <SelectItem key={b.id} value={batchVal}>
+                                  {batchVal} (Avail: {b.availableQty})
+                                </SelectItem>
+                              );
+                            })}
                           </SelectContent>
                         </Select>
                       </div>
