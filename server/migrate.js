@@ -1,13 +1,23 @@
 const db = require('./db');
 
 async function renameColumnIfExists(table, oldCol, newCol) {
-  const check = await db.query(
+  const checkOld = await db.query(
     `SELECT column_name FROM information_schema.columns WHERE table_name = $1 AND column_name = $2`,
     [table, oldCol]
   );
-  if (check.rows.length > 0) {
-    console.log(`Renaming ${table}.${oldCol} to ${newCol}...`);
-    await db.query(`ALTER TABLE ${table} RENAME COLUMN "${oldCol}" TO "${newCol}"`);
+  const checkNew = await db.query(
+    `SELECT column_name FROM information_schema.columns WHERE table_name = $1 AND column_name = $2`,
+    [table, newCol]
+  );
+  
+  if (checkOld.rows.length > 0) {
+    if (checkNew.rows.length > 0) {
+      console.log(`${table}.${newCol} already exists, dropping duplicate/recreated ${table}.${oldCol}...`);
+      await db.query(`ALTER TABLE ${table} DROP COLUMN "${oldCol}"`);
+    } else {
+      console.log(`Renaming ${table}.${oldCol} to ${newCol}...`);
+      await db.query(`ALTER TABLE ${table} RENAME COLUMN "${oldCol}" TO "${newCol}"`);
+    }
   } else {
     console.log(`${table}.${oldCol} does not exist (already renamed or never existed).`);
   }
