@@ -4,7 +4,6 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 const db = require('./db');
 
-
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -12,22 +11,25 @@ app.use(express.json());
 const PORT = process.env.PORT || 5000;
 
 async function ensureDeliveredAtColumn() {
-  await db.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP');
+  try {
+    await db.query('ALTER TABLE sales ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP');
+  } catch (err) {
+    // Ignore legacy table errors
+  }
 }
 
-ensureDeliveredAtColumn().catch((err) => {
-  console.error('❌ Database initialization failed:', err.message);
-});
+ensureDeliveredAtColumn().catch(() => {});
 
 async function ensureChallanCancelColumns() {
   await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS is_cancelled BOOLEAN DEFAULT FALSE');
   await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP');
   await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS is_built BOOLEAN DEFAULT FALSE');
   await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS restored_qty INTEGER');
+  await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS is_challan_generated BOOLEAN DEFAULT FALSE');
 }
 
 ensureChallanCancelColumns().catch((err) => {
-  console.error('❌ Challan column initialization failed:', err.message);
+  console.error('Challan column initialization failed:', err.message);
 });
 
 async function ensureSaleDamageColumns() {
@@ -36,6 +38,19 @@ async function ensureSaleDamageColumns() {
 
 ensureSaleDamageColumns().catch((err) => {
   console.error('Sales damage column initialization failed:', err.message);
+});
+
+async function ensureSalesStatusConstraint() {
+  try {
+    await db.query('ALTER TABLE sales DROP CONSTRAINT IF EXISTS sales_status_check');
+    await db.query("ALTER TABLE sales ADD CONSTRAINT sales_status_check CHECK (status IN ('Pending', 'Confirmed', 'Partial', 'Delivered', 'Cancelled'))");
+  } catch (err) {
+    console.error('ensureSalesStatusConstraint failed:', err.message);
+  }
+}
+
+ensureSalesStatusConstraint().catch((err) => {
+  console.error('Sales status constraint initialization failed:', err.message);
 });
 
 async function ensureHoldQtyColumn() {
@@ -72,10 +87,9 @@ async function ensureDisplayQtyAndStockCategory() {
   try {
     await db.query('UPDATE batches SET display_qty = nil_qty WHERE display_qty = 0 AND nil_qty > 0');
   } catch (e) {
-    // If nil_qty column doesn't exist/already removed, ignore
+    // Ignore if nil_qty doesn't exist
   }
   await db.query("ALTER TABLE sales ADD COLUMN IF NOT EXISTS stock_category TEXT DEFAULT 'Available'");
-  await db.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS stock_category TEXT DEFAULT 'Available'");
   await db.query("ALTER TABLE challans ADD COLUMN IF NOT EXISTS stock_category TEXT DEFAULT 'Available'");
   await db.query("UPDATE batches SET batch_number = '0' WHERE batch_number IS NULL OR batch_number = '' OR TRIM(batch_number) = ''");
   await db.query("UPDATE purchases SET batch_number = '0' WHERE batch_number IS NULL OR batch_number = '' OR TRIM(batch_number) = ''");
@@ -325,80 +339,345 @@ app.delete('/api/purchases/:id', async (req, res) => {
   }
 });
 
+// --- Helper for Challan Numbering ---
+async function getNextChallanNumber(prefix) {
+  const result = await db.query(
+    `SELECT challan_no FROM challans WHERE challan_no LIKE $1`,
+    [`${prefix}%`]
+  );
+  let maxNum = 0;
+  for (const row of result.rows) {
+    const parts = row.challan_no.split('-');
+    if (parts.length === 2) {
+      const num = parseInt(parts[1], 10);
+      if (!isNaN(num)) {
+        maxNum = Math.max(maxNum, num);
+      }
+    }
+  }
+  const nextNum = maxNum + 1;
+  return `${prefix}${String(nextNum).padStart(4, '0')}`;
+}
+
 // --- Sales ---
 
 app.get('/api/sales', async (req, res) => {
   try {
-    const result = await db.query('SELECT * FROM sales');
+    const result = await db.query('SELECT * FROM sales ORDER BY order_date DESC, created_at DESC');
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/api/sales', async (req, res) => {
-  const { client_name, client_phone, product_name, category, quantity, rate, total_price, order_date, value_category, batch_no, narration, damage_qty = 0, stock_category = 'Available' } = req.body;
+app.post('/api/sales/bulk', async (req, res) => {
+  const { customer, clientPhone, orderDate, status, remarks, category, items = [] } = req.body;
+  
+  const finalCustomer = customer ? customer.trim() : '';
+  const finalClientPhone = clientPhone ? clientPhone.trim() : '';
+  const finalOrderDate = orderDate || new Date().toISOString().split('T')[0];
+  const finalRemarks = remarks || '';
+  const finalStatus = status || 'Pending';
+
   try {
-    // Start transaction
     await db.query('BEGIN');
 
-    const result = await db.query(
-      `INSERT INTO sales 
-      (client_name, client_phone, product_name, category, quantity, rate, total_price, order_date, value_category, batch_no, narration, damage_qty, stock_category) 
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
-      [client_name, client_phone, product_name, category, quantity, rate, total_price, order_date, value_category, batch_no, narration, damage_qty, stock_category]
-    );
- 
-    // Automatically update or create client profile
+    // 1. Automatically update or create client profile
     await db.query(
       'INSERT INTO clients (name, phone, price_category) VALUES ($1, $2, $3) ON CONFLICT (name) DO UPDATE SET phone = EXCLUDED.phone, price_category = EXCLUDED.price_category',
-      [client_name, client_phone, category]
+      [finalCustomer, finalClientPhone, category || 'Regular']
     );
 
-    let bQuery = 'SELECT id, batch_number, available_qty, display_qty, damage_qty FROM batches WHERE product_name = $1';
-    let bParams = [product_name];
-    if (batch_no) {
-      bQuery += ' AND batch_number = $2';
-      bParams.push(batch_no);
-    }
-    bQuery += ' ORDER BY date ASC';
+    const orderNum = `ORD-${Date.now().toString(36).toUpperCase()}`;
     
-    const batchesResult = await db.query(bQuery, bParams);
-    let remainingToSell = Number(quantity || 0);
-    let totalDeducted = 0;
-    let lastBatchNo = batch_no;
+    let challanNum = null;
+    let pChallanNum = null;
 
-    let updateCol = 'available_qty';
-    if (stock_category === 'Damage') {
-      updateCol = 'damage_qty';
-    } else if (stock_category === 'Display') {
-      updateCol = 'display_qty';
-    }
+    let hasCH = false;
+    let hasP = false;
 
-    for (const b of batchesResult.rows) {
-      if (remainingToSell <= 0) break;
+    const itemDetails = [];
 
-      const availableInBatch = Number(b[updateCol] || 0);
-      const canDeduct = Math.min(remainingToSell, availableInBatch);
-      if (canDeduct > 0) {
-        await db.query(`UPDATE batches SET ${updateCol} = ${updateCol} - $1 WHERE id = $2`, [canDeduct, b.id]);
-        remainingToSell -= canDeduct;
-        totalDeducted += canDeduct;
+    for (const item of items) {
+      const finalProduct = item.productName;
+      const finalBatchNo = item.batchNo;
+      const finalOrderedQty = Number(item.quantity || 0);
+      const finalStockCategory = item.stockCategory || 'Available';
+
+      let bQuery = 'SELECT id, batch_number, available_qty, display_qty, damage_qty FROM batches WHERE product_name = $1';
+      let bParams = [finalProduct];
+      if (finalBatchNo) {
+        bQuery += ' AND batch_number = $2';
+        bParams.push(finalBatchNo);
       }
-      lastBatchNo = b.batch_number;
+      bQuery += ' ORDER BY date ASC';
+
+      const batchesResult = await db.query(bQuery, bParams);
+
+      let updateCol = 'available_qty';
+      if (finalStockCategory === 'Damage') updateCol = 'damage_qty';
+      else if (finalStockCategory === 'Display') updateCol = 'display_qty';
+
+      const totalAvailable = batchesResult.rows.reduce((sum, b) => sum + Number(b[updateCol] || 0), 0);
+      const fulfillableQty = Math.min(finalOrderedQty, Math.max(0, totalAvailable));
+      const pendingRemaining = finalOrderedQty - fulfillableQty;
+
+      let lastBatchNo = finalBatchNo;
+      if (batchesResult.rows.length > 0) {
+        lastBatchNo = batchesResult.rows[0].batch_number;
+      }
+
+      if (fulfillableQty > 0) hasCH = true;
+      if (pendingRemaining > 0) hasP = true;
+
+      itemDetails.push({
+        item,
+        fulfillableQty,
+        pendingRemaining,
+        lastBatchNo
+      });
     }
 
-    const pending_qty = Number(quantity || 0) - totalDeducted;
-    const fulfilled_qty = totalDeducted;
+    if (hasCH) {
+      challanNum = await getNextChallanNumber('CH-');
+    }
+    if (hasP) {
+      pChallanNum = await getNextChallanNumber('P-');
+    }
 
-    // Update the sale record with pending/fulfilled quantities and the batch number used
-    const updatedSale = await db.query(
-      'UPDATE sales SET pending_qty = $1, fulfilled_qty = $2, batch_no = $3 WHERE id = $4 RETURNING *',
-      [pending_qty, fulfilled_qty, lastBatchNo || batch_no, result.rows[0].id]
-    );
+    const createdSales = [];
+
+    for (const details of itemDetails) {
+      const { item, fulfillableQty, pendingRemaining, lastBatchNo } = details;
+      const finalProduct = item.productName;
+      const finalBatchNo = item.batchNo;
+      const finalOrderedQty = Number(item.quantity || 0);
+      const finalStockCategory = item.stockCategory || 'Available';
+      const finalDamageQty = item.damageQty || 0;
+
+      const finalRate = Number(item.rate || 0);
+      const finalGST = Number(item.GST || 0);
+      const totalPrice = finalOrderedQty * finalRate;
+
+      const saleInsertResult = await db.query(
+        `INSERT INTO sales 
+        (order_no, customer, client_phone, product, category, ordered_qty, delivered_qty, pending_qty, rate, "GST", total_price, order_date, value_category, batch_no, remarks, status, stock_category, damage_qty, created_at, updated_at) 
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'Standard', $13, $14, $15, $16, $17, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING *`,
+        [
+          orderNum,
+          finalCustomer,
+          finalClientPhone,
+          finalProduct,
+          category || 'Regular',
+          finalOrderedQty,
+          0,
+          finalOrderedQty,
+          finalRate,
+          finalGST,
+          totalPrice,
+          finalOrderDate,
+          lastBatchNo || finalBatchNo || '0',
+          finalRemarks,
+          finalStatus,
+          finalStockCategory,
+          finalDamageQty
+        ]
+      );
+
+      const createdSale = saleInsertResult.rows[0];
+      createdSales.push(createdSale);
+
+      if (fulfillableQty > 0 && challanNum) {
+        await db.query(
+          `INSERT INTO challans 
+          (challan_no, sales_id, customer, client_phone, product, batch_no, quantity, status, created_at, notes, stock_category, is_printed, is_built, is_cancelled) 
+          VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending', CURRENT_DATE, $8, $9, FALSE, FALSE, FALSE)`,
+          [
+            challanNum,
+            createdSale.id,
+            finalCustomer,
+            finalClientPhone,
+            finalProduct,
+            lastBatchNo || finalBatchNo || '0',
+            fulfillableQty,
+            finalRemarks,
+            finalStockCategory
+          ]
+        );
+      }
+
+      if (pendingRemaining > 0 && pChallanNum) {
+        await db.query(
+          `INSERT INTO challans 
+          (challan_no, sales_id, customer, client_phone, product, batch_no, quantity, status, created_at, notes, stock_category, is_printed, is_built, is_cancelled) 
+          VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending', CURRENT_DATE, $8, $9, FALSE, FALSE, FALSE)`,
+          [
+            pChallanNum,
+            createdSale.id,
+            finalCustomer,
+            finalClientPhone,
+            finalProduct,
+            lastBatchNo || finalBatchNo || '0',
+            pendingRemaining,
+            finalRemarks,
+            finalStockCategory
+          ]
+        );
+      }
+    }
 
     await db.query('COMMIT');
-    res.json(updatedSale.rows[0]);
+    res.json(createdSales);
+  } catch (err) {
+    await db.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/sales', async (req, res) => {
+  const {
+    customer, client_name,
+    client_phone, clientPhone,
+    product, product_name,
+    category,
+    ordered_qty, quantity,
+    remarks, narration,
+    value_category, valueCategory,
+    batch_no, batchNo,
+    stock_category = 'Available',
+    damage_qty, damageQty,
+    order_date,
+    status
+  } = req.body;
+
+  const finalCustomer = customer || client_name;
+  const finalClientPhone = client_phone || clientPhone;
+  const finalProduct = product || product_name;
+  const finalOrderedQty = Number(ordered_qty !== undefined ? ordered_qty : quantity || 0);
+  const finalRate = 0;
+  const finalGST = 0;
+  const finalRemarks = remarks !== undefined ? remarks : narration;
+  const finalValueCategory = value_category || valueCategory || 'Standard';
+  const finalBatchNo = batch_no || batchNo;
+  const finalStockCategory = stock_category;
+  const finalDamageQty = Number(damage_qty !== undefined ? damage_qty : damageQty || 0);
+  const finalOrderDate = order_date || new Date().toISOString().slice(0, 10);
+
+  try {
+    await db.query('BEGIN');
+
+    // 1. Automatically update or create client profile
+    await db.query(
+      'INSERT INTO clients (name, phone, price_category) VALUES ($1, $2, $3) ON CONFLICT (name) DO UPDATE SET phone = EXCLUDED.phone, price_category = EXCLUDED.price_category',
+      [finalCustomer, finalClientPhone, category || 'Regular']
+    );
+
+    // 2. Check available stock to decide CH- vs P- prefix (NO deduction at sale creation)
+    let bQuery = 'SELECT id, batch_number, available_qty, display_qty, damage_qty FROM batches WHERE product_name = $1';
+    let bParams = [finalProduct];
+    if (finalBatchNo) {
+      bQuery += ' AND batch_number = $2';
+      bParams.push(finalBatchNo);
+    }
+    bQuery += ' ORDER BY date ASC';
+
+    const batchesResult = await db.query(bQuery, bParams);
+
+    let updateCol = 'available_qty';
+    if (finalStockCategory === 'Damage') updateCol = 'damage_qty';
+    else if (finalStockCategory === 'Display') updateCol = 'display_qty';
+
+    const totalAvailable = batchesResult.rows.reduce((sum, b) => sum + Number(b[updateCol] || 0), 0);
+    const fulfillableQty = Math.min(finalOrderedQty, Math.max(0, totalAvailable));
+    const pendingRemaining = finalOrderedQty - fulfillableQty;
+
+    // Determine last batch no for reference
+    let lastBatchNo = finalBatchNo;
+    if (batchesResult.rows.length > 0) {
+      lastBatchNo = batchesResult.rows[0].batch_number;
+    }
+
+    const pendingQty = finalOrderedQty; // always full qty pending until delivered
+    const deliveredQty = 0;             // never deduct at creation
+    const finalStatus = 'Pending';
+
+    const orderNum = `ORD-${Date.now().toString(36).toUpperCase()}`;
+    const totalPrice = finalOrderedQty * finalRate;
+
+    // 3. Insert Sales record
+    const result = await db.query(
+      `INSERT INTO sales 
+      (order_no, customer, client_phone, product, category, ordered_qty, delivered_qty, pending_qty, rate, "GST", total_price, order_date, value_category, batch_no, remarks, status, stock_category, damage_qty, created_at, updated_at) 
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING *`,
+      [
+        orderNum,
+        finalCustomer,
+        finalClientPhone,
+        finalProduct,
+        category || 'Regular',
+        finalOrderedQty,
+        deliveredQty,
+        pendingQty,
+        finalRate,
+        finalGST,
+        totalPrice,
+        finalOrderDate,
+        finalValueCategory,
+        lastBatchNo || finalBatchNo || '0',
+        finalRemarks,
+        finalStatus,
+        finalStockCategory,
+        finalDamageQty
+      ]
+    );
+
+    const createdSale = result.rows[0];
+
+    // 4. Create challan(s) based on stock availability
+    //    - fulfillableQty > 0 â†’ CH-xxxx (visible in ChallanPage, ready to confirm+deliver)
+    //    - pendingRemaining > 0 â†’ P-xxxx  (visible in PendingDeliveries, needs stock before delivery)
+    if (fulfillableQty > 0) {
+      const challanNum = await getNextChallanNumber('CH-');
+      await db.query(
+        `INSERT INTO challans 
+        (challan_no, sales_id, customer, client_phone, product, batch_no, quantity, status, created_at, notes, stock_category, is_printed, is_built, is_cancelled) 
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending', CURRENT_DATE, $8, $9, FALSE, FALSE, FALSE)`,
+        [
+          challanNum,
+          createdSale.id,
+          finalCustomer,
+          finalClientPhone,
+          finalProduct,
+          lastBatchNo || finalBatchNo || '0',
+          fulfillableQty,
+          finalRemarks || '',
+          finalStockCategory
+        ]
+      );
+    }
+
+    if (pendingRemaining > 0) {
+      const pChallanNum = await getNextChallanNumber('P-');
+      await db.query(
+        `INSERT INTO challans 
+        (challan_no, sales_id, customer, client_phone, product, batch_no, quantity, status, created_at, notes, stock_category, is_printed, is_built, is_cancelled) 
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending', CURRENT_DATE, $8, $9, FALSE, FALSE, FALSE)`,
+        [
+          pChallanNum,
+          createdSale.id,
+          finalCustomer,
+          finalClientPhone,
+          finalProduct,
+          lastBatchNo || finalBatchNo || '0',
+          pendingRemaining,
+          finalRemarks || '',
+          finalStockCategory
+        ]
+      );
+    }
+
+    await db.query('COMMIT');
+    res.json(createdSale);
   } catch (err) {
     await db.query('ROLLBACK');
     res.status(500).json({ error: err.message });
@@ -407,13 +686,118 @@ app.post('/api/sales', async (req, res) => {
 
 app.put('/api/sales/:id', async (req, res) => {
   const { id } = req.params;
-  const fields = req.body;
-  const setClause = Object.keys(fields).map((key, i) => `${key} = $${i + 1}`).join(', ');
-  const values = Object.values(fields);
   try {
-    const result = await db.query(`UPDATE sales SET ${setClause} WHERE id = $${values.length + 1} RETURNING *`, [...values, id]);
-    res.json(result.rows[0]);
+    await db.query('BEGIN');
+    
+    // Get existing sale record
+    const saleRes = await db.query('SELECT * FROM sales WHERE id = $1', [id]);
+    if (saleRes.rows.length === 0) {
+      await db.query('ROLLBACK');
+      return res.status(404).json({ error: 'Sale record not found' });
+    }
+    const sale = saleRes.rows[0];
+    const deliveredQty = Number(sale.delivered_qty || 0);
+
+    const updates = {};
+    
+    // Delivered State: lock customer, product, ordered_qty (quantity)
+    if (deliveredQty >= Number(sale.ordered_qty)) {
+      const isTryingToEditLocked = 
+        (req.body.customer !== undefined && req.body.customer !== sale.customer) ||
+        (req.body.clientName !== undefined && req.body.clientName !== sale.customer) ||
+        (req.body.product !== undefined && req.body.product !== sale.product) ||
+        (req.body.productName !== undefined && req.body.productName !== sale.product) ||
+        (req.body.ordered_qty !== undefined && Number(req.body.ordered_qty) !== Number(sale.ordered_qty)) ||
+        (req.body.quantity !== undefined && Number(req.body.quantity) !== Number(sale.ordered_qty));
+
+      if (isTryingToEditLocked) {
+        await db.query('ROLLBACK');
+        return res.status(400).json({ error: 'Cannot edit product, customer, or quantity on a fully delivered sale.' });
+      }
+    }
+
+    // Partial State: lock customer, product. Allow qty adjustments only if newQty >= deliveredQty.
+    if (deliveredQty > 0 && deliveredQty < Number(sale.ordered_qty)) {
+      const isTryingToEditLocked = 
+        (req.body.customer !== undefined && req.body.customer !== sale.customer) ||
+        (req.body.clientName !== undefined && req.body.clientName !== sale.customer) ||
+        (req.body.product !== undefined && req.body.product !== sale.product) ||
+        (req.body.productName !== undefined && req.body.productName !== sale.product);
+
+      if (isTryingToEditLocked) {
+        await db.query('ROLLBACK');
+        return res.status(400).json({ error: 'Cannot edit customer or product on a partially delivered sale.' });
+      }
+
+      const newQty = req.body.ordered_qty !== undefined ? Number(req.body.ordered_qty) : (req.body.quantity !== undefined ? Number(req.body.quantity) : null);
+      if (newQty !== null) {
+        if (newQty < deliveredQty) {
+          await db.query('ROLLBACK');
+          return res.status(400).json({ error: `Quantity cannot be reduced below the delivered quantity (${deliveredQty}).` });
+        }
+        updates.ordered_qty = newQty;
+        updates.pending_qty = newQty - deliveredQty;
+        updates.status = (newQty === deliveredQty) ? 'Delivered' : 'Partial';
+      }
+    }
+
+    // Pending State (delivered_qty === 0): allow all edits
+    if (deliveredQty === 0) {
+      const newQty = req.body.ordered_qty !== undefined ? Number(req.body.ordered_qty) : (req.body.quantity !== undefined ? Number(req.body.quantity) : null);
+      if (newQty !== null) {
+        updates.ordered_qty = newQty;
+        updates.pending_qty = newQty;
+        updates.status = 'Pending';
+      }
+      
+      const newCustomer = req.body.customer !== undefined ? req.body.customer : req.body.clientName;
+      if (newCustomer !== undefined) updates.customer = newCustomer;
+      
+      const newProduct = req.body.product !== undefined ? req.body.product : req.body.productName;
+      if (newProduct !== undefined) updates.product = newProduct;
+    }
+
+    // Fields editable in all states (except fully locked Delivered if they affect price/qty, but here they are safety checked)
+    const finalCustomerPhone = req.body.client_phone !== undefined ? req.body.client_phone : req.body.clientPhone;
+    if (finalCustomerPhone !== undefined) updates.client_phone = finalCustomerPhone;
+    
+    const finalRemarks = req.body.remarks !== undefined ? req.body.remarks : req.body.narration;
+    if (finalRemarks !== undefined) updates.remarks = finalRemarks;
+    
+    if (req.body.category !== undefined) updates.category = req.body.category;
+    if (req.body.stock_category !== undefined || req.body.stockCategory !== undefined) {
+      updates.stock_category = req.body.stock_category !== undefined ? req.body.stock_category : req.body.stockCategory;
+    }
+    if (req.body.damage_qty !== undefined || req.body.damageQty !== undefined) {
+      updates.damage_qty = req.body.damage_qty !== undefined ? req.body.damage_qty : req.body.damageQty;
+    }
+    if (req.body.batch_no !== undefined || req.body.batchNo !== undefined) {
+      updates.batch_no = req.body.batch_no !== undefined ? req.body.batch_no : req.body.batchNo;
+    }
+    if (req.body.status !== undefined) {
+      updates.status = req.body.status;
+    }
+
+    // Recalculate total price
+    const finalOrderedQty = updates.ordered_qty !== undefined ? updates.ordered_qty : Number(sale.ordered_qty);
+    const finalRate = Number(sale.rate || 0);
+    updates.total_price = finalOrderedQty * finalRate;
+
+    if (Object.keys(updates).length > 0) {
+      const setClause = Object.keys(updates).map((key, i) => `"${key}" = $${i + 1}`).join(', ');
+      const values = Object.values(updates);
+      const result = await db.query(
+        `UPDATE sales SET ${setClause}, updated_at = CURRENT_TIMESTAMP WHERE id = $${values.length + 1} RETURNING *`,
+        [...values, id]
+      );
+      await db.query('COMMIT');
+      res.json(result.rows[0]);
+    } else {
+      await db.query('COMMIT');
+      res.json(sale);
+    }
   } catch (err) {
+    await db.query('ROLLBACK');
     res.status(500).json({ error: err.message });
   }
 });
@@ -421,14 +805,152 @@ app.put('/api/sales/:id', async (req, res) => {
 app.delete('/api/sales/:id', async (req, res) => {
   const { id } = req.params;
   try {
+    await db.query('BEGIN');
+    // Delete associated challans first
+    await db.query('DELETE FROM challans WHERE sales_id = $1', [id]);
     await db.query('DELETE FROM sales WHERE id = $1', [id]);
+    await db.query('COMMIT');
     res.json({ success: true });
   } catch (err) {
+    await db.query('ROLLBACK');
     res.status(500).json({ error: err.message });
   }
 });
 
-// --- Sales Returns ---
+// Confirm a sale (Pending â†’ Confirmed) â€” also updates its pending challan status
+app.put('/api/sales/:id/confirm', async (req, res) => {
+  const { id } = req.params;
+  try {
+    await db.query('BEGIN');
+    const saleRes = await db.query('SELECT * FROM sales WHERE id = $1', [id]);
+    if (saleRes.rows.length === 0) {
+      await db.query('ROLLBACK');
+      return res.status(404).json({ error: 'Sale not found' });
+    }
+    const sale = saleRes.rows[0];
+    if (sale.status !== 'Pending') {
+      await db.query('ROLLBACK');
+      return res.status(400).json({ error: `Cannot confirm a sale with status: ${sale.status}` });
+    }
+    await db.query("UPDATE sales SET status = 'Confirmed', updated_at = CURRENT_TIMESTAMP WHERE id = $1", [id]);
+    // Also update associated pending challans to Confirmed
+    await db.query("UPDATE challans SET status = 'Confirmed' WHERE sales_id = $1 AND status = 'Pending' AND is_cancelled = FALSE", [id]);
+    await db.query('COMMIT');
+    res.json({ success: true });
+  } catch (err) {
+    await db.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Deliver a sale directly from the Sales page â€” deducts stock via its pending/confirmed challan
+app.put('/api/sales/:id/deliver', async (req, res) => {
+  const { id } = req.params;
+  try {
+    await db.query('BEGIN');
+
+    const saleRes = await db.query('SELECT * FROM sales WHERE id = $1', [id]);
+    if (saleRes.rows.length === 0) {
+      await db.query('ROLLBACK');
+      return res.status(404).json({ error: 'Sale not found' });
+    }
+    const sale = saleRes.rows[0];
+
+    if (sale.status === 'Delivered' || sale.status === 'Cancelled') {
+      await db.query('ROLLBACK');
+      return res.status(400).json({ error: `Sale is already ${sale.status}.` });
+    }
+
+    // Find the first active (non-cancelled) challan for this sale
+    const challanRes = await db.query(
+      "SELECT * FROM challans WHERE sales_id = $1 AND is_cancelled = FALSE AND status != 'Delivered' ORDER BY created_at ASC LIMIT 1",
+      [id]
+    );
+
+    if (challanRes.rows.length === 0) {
+      await db.query('ROLLBACK');
+      return res.status(404).json({ error: 'No active challan found for this sale. Cannot deliver.' });
+    }
+    const challan = challanRes.rows[0];
+    const quantityToDeliver = Number(challan.quantity);
+    const stockCategory = challan.stock_category || 'Available';
+    const productName = challan.product;
+    const batchNo = challan.batch_no;
+
+    // FIFO Stock Deduction
+    let bQuery = 'SELECT id, batch_number, available_qty, display_qty, damage_qty FROM batches WHERE product_name = $1';
+    let bParams = [productName];
+    if (batchNo && batchNo !== '0') {
+      bQuery += ' AND batch_number = $2';
+      bParams.push(batchNo);
+    }
+    bQuery += ' ORDER BY date ASC';
+
+    const batchesResult = await db.query(bQuery, bParams);
+    let remainingToSell = quantityToDeliver;
+    let lastBatchNo = batchNo;
+
+    let updateCol = 'available_qty';
+    if (stockCategory === 'Damage') updateCol = 'damage_qty';
+    else if (stockCategory === 'Display') updateCol = 'display_qty';
+
+    for (const b of batchesResult.rows) {
+      if (remainingToSell <= 0) break;
+      const availableInBatch = Number(b[updateCol] || 0);
+      const canDeduct = Math.min(remainingToSell, availableInBatch);
+      if (canDeduct > 0) {
+        await db.query(`UPDATE batches SET ${updateCol} = ${updateCol} - $1 WHERE id = $2`, [canDeduct, b.id]);
+        remainingToSell -= canDeduct;
+      }
+      lastBatchNo = b.batch_number;
+    }
+
+    // Allow negative stock if needed
+    if (remainingToSell > 0) {
+      const checkBatch = await db.query(
+        'SELECT id FROM batches WHERE product_name = $1 AND batch_number = $2',
+        [productName, batchNo || '0']
+      );
+      if (checkBatch.rows.length > 0) {
+        await db.query(`UPDATE batches SET ${updateCol} = ${updateCol} - $1 WHERE id = $2`, [remainingToSell, checkBatch.rows[0].id]);
+      } else {
+        const productLookup = await db.query('SELECT category FROM products WHERE name = $1 LIMIT 1', [productName]);
+        const category = productLookup.rows.length > 0 ? productLookup.rows[0].category : 'Other';
+        let insertCols = 'product_name, category, batch_number, quantity, date';
+        let insertVals = '$1, $2, $3, 0, CURRENT_DATE';
+        const params = [productName, category, batchNo || '0'];
+        if (stockCategory === 'Display') { insertCols += ', display_qty'; insertVals += ', -' + remainingToSell; }
+        else if (stockCategory === 'Damage') { insertCols += ', damage_qty'; insertVals += ', -' + remainingToSell; }
+        else { insertCols += ', available_qty'; insertVals += ', -' + remainingToSell; }
+        await db.query(`INSERT INTO batches (${insertCols}) VALUES (${insertVals})`, params);
+      }
+    }
+
+    // Update Sale to Delivered
+    const newDeliveredQty = Number(sale.delivered_qty || 0) + quantityToDeliver;
+    const newPendingQty = Math.max(0, Number(sale.pending_qty || 0) - quantityToDeliver);
+    let newStatus = newDeliveredQty >= Number(sale.ordered_qty) ? 'Delivered' : 'Partial';
+
+    await db.query(
+      `UPDATE sales SET delivered_qty = $1, pending_qty = $2, status = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4`,
+      [newDeliveredQty, newPendingQty, newStatus, id]
+    );
+
+    // Mark challan as Delivered
+    await db.query(
+      `UPDATE challans SET status = 'Delivered', batch_no = $1 WHERE id = $2`,
+      [lastBatchNo || batchNo || '0', challan.id]
+    );
+
+    await db.query('COMMIT');
+    res.json({ success: true, status: newStatus });
+  } catch (err) {
+    await db.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
 app.get('/api/sales-returns', async (req, res) => {
   try {
     const result = await db.query('SELECT * FROM sales_returns ORDER BY receive_date DESC, created_at DESC');
@@ -492,184 +1014,146 @@ app.post('/api/sales-returns', async (req, res) => {
   }
 });
 
-// --- Orders ---
-app.get('/api/orders', async (req, res) => {
-  try {
-    const result = await db.query('SELECT * FROM orders');
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/orders', async (req, res) => {
-  const { order_number, client_name, client_phone, product_name, quantity, total_amount, order_date, status, batch_no, pending_qty, fulfilled_qty, narration, stock_category = 'Available' } = req.body;
-  try {
-    const deliveredAtSql = status === 'Delivered' ? deliveryTimestampSql : 'NULL';
-    const result = await db.query(
-      `INSERT INTO orders 
-      (order_number, client_name, client_phone, product_name, quantity, total_amount, order_date, status, batch_no, pending_qty, fulfilled_qty, narration, delivered_at, stock_category) 
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, ${deliveredAtSql}, $13) RETURNING *`,
-      [
-        order_number,
-        client_name,
-        client_phone,
-        product_name,
-        quantity,
-        total_amount,
-        order_date,
-        status,
-        batch_no,
-        (pending_qty !== undefined && pending_qty !== null) ? pending_qty : (status === 'Delivered' ? 0 : quantity),
-        (fulfilled_qty !== undefined && fulfilled_qty !== null) ? fulfilled_qty : (status === 'Delivered' ? quantity : 0),
-        narration,
-        stock_category
-      ]
-    );
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.put('/api/orders/:id', async (req, res) => {
+app.put('/api/sales-returns/:id', async (req, res) => {
   const { id } = req.params;
-  const fields = req.body;
-  const skipStockUpdate = fields.skip_stock_update === true;
-  delete fields.delivered_at;
-  
+  const { client_name, client_phone, price_category, receive_date, product_name, quantity, batch_no, notes } = req.body;
+  const newQty = Number(quantity || 0);
+
   try {
     await db.query('BEGIN');
 
-    // Get old order to calculate stock adjustment
-    const orderRes = await db.query('SELECT * FROM orders WHERE id = $1', [id]);
-    if (orderRes.rows.length === 0) {
+    // 1. Fetch existing return record
+    const existingRes = await db.query('SELECT * FROM sales_returns WHERE id = $1', [id]);
+    if (existingRes.rows.length === 0) {
       await db.query('ROLLBACK');
-      return res.status(404).json({ error: 'Order not found' });
+      return res.status(404).json({ error: 'Sales return not found' });
     }
-    const oldOrder = orderRes.rows[0];
+    const oldReturn = existingRes.rows[0];
+    const oldQty = Number(oldReturn.quantity || 0);
+    const oldProduct = oldReturn.product_name;
+    const oldBatch = oldReturn.batch_no;
 
-    // Determine new values
-    const newStatus = fields.status || oldOrder.status;
-    const newProduct = fields.product_name || oldOrder.product_name;
-    const newBatch = fields.batch_no || oldOrder.batch_no;
-    let newFulfilled = fields.fulfilled_qty !== undefined ? fields.fulfilled_qty : oldOrder.fulfilled_qty;
-
-    // If status is changed to Delivered, ensure everything is fulfilled
-    if (fields.status === 'Delivered' && oldOrder.status !== 'Delivered') {
-       newFulfilled = fields.quantity || oldOrder.quantity;
-       fields.pending_qty = 0;
-       fields.fulfilled_qty = newFulfilled;
-    }
-
-    // If status is changed to Confirmed, try to fulfill any pending quantity using available stock
-    if (fields.status === 'Confirmed' && oldOrder.pending_qty > 0) {
-      const stockCol = oldOrder.stock_category === 'Display' ? 'display_qty' : (oldOrder.stock_category === 'Damage' ? 'damage_qty' : 'available_qty');
-      const stockRes = await db.query(
-        `SELECT id, batch_number, ${stockCol} FROM batches WHERE product_name = $1 AND batch_number = $2`,
-        [oldOrder.product_name, oldOrder.batch_no || '0']
+    // 2. Revert the old return's stock restoration
+    if (oldBatch) {
+      await db.query(
+        'UPDATE batches SET available_qty = available_qty - $1 WHERE product_name = $2 AND batch_number = $3',
+        [oldQty, oldProduct, oldBatch]
       );
-      if (stockRes.rows.length > 0) {
-        const batch = stockRes.rows[0];
-        const availableStock = Math.max(0, Number(batch[stockCol] || 0));
-        const canFulfill = Math.min(Number(oldOrder.pending_qty), availableStock);
-        if (canFulfill > 0) {
-          fields.fulfilled_qty = Number(oldOrder.fulfilled_qty) + canFulfill;
-          fields.pending_qty = Number(oldOrder.pending_qty) - canFulfill;
-          newFulfilled = fields.fulfilled_qty;
-        }
-      }
-    }
-
-    // Handle stock synchronization unless caller explicitly skips it
-    const productChanged = newProduct !== oldOrder.product_name;
-    const batchChanged = newBatch !== oldOrder.batch_no;
-    const fulfilledChanged = newFulfilled !== oldOrder.fulfilled_qty;
-    const categoryChanged = fields.stock_category !== undefined && fields.stock_category !== oldOrder.stock_category;
-
-    if (!skipStockUpdate && (productChanged || batchChanged || fulfilledChanged || categoryChanged)) {
-      // 1. Revert old stock deduction
-      if (oldOrder.fulfilled_qty > 0 && oldOrder.product_name) {
-        const oldCategory = oldOrder.stock_category || 'Available';
-        let revertCol = 'available_qty';
-        if (oldCategory === 'Display') revertCol = 'display_qty';
-        else if (oldCategory === 'Damage') revertCol = 'damage_qty';
-
-        await db.query(
-          `UPDATE batches SET ${revertCol} = CASE WHEN quantity > 0 THEN LEAST(quantity, ${revertCol} + $1) ELSE ${revertCol} + $1 END WHERE product_name = $2 AND batch_number = $3`,
-          [oldOrder.fulfilled_qty, oldOrder.product_name, oldOrder.batch_no || '0']
-        );
-      }
-
-      // 2. Apply new stock deduction
-      if (newFulfilled > 0 && newProduct) {
-        const newCategory = fields.stock_category || oldOrder.stock_category || 'Available';
-        let applyCol = 'available_qty';
-        if (newCategory === 'Display') applyCol = 'display_qty';
-        else if (newCategory === 'Damage') applyCol = 'damage_qty';
-
-        const updateResult = await db.query(
-          `UPDATE batches SET ${applyCol} = ${applyCol} - $1 WHERE product_name = $2 AND batch_number = $3`,
-          [newFulfilled, newProduct, newBatch || '0']
-        );
-
-        if (updateResult.rowCount === 0) {
-          // Create placeholder batch if it doesn't exist
-          const productLookup = await db.query('SELECT category FROM products WHERE name = $1 LIMIT 1', [newProduct]);
-          const category = productLookup.rows.length > 0 ? productLookup.rows[0].category : 'Other';
-          
-          let insertCols = 'product_name, category, batch_number, quantity, date';
-          let insertVals = '$1, $2, $3, 0, CURRENT_DATE';
-          if (newCategory === 'Display') {
-            insertCols += ', display_qty';
-            insertVals += ', ' + (-newFulfilled);
-          } else if (newCategory === 'Damage') {
-            insertCols += ', damage_qty';
-            insertVals += ', ' + (-newFulfilled);
-          } else {
-            insertCols += ', available_qty';
-            insertVals += ', ' + (-newFulfilled);
-          }
-
-          await db.query(
-            `INSERT INTO batches (${insertCols}) VALUES (${insertVals})`,
-            [newProduct, category, newBatch || '0']
-          );
-        }
-      }
-    }
-
-    // Prepare update query
-    const updateKeys = Object.keys(fields).filter((key) => key !== 'skip_stock_update');
-    if (updateKeys.length > 0) {
-      const setClause = updateKeys.map((key, i) => `${key} = $${i + 1}`).join(', ');
-      const values = Object.entries(fields)
-        .filter(([key]) => key !== 'skip_stock_update')
-        .map(([, value]) => value);
-      const finalValues = [...values];
-      let finalSetClause = setClause;
-      if (fields.status === 'Delivered' && oldOrder.status !== 'Delivered') {
-        finalSetClause += `, delivered_at = ${deliveryTimestampSql}`;
-      }
-      const result = await db.query(`UPDATE orders SET ${finalSetClause} WHERE id = $${finalValues.length + 1} RETURNING *`, [...finalValues, id]);
-      await db.query('COMMIT');
-      res.json(result.rows[0]);
     } else {
-      await db.query('COMMIT');
-      res.json(oldOrder);
+      const batchLookup = await db.query(
+        'SELECT id FROM batches WHERE product_name = $1 ORDER BY date ASC LIMIT 1',
+        [oldProduct]
+      );
+      if (batchLookup.rows.length > 0) {
+        await db.query(
+          'UPDATE batches SET available_qty = available_qty - $1 WHERE id = $2',
+          [oldQty, batchLookup.rows[0].id]
+        );
+      }
     }
+
+    // 3. Apply the new return's stock restoration
+    let updated = false;
+    const finalBatchNo = batch_no !== undefined ? batch_no : oldBatch;
+    const finalProduct = product_name || oldProduct;
+
+    if (finalBatchNo) {
+      const updateResult = await db.query(
+        'UPDATE batches SET available_qty = CASE WHEN quantity > 0 THEN LEAST(quantity, available_qty + $1) ELSE available_qty + $1 END WHERE product_name = $2 AND batch_number = $3',
+        [newQty, finalProduct, finalBatchNo]
+      );
+      updated = updateResult.rowCount > 0;
+    }
+
+    if (!updated) {
+      const batchLookup = await db.query(
+        'SELECT id FROM batches WHERE product_name = $1 ORDER BY date ASC LIMIT 1',
+        [finalProduct]
+      );
+      if (batchLookup.rows.length > 0) {
+        await db.query(
+          'UPDATE batches SET available_qty = CASE WHEN quantity > 0 THEN LEAST(quantity, available_qty + $1) ELSE available_qty + $1 END WHERE id = $2',
+          [newQty, batchLookup.rows[0].id]
+        );
+        updated = true;
+      }
+    }
+
+    if (!updated) {
+      const productLookup = await db.query('SELECT category FROM products WHERE name = $1 LIMIT 1', [finalProduct]);
+      const category = productLookup.rows.length > 0 ? productLookup.rows[0].category : 'Other';
+      await db.query(
+        'INSERT INTO batches (product_name, category, batch_number, quantity, available_qty, date) VALUES ($1, $2, $3, 0, $4, CURRENT_DATE)',
+        [finalProduct, category, finalBatchNo || `RET-${Date.now().toString(36).toUpperCase()}`, newQty]
+      );
+    }
+
+    // 4. Update the sales_returns table
+    const result = await db.query(
+      `UPDATE sales_returns
+       SET client_name = $1, client_phone = $2, price_category = $3, receive_date = $4,
+           product_name = $5, quantity = $6, batch_no = $7, notes = $8
+       WHERE id = $9
+       RETURNING *`,
+      [
+        client_name || oldReturn.client_name,
+        client_phone !== undefined ? client_phone : oldReturn.client_phone,
+        price_category || oldReturn.price_category,
+        receive_date || oldReturn.receive_date,
+        finalProduct,
+        newQty,
+        finalBatchNo || null,
+        notes !== undefined ? notes : oldReturn.notes,
+        id
+      ]
+    );
+
+    await db.query('COMMIT');
+    res.json(result.rows[0]);
   } catch (err) {
     await db.query('ROLLBACK');
     res.status(500).json({ error: err.message });
   }
 });
 
-app.delete('/api/orders/:id', async (req, res) => {
+app.delete('/api/sales-returns/:id', async (req, res) => {
   const { id } = req.params;
   try {
-    await db.query('DELETE FROM orders WHERE id = $1', [id]);
+    await db.query('BEGIN');
+    const existingRes = await db.query('SELECT * FROM sales_returns WHERE id = $1', [id]);
+    if (existingRes.rows.length === 0) {
+      await db.query('ROLLBACK');
+      return res.status(404).json({ error: 'Sales return not found' });
+    }
+    const oldReturn = existingRes.rows[0];
+    const oldQty = Number(oldReturn.quantity || 0);
+    const oldProduct = oldReturn.product_name;
+    const oldBatch = oldReturn.batch_no;
+
+    // Deduct stock
+    if (oldBatch) {
+      await db.query(
+        'UPDATE batches SET available_qty = available_qty - $1 WHERE product_name = $2 AND batch_number = $3',
+        [oldQty, oldProduct, oldBatch]
+      );
+    } else {
+      const batchLookup = await db.query(
+        'SELECT id FROM batches WHERE product_name = $1 ORDER BY date ASC LIMIT 1',
+        [oldProduct]
+      );
+      if (batchLookup.rows.length > 0) {
+        await db.query(
+          'UPDATE batches SET available_qty = available_qty - $1 WHERE id = $2',
+          [oldQty, batchLookup.rows[0].id]
+        );
+      }
+    }
+
+    await db.query('DELETE FROM sales_returns WHERE id = $1', [id]);
+    await db.query('COMMIT');
     res.json({ success: true });
   } catch (err) {
+    await db.query('ROLLBACK');
     res.status(500).json({ error: err.message });
   }
 });
@@ -677,7 +1161,7 @@ app.delete('/api/orders/:id', async (req, res) => {
 // --- Challans ---
 app.get('/api/challans', async (req, res) => {
   try {
-    const result = await db.query('SELECT * FROM challans ORDER BY date DESC, id DESC');
+    const result = await db.query('SELECT * FROM challans ORDER BY created_at DESC, id DESC');
     const challans = result.rows;
 
     const returnsRes = await db.query('SELECT client_name, product_name, batch_no, quantity FROM sales_returns');
@@ -690,8 +1174,8 @@ app.get('/api/challans', async (req, res) => {
     }
 
     const sortedChallans = [...challans].sort((a, b) => {
-      const dateA = a.date ? new Date(a.date).getTime() : 0;
-      const dateB = b.date ? new Date(b.date).getTime() : 0;
+      const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
       if (dateA !== dateB) return dateA - dateB;
       const idA = a.id ? String(a.id) : '';
       const idB = b.id ? String(b.id) : '';
@@ -700,7 +1184,7 @@ app.get('/api/challans', async (req, res) => {
     const distributedReturnsByKey = new Map();
 
     for (const c of sortedChallans) {
-      const key = `${c.client_name}||${c.product_name}||${c.batch_no || '0'}`;
+      const key = `${c.customer}||${c.product}||${c.batch_no || '0'}`;
       const totalReturns = returnsByKey.get(key) || 0;
       const alreadyDistributed = distributedReturnsByKey.get(key) || 0;
       const remainingReturns = Math.max(0, totalReturns - alreadyDistributed);
@@ -723,76 +1207,170 @@ app.get('/api/challans', async (req, res) => {
 });
 
 app.post('/api/challans', async (req, res) => {
-  const { challan_number, order_number, client_name, client_phone, product_name, quantity, date, batch_no, notes, should_fulfill, skip_stock_update, stock_category = 'Available' } = req.body;
+  const { sales_id, quantity, batch_no, notes, stock_category = 'Available', status = 'Pending' } = req.body;
   try {
     await db.query('BEGIN');
     
+    // Get Sale info
+    const saleRes = await db.query('SELECT * FROM sales WHERE id = $1', [sales_id]);
+    if (saleRes.rows.length === 0) {
+      await db.query('ROLLBACK');
+      return res.status(404).json({ error: 'Sale record not found' });
+    }
+    const sale = saleRes.rows[0];
+
+    // Generate challan number: CH-xxxx for immediate, P-xxxx for pending
+    const prefix = status === 'Pending' ? 'P-' : 'CH-';
+    const challanNo = await getNextChallanNumber(prefix);
+
     const result = await db.query(
       `INSERT INTO challans 
-      (challan_number, order_number, client_name, client_phone, product_name, quantity, date, batch_no, notes, is_cancelled, stock_category) 
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, FALSE, $10) RETURNING *`,
-      [challan_number, order_number, client_name, client_phone, product_name, quantity, date, batch_no, notes, stock_category]
+      (challan_no, sales_id, customer, client_phone, product, batch_no, quantity, status, created_at, notes, stock_category, is_printed, is_built, is_cancelled) 
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_DATE, $9, $10, FALSE, FALSE, FALSE) RETURNING *`,
+      [
+        challanNo,
+        sales_id,
+        sale.customer,
+        sale.client_phone,
+        sale.product,
+        batch_no || sale.batch_no || '0',
+        quantity,
+        status,
+        notes,
+        stock_category
+      ]
     );
     
-    if (should_fulfill) {
-      // Mark as generated AND fulfill everything (used when clearing backorders)
-      await db.query(
-        'UPDATE orders SET is_challan_generated = TRUE, pending_qty = 0, fulfilled_qty = quantity WHERE order_number = $1',
-        [order_number]
-      );
-    } else {
-      // Just mark as generated, keep existing partial quantities
-      await db.query(
-        'UPDATE orders SET is_challan_generated = TRUE WHERE order_number = $1',
-        [order_number]
-      );
+    await db.query('COMMIT');
+    res.json(result.rows[0]);
+  } catch (err) {
+    await db.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/challans/deliver/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    await db.query('BEGIN');
+
+    // 1. Fetch Challan
+    const challanRes = await db.query('SELECT * FROM challans WHERE id = $1', [id]);
+    if (challanRes.rows.length === 0) {
+      await db.query('ROLLBACK');
+      return res.status(404).json({ error: 'Challan not found' });
+    }
+    const challan = challanRes.rows[0];
+
+    if (challan.status !== 'Pending' && challan.status !== 'Confirmed') {
+      await db.query('ROLLBACK');
+      return res.status(400).json({ error: 'Challan is already delivered or cancelled.' });
     }
 
-    // Deduct stock from the specified batch (allow negative stock as requested)
-    if (!skip_stock_update && batch_no && product_name) {
-      let applyCol = 'available_qty';
-      if (stock_category === 'Display') applyCol = 'display_qty';
-      else if (stock_category === 'Damage') applyCol = 'damage_qty';
+    // 2. Fetch Sale
+    const saleRes = await db.query('SELECT * FROM sales WHERE id = $1', [challan.sales_id]);
+    if (saleRes.rows.length === 0) {
+      await db.query('ROLLBACK');
+      return res.status(404).json({ error: 'Associated Sale record not found.' });
+    }
+    const sale = saleRes.rows[0];
 
-      const updateResult = await db.query(
-        `UPDATE batches SET ${applyCol} = ${applyCol} - $1 WHERE batch_number = $2 AND product_name = $3`,
-        [quantity, batch_no, product_name]
+    const quantityToDeliver = Number(challan.quantity);
+    const stockCategory = challan.stock_category || 'Available';
+    const productName = challan.product;
+    const batchNo = challan.batch_no;
+
+    // 3. FIFO Stock Deduction
+    let bQuery = 'SELECT id, batch_number, available_qty, display_qty, damage_qty FROM batches WHERE product_name = $1';
+    let bParams = [productName];
+    if (batchNo) {
+      bQuery += ' AND batch_number = $2';
+      bParams.push(batchNo);
+    }
+    bQuery += ' ORDER BY date ASC';
+    
+    const batchesResult = await db.query(bQuery, bParams);
+    let remainingToSell = quantityToDeliver;
+    let totalDeducted = 0;
+    let lastBatchNo = batchNo;
+
+    let updateCol = 'available_qty';
+    if (stockCategory === 'Damage') {
+      updateCol = 'damage_qty';
+    } else if (stockCategory === 'Display') {
+      updateCol = 'display_qty';
+    }
+
+    for (const b of batchesResult.rows) {
+      if (remainingToSell <= 0) break;
+
+      const availableInBatch = Number(b[updateCol] || 0);
+      const canDeduct = Math.min(remainingToSell, availableInBatch);
+      if (canDeduct > 0) {
+        await db.query(`UPDATE batches SET ${updateCol} = ${updateCol} - $1 WHERE id = $2`, [canDeduct, b.id]);
+        remainingToSell -= canDeduct;
+        totalDeducted += canDeduct;
+      }
+      lastBatchNo = b.batch_number;
+    }
+
+    // Allow negative stock
+    if (remainingToSell > 0) {
+      const checkBatch = await db.query(
+        'SELECT id FROM batches WHERE product_name = $1 AND batch_number = $2',
+        [productName, batchNo || '0']
       );
-      
-      if (updateResult.rowCount === 0) {
-        // Find category from products or sales to create a placeholder batch
-        const productRes = await db.query('SELECT category FROM products WHERE name = $1 LIMIT 1', [product_name]);
-        let category = 'Other';
-        if (productRes.rows.length > 0) {
-          category = productRes.rows[0].category;
-        } else {
-          const saleRes = await db.query('SELECT category FROM sales WHERE product_name = $1 LIMIT 1', [product_name]);
-          if (saleRes.rows.length > 0) category = saleRes.rows[0].category;
-        }
-
+      if (checkBatch.rows.length > 0) {
+        await db.query(
+          `UPDATE batches SET ${updateCol} = ${updateCol} - $1 WHERE id = $2`,
+          [remainingToSell, checkBatch.rows[0].id]
+        );
+      } else {
+        const productLookup = await db.query('SELECT category FROM products WHERE name = $1 LIMIT 1', [productName]);
+        const category = productLookup.rows.length > 0 ? productLookup.rows[0].category : 'Other';
+        
         let insertCols = 'product_name, category, batch_number, quantity, date';
-        let insertVals = '$1, $2, $3, 0, $5';
-        let params = [product_name, category, batch_no, -quantity, date];
-        if (stock_category === 'Display') {
+        let insertVals = '$1, $2, $3, 0, CURRENT_DATE';
+        let params = [productName, category, batchNo || '0'];
+        if (stockCategory === 'Display') {
           insertCols += ', display_qty';
-          insertVals += ', $4';
-        } else if (stock_category === 'Damage') {
+          insertVals += ', -' + remainingToSell;
+        } else if (stockCategory === 'Damage') {
           insertCols += ', damage_qty';
-          insertVals += ', $4';
+          insertVals += ', -' + remainingToSell;
         } else {
           insertCols += ', available_qty';
-          insertVals += ', $4';
+          insertVals += ', -' + remainingToSell;
         }
-
-        await db.query(
-          `INSERT INTO batches (${insertCols}) VALUES (${insertVals})`,
-          params
-        );
+        await db.query(`INSERT INTO batches (${insertCols}) VALUES (${insertVals})`, params);
       }
     }
 
+    // 4. Update Sale quantities and status
+    const newDeliveredQty = Number(sale.delivered_qty || 0) + quantityToDeliver;
+    const newPendingQty = Math.max(0, Number(sale.pending_qty || 0) - quantityToDeliver);
+    let newStatus = 'Pending';
+    if (newDeliveredQty >= Number(sale.ordered_qty)) {
+      newStatus = 'Delivered';
+    } else if (newDeliveredQty > 0) {
+      newStatus = 'Partial';
+    }
+
+    await db.query(
+      `UPDATE sales 
+       SET delivered_qty = $1, pending_qty = $2, status = $3, updated_at = CURRENT_TIMESTAMP 
+       WHERE id = $4`,
+      [newDeliveredQty, newPendingQty, newStatus, sale.id]
+    );
+
+    // 5. Update Challan status to Delivered
+    await db.query(
+      `UPDATE challans SET status = 'Delivered', batch_no = $1 WHERE id = $2`,
+      [lastBatchNo || batchNo || '0', id]
+    );
+
     await db.query('COMMIT');
-    res.json(result.rows[0]);
+    res.json({ success: true });
   } catch (err) {
     await db.query('ROLLBACK');
     res.status(500).json({ error: err.message });
@@ -806,15 +1384,44 @@ app.put('/api/challans/:id', async (req, res) => {
     fields.stock_category = fields.stockCategory;
     delete fields.stockCategory;
   }
-  const existing = await db.query('SELECT is_cancelled FROM challans WHERE id = $1', [id]);
-  if (existing.rows.length > 0 && existing.rows[0].is_cancelled && fields.is_built === true) {
-    return res.status(400).json({ error: 'Cancelled challans cannot be marked as built' });
-  }
-  const setClause = Object.keys(fields).map((key, i) => `${key} = $${i + 1}`).join(', ');
-  const values = Object.values(fields);
   try {
-    const result = await db.query(`UPDATE challans SET ${setClause} WHERE id = $${values.length + 1} RETURNING *`, [...values, id]);
-    res.json(result.rows[0]);
+    const existing = await db.query('SELECT status, is_cancelled FROM challans WHERE id = $1', [id]);
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: 'Challan not found' });
+    }
+    const challan = existing.rows[0];
+
+    if (challan.status === 'Delivered') {
+      const hasOtherUpdates = Object.keys(fields).some(k => 
+        k !== 'is_printed' && k !== 'is_built' && k !== 'is_challan_generated' &&
+        k !== 'isPrinted' && k !== 'isBuilt' && k !== 'isChallanGenerated'
+      );
+      if (hasOtherUpdates) {
+        return res.status(400).json({ error: 'Delivered challans are read-only.' });
+      }
+    }
+    if (challan.is_cancelled) {
+      return res.status(400).json({ error: 'Cancelled challans cannot be edited.' });
+    }
+
+    const allowedUpdates = {};
+    if (fields.quantity !== undefined) allowedUpdates.quantity = fields.quantity;
+    if (fields.notes !== undefined) allowedUpdates.notes = fields.notes;
+    if (fields.stock_category !== undefined) allowedUpdates.stock_category = fields.stock_category;
+    if (fields.batch_no !== undefined) allowedUpdates.batch_no = fields.batch_no;
+    if (fields.status !== undefined) allowedUpdates.status = fields.status;
+    if (fields.is_printed !== undefined) allowedUpdates.is_printed = fields.is_printed;
+    if (fields.is_built !== undefined) allowedUpdates.is_built = fields.is_built;
+    if (fields.is_challan_generated !== undefined) allowedUpdates.is_challan_generated = fields.is_challan_generated;
+
+    if (Object.keys(allowedUpdates).length > 0) {
+      const setClause = Object.keys(allowedUpdates).map((key, i) => `"${key}" = $${i + 1}`).join(', ');
+      const values = Object.values(allowedUpdates);
+      const result = await db.query(`UPDATE challans SET ${setClause} WHERE id = $${values.length + 1} RETURNING *`, [...values, id]);
+      res.json(result.rows[0]);
+    } else {
+      res.json(challan);
+    }
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -822,87 +1429,166 @@ app.put('/api/challans/:id', async (req, res) => {
 
 app.put('/api/challans/group/:challanNumber', async (req, res) => {
   const { challanNumber } = req.params;
-  const { client_name, client_phone, date, items = [] } = req.body;
+  const { customer, client_name, client_phone, date, items = [] } = req.body;
+  const finalCustomer = customer || client_name;
   try {
     await db.query('BEGIN');
 
-    const existingRes = await db.query('SELECT * FROM challans WHERE challan_number = $1', [challanNumber]);
+    const existingRes = await db.query('SELECT * FROM challans WHERE challan_no = $1', [challanNumber]);
     const existingItems = existingRes.rows;
     if (existingItems.length === 0) {
       await db.query('ROLLBACK');
       return res.status(404).json({ error: 'Challan not found' });
     }
 
-    const stockByKey = new Map();
-    for (const row of existingItems) {
-      const key = `${row.product_name}||${row.batch_no || ''}||${row.stock_category || 'Available'}`;
-      stockByKey.set(key, (stockByKey.get(key) || 0) + Number(row.quantity || 0));
+    if (existingItems.some((item) => item.status === 'Delivered')) {
+      await db.query('ROLLBACK');
+      return res.status(400).json({ error: 'Delivered challans are read-only.' });
     }
 
-    const newByKey = new Map();
+    const existingStatus = existingItems[0].status || 'Pending';
+    const updatedIds = [];
+
     for (const item of items) {
-      const category = item.stockCategory || item.stock_category || 'Available';
-      const key = `${item.product_name}||${item.batch_no || ''}||${category}`;
-      newByKey.set(key, (newByKey.get(key) || 0) + Number(item.quantity || 0));
-    }
+      // Find matching existing item by ID or product name
+      const existingItem = existingItems.find(ei => ei.id === item.id) || 
+                           existingItems.find(ei => ei.product === item.productName);
 
-    for (const [key, oldQty] of stockByKey.entries()) {
-      const [productName, batchNo = '', stockCategory = 'Available'] = key.split('||');
-      const newQty = newByKey.get(key) || 0;
-      const diff = oldQty - newQty;
+      const salesId = existingItem ? existingItem.sales_id : item.salesId;
+      const productName = existingItem ? existingItem.product : (item.productName || item.product);
+      const stockCategory = item.stockCategory || item.stock_category || (existingItem ? existingItem.stock_category : 'Available');
+      const batchNo = item.batch_no || item.batchNo || (existingItem ? existingItem.batch_no : '0');
+      const notes = item.notes !== undefined ? item.notes : (existingItem ? existingItem.notes : '');
 
-      let updateCol = 'available_qty';
-      if (stockCategory === 'Display') updateCol = 'display_qty';
-      else if (stockCategory === 'Damage') updateCol = 'damage_qty';
+      const newRequestedQty = Number(item.quantity || 0);
 
-      if (diff > 0) {
+      let stockCol = 'available_qty';
+      if (stockCategory === 'Damage') stockCol = 'damage_qty';
+      else if (stockCategory === 'Display') stockCol = 'display_qty';
+
+      const stockRes = await db.query(
+        `SELECT COALESCE(SUM(${stockCol}), 0) as avail FROM batches WHERE product_name = $1`,
+        [productName]
+      );
+      const availStock = Number(stockRes.rows[0].avail || 0);
+
+      // Fetch corresponding sale record to check for delivered quantity
+      let deliveredQty = 0;
+      let rate = 0;
+      if (salesId) {
+        const saleRes = await db.query('SELECT * FROM sales WHERE id = $1', [salesId]);
+        if (saleRes.rows.length > 0) {
+          deliveredQty = Number(saleRes.rows[0].delivered_qty || 0);
+          rate = Number(saleRes.rows[0].rate || 0);
+        }
+      }
+
+      // Calculate quantities to distribute
+      const remainingToDistribute = Math.max(0, newRequestedQty - deliveredQty);
+      const actualChallanQty = Math.min(remainingToDistribute, availStock);
+      const pDraftQty = Math.max(0, remainingToDistribute - actualChallanQty);
+
+      // Update Sales record
+      if (salesId) {
+        const newPendingQtyForSale = Math.max(0, newRequestedQty - deliveredQty);
         await db.query(
-          `UPDATE batches SET ${updateCol} = CASE WHEN quantity > 0 THEN LEAST(quantity, ${updateCol} + $1) ELSE ${updateCol} + $1 END WHERE product_name = $2 AND batch_number = $3`,
-          [diff, productName, batchNo]
+          'UPDATE sales SET ordered_qty = $1, pending_qty = $2, total_price = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4',
+          [newRequestedQty, newPendingQtyForSale, newRequestedQty * rate, salesId]
         );
-      } else if (diff < 0) {
-        await db.query(
-          `UPDATE batches SET ${updateCol} = ${updateCol} - $1 WHERE product_name = $2 AND batch_number = $3`,
-          [-diff, productName, batchNo]
+      }
+
+      // Update or Insert Challan Item
+      if (actualChallanQty > 0) {
+        if (existingItem) {
+          await db.query(
+            `UPDATE challans SET 
+              customer = $1, 
+              client_phone = $2, 
+              product = $3, 
+              batch_no = $4, 
+              quantity = $5, 
+              notes = $6, 
+              stock_category = $7,
+              created_at = $8
+             WHERE id = $9`,
+            [
+              finalCustomer,
+              client_phone || '',
+              productName,
+              batchNo,
+              actualChallanQty,
+              notes,
+              stockCategory,
+              date || new Date().toISOString().slice(0, 10),
+              existingItem.id
+            ]
+          );
+          updatedIds.push(existingItem.id);
+        } else {
+          const insertRes = await db.query(
+            `INSERT INTO challans
+             (challan_no, sales_id, customer, client_phone, product, batch_no, quantity, status, created_at, notes, is_cancelled, stock_category, is_printed, is_built)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, FALSE, $11, FALSE, FALSE) RETURNING id`,
+            [
+              challanNumber,
+              salesId,
+              finalCustomer,
+              client_phone || '',
+              productName,
+              batchNo,
+              actualChallanQty,
+              existingStatus,
+              date || new Date().toISOString().slice(0, 10),
+              notes,
+              stockCategory,
+            ]
+          );
+          if (insertRes.rows.length > 0) {
+            updatedIds.push(insertRes.rows[0].id);
+          }
+        }
+      } else {
+        // If actual challan qty is 0, delete existing item if it exists
+        if (existingItem) {
+          await db.query('DELETE FROM challans WHERE id = $1', [existingItem.id]);
+        }
+      }
+
+      // Sync P-xxx draft challan for this item/sale
+      if (salesId) {
+        const pRes = await db.query(
+          "SELECT * FROM challans WHERE sales_id = $1 AND challan_no LIKE 'P-%' AND status = 'Pending' AND is_cancelled = FALSE ORDER BY created_at ASC LIMIT 1",
+          [salesId]
         );
+
+        if (pDraftQty > 0) {
+          if (pRes.rows.length > 0) {
+            await db.query(
+              'UPDATE challans SET quantity = $1, customer = $2, client_phone = $3, product = $4, batch_no = $5, stock_category = $6 WHERE id = $7',
+              [pDraftQty, finalCustomer, client_phone || '', productName, batchNo || '0', stockCategory, pRes.rows[0].id]
+            );
+          } else {
+            const pChallanNum = await getNextChallanNumber('P-');
+            await db.query(
+              `INSERT INTO challans
+              (challan_no, sales_id, customer, client_phone, product, batch_no, quantity, status, created_at, notes, stock_category, is_printed, is_built, is_cancelled)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending', CURRENT_DATE, $8, $9, FALSE, FALSE, FALSE)`,
+              [pChallanNum, salesId, finalCustomer, client_phone || '', productName, batchNo || '0', pDraftQty, notes, stockCategory]
+            );
+          }
+        } else {
+          if (pRes.rows.length > 0) {
+            await db.query('DELETE FROM challans WHERE id = $1', [pRes.rows[0].id]);
+          }
+        }
       }
     }
 
-    for (const [key, newQty] of newByKey.entries()) {
-      if (stockByKey.has(key)) continue;
-      const [productName, batchNo = '', stockCategory = 'Available'] = key.split('||');
-
-      let updateCol = 'available_qty';
-      if (stockCategory === 'Display') updateCol = 'display_qty';
-      else if (stockCategory === 'Damage') updateCol = 'damage_qty';
-
-      await db.query(
-        `UPDATE batches SET ${updateCol} = ${updateCol} - $1 WHERE product_name = $2 AND batch_number = $3`,
-        [newQty, productName, batchNo]
-      );
-    }
-
-    await db.query('DELETE FROM challans WHERE challan_number = $1', [challanNumber]);
-
-    for (const item of items) {
-      const category = item.stockCategory || item.stock_category || 'Available';
-      await db.query(
-        `INSERT INTO challans
-         (challan_number, order_number, client_name, client_phone, product_name, quantity, date, batch_no, notes, is_cancelled, stock_category)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, FALSE, $10)`,
-        [
-          challanNumber,
-          challanNumber,
-          client_name,
-          client_phone || '',
-          item.product_name,
-          item.quantity,
-          date,
-          item.batch_no || '',
-          item.notes || null,
-          category,
-        ]
-      );
+    // Delete any remaining existing items that were not in the updated list
+    const existingIds = existingItems.map(ei => ei.id);
+    const toDeleteIds = existingIds.filter(id => !updatedIds.includes(id));
+    if (toDeleteIds.length > 0) {
+      await db.query('DELETE FROM challans WHERE id = ANY($1)', [toDeleteIds]);
     }
 
     await db.query('COMMIT');
@@ -917,59 +1603,92 @@ app.put('/api/challans/group/:challanNumber/cancel', async (req, res) => {
   const { challanNumber } = req.params;
   try {
     await db.query('BEGIN');
-    const existingRes = await db.query('SELECT * FROM challans WHERE challan_number = $1', [challanNumber]);
+    const existingRes = await db.query('SELECT * FROM challans WHERE challan_no = $1', [challanNumber]);
     const existingItems = existingRes.rows;
     if (existingItems.length === 0) {
       await db.query('ROLLBACK');
       return res.status(404).json({ error: 'Challan not found' });
     }
 
-    const alreadyCancelled = existingItems.every((item) => item.is_cancelled);
+    const alreadyCancelled = existingItems.every((item) => item.is_cancelled || item.status === 'Cancelled');
     if (!alreadyCancelled) {
       for (const item of existingItems) {
-        const stockCategory = item.stock_category || 'Available';
-        let updateCol = 'available_qty';
-        if (stockCategory === 'Display') updateCol = 'display_qty';
-        else if (stockCategory === 'Damage') updateCol = 'damage_qty';
+        if (item.status === 'Delivered') {
+          const stockCategory = item.stock_category || 'Available';
+          let updateCol = 'available_qty';
+          if (stockCategory === 'Display') updateCol = 'display_qty';
+          else if (stockCategory === 'Damage') updateCol = 'damage_qty';
 
-        // 1. Get total returns for this client, product and batch
-        const returnsRes = await db.query(
-          `SELECT COALESCE(SUM(quantity), 0) AS total_returns 
-           FROM sales_returns 
-           WHERE client_name = $1 AND product_name = $2 AND batch_no = $3`,
-          [item.client_name, item.product_name, item.batch_no || '0']
-        );
-        const totalReturns = Number(returnsRes.rows[0].total_returns || 0);
+          // 1. Get total returns for this client, product and batch
+          const returnsRes = await db.query(
+            `SELECT COALESCE(SUM(quantity), 0) AS total_returns 
+             FROM sales_returns 
+             WHERE client_name = $1 AND product_name = $2 AND batch_no = $3`,
+            [item.customer, item.product, item.batch_no || '0']
+          );
+          const totalReturns = Number(returnsRes.rows[0].total_returns || 0);
 
-        // 2. Get total returns already applied to other cancelled challans
-        const appliedRes = await db.query(
-          `SELECT COALESCE(SUM(quantity - COALESCE(restored_qty, quantity)), 0) AS total_applied 
-           FROM challans 
-           WHERE client_name = $1 AND product_name = $2 AND batch_no = $3 AND is_cancelled = TRUE`,
-          [item.client_name, item.product_name, item.batch_no || '0']
-        );
-        const totalApplied = Number(appliedRes.rows[0].total_applied || 0);
+          // 2. Get total returns already applied to other cancelled challans
+          const appliedRes = await db.query(
+            `SELECT COALESCE(SUM(quantity - COALESCE(restored_qty, quantity)), 0) AS total_applied 
+             FROM challans 
+             WHERE customer = $1 AND product = $2 AND batch_no = $3 AND is_cancelled = TRUE`,
+            [item.customer, item.product, item.batch_no || '0']
+          );
+          const totalApplied = Number(appliedRes.rows[0].total_applied || 0);
 
-        const unappliedReturns = Math.max(0, totalReturns - totalApplied);
-        const restoreQty = Math.max(0, Number(item.quantity || 0) - unappliedReturns);
+          const unappliedReturns = Math.max(0, totalReturns - totalApplied);
+          const restoreQty = Math.max(0, Number(item.quantity || 0) - unappliedReturns);
 
-        await db.query(
-          `UPDATE batches SET ${updateCol} = CASE WHEN quantity > 0 THEN LEAST(quantity, ${updateCol} + $1) ELSE ${updateCol} + $1 END WHERE product_name = $2 AND batch_number = $3`,
-          [restoreQty, item.product_name, item.batch_no || '0']
-        );
+          await db.query(
+            `UPDATE batches SET ${updateCol} = CASE WHEN quantity > 0 THEN LEAST(quantity, ${updateCol} + $1) ELSE ${updateCol} + $1 END WHERE product_name = $2 AND batch_number = $3`,
+            [restoreQty, item.product, item.batch_no || '0']
+          );
 
-        // Update the item's restored_qty
-        await db.query(
-          'UPDATE challans SET restored_qty = $1 WHERE id = $2',
-          [restoreQty, item.id]
-        );
+          // Update the item's restored_qty
+          await db.query(
+            'UPDATE challans SET restored_qty = $1 WHERE id = $2',
+            [restoreQty, item.id]
+          );
+
+          // 3. Revert Sale record delivered and pending quantities and recalculate status
+          const saleRes = await db.query('SELECT * FROM sales WHERE id = $1', [item.sales_id]);
+          if (saleRes.rows.length > 0) {
+            const sale = saleRes.rows[0];
+            const newDelivered = Math.max(0, Number(sale.delivered_qty || 0) - Number(item.quantity));
+            const newPending = Number(sale.pending_qty || 0) + Number(item.quantity);
+            let newStatus = 'Pending';
+            if (newDelivered >= Number(sale.ordered_qty)) {
+              newStatus = 'Delivered';
+            } else if (newDelivered > 0) {
+              newStatus = 'Partial';
+            }
+            await db.query(
+              'UPDATE sales SET delivered_qty = $1, pending_qty = $2, status = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4',
+              [newDelivered, newPending, newStatus, sale.id]
+            );
+          }
+        }
       }
     }
 
     await db.query(
-      'UPDATE challans SET is_cancelled = TRUE, cancelled_at = CURRENT_TIMESTAMP WHERE challan_number = $1',
+      `UPDATE challans SET is_cancelled = TRUE, status = 'Cancelled', cancelled_at = CURRENT_TIMESTAMP WHERE challan_no = $1`,
       [challanNumber]
     );
+
+    // Also cancel any linked P-xxx pending draft for this sale
+    const salesIdForPDraft = existingItems[0] ? existingItems[0].sales_id : null;
+    if (salesIdForPDraft) {
+      await db.query(
+        "UPDATE challans SET is_cancelled = TRUE, status = 'Cancelled', cancelled_at = CURRENT_TIMESTAMP WHERE sales_id = $1 AND challan_no LIKE 'P-%' AND is_cancelled = FALSE",
+        [salesIdForPDraft]
+      );
+      await db.query(
+        "UPDATE sales SET status = 'Cancelled', updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+        [salesIdForPDraft]
+      );
+    }
 
     await db.query('COMMIT');
     res.json({ success: true });
@@ -983,59 +1702,92 @@ app.put('/api/challans/cancel/:challanNumber', async (req, res) => {
   const { challanNumber } = req.params;
   try {
     await db.query('BEGIN');
-    const existingRes = await db.query('SELECT * FROM challans WHERE challan_number = $1', [challanNumber]);
+    const existingRes = await db.query('SELECT * FROM challans WHERE challan_no = $1', [challanNumber]);
     const existingItems = existingRes.rows;
     if (existingItems.length === 0) {
       await db.query('ROLLBACK');
       return res.status(404).json({ error: 'Challan not found' });
     }
 
-    const alreadyCancelled = existingItems.every((item) => item.is_cancelled);
+    const alreadyCancelled = existingItems.every((item) => item.is_cancelled || item.status === 'Cancelled');
     if (!alreadyCancelled) {
       for (const item of existingItems) {
-        const stockCategory = item.stock_category || 'Available';
-        let updateCol = 'available_qty';
-        if (stockCategory === 'Display') updateCol = 'display_qty';
-        else if (stockCategory === 'Damage') updateCol = 'damage_qty';
+        if (item.status === 'Delivered') {
+          const stockCategory = item.stock_category || 'Available';
+          let updateCol = 'available_qty';
+          if (stockCategory === 'Display') updateCol = 'display_qty';
+          else if (stockCategory === 'Damage') updateCol = 'damage_qty';
 
-        // 1. Get total returns for this client, product and batch
-        const returnsRes = await db.query(
-          `SELECT COALESCE(SUM(quantity), 0) AS total_returns 
-           FROM sales_returns 
-           WHERE client_name = $1 AND product_name = $2 AND batch_no = $3`,
-          [item.client_name, item.product_name, item.batch_no || '0']
-        );
-        const totalReturns = Number(returnsRes.rows[0].total_returns || 0);
+          // 1. Get total returns for this client, product and batch
+          const returnsRes = await db.query(
+            `SELECT COALESCE(SUM(quantity), 0) AS total_returns 
+             FROM sales_returns 
+             WHERE client_name = $1 AND product_name = $2 AND batch_no = $3`,
+            [item.customer, item.product, item.batch_no || '0']
+          );
+          const totalReturns = Number(returnsRes.rows[0].total_returns || 0);
 
-        // 2. Get total returns already applied to other cancelled challans
-        const appliedRes = await db.query(
-          `SELECT COALESCE(SUM(quantity - COALESCE(restored_qty, quantity)), 0) AS total_applied 
-           FROM challans 
-           WHERE client_name = $1 AND product_name = $2 AND batch_no = $3 AND is_cancelled = TRUE`,
-          [item.client_name, item.product_name, item.batch_no || '0']
-        );
-        const totalApplied = Number(appliedRes.rows[0].total_applied || 0);
+          // 2. Get total returns already applied to other cancelled challans
+          const appliedRes = await db.query(
+            `SELECT COALESCE(SUM(quantity - COALESCE(restored_qty, quantity)), 0) AS total_applied 
+             FROM challans 
+             WHERE customer = $1 AND product = $2 AND batch_no = $3 AND is_cancelled = TRUE`,
+            [item.customer, item.product, item.batch_no || '0']
+          );
+          const totalApplied = Number(appliedRes.rows[0].total_applied || 0);
 
-        const unappliedReturns = Math.max(0, totalReturns - totalApplied);
-        const restoreQty = Math.max(0, Number(item.quantity || 0) - unappliedReturns);
+          const unappliedReturns = Math.max(0, totalReturns - totalApplied);
+          const restoreQty = Math.max(0, Number(item.quantity || 0) - unappliedReturns);
 
-        await db.query(
-          `UPDATE batches SET ${updateCol} = CASE WHEN quantity > 0 THEN LEAST(quantity, ${updateCol} + $1) ELSE ${updateCol} + $1 END WHERE product_name = $2 AND batch_number = $3`,
-          [restoreQty, item.product_name, item.batch_no || '0']
-        );
+          await db.query(
+            `UPDATE batches SET ${updateCol} = CASE WHEN quantity > 0 THEN LEAST(quantity, ${updateCol} + $1) ELSE ${updateCol} + $1 END WHERE product_name = $2 AND batch_number = $3`,
+            [restoreQty, item.product, item.batch_no || '0']
+          );
 
-        // Update the item's restored_qty
-        await db.query(
-          'UPDATE challans SET restored_qty = $1 WHERE id = $2',
-          [restoreQty, item.id]
-        );
+          // Update the item's restored_qty
+          await db.query(
+            'UPDATE challans SET restored_qty = $1 WHERE id = $2',
+            [restoreQty, item.id]
+          );
+
+          // 3. Revert Sale record delivered and pending quantities and recalculate status
+          const saleRes = await db.query('SELECT * FROM sales WHERE id = $1', [item.sales_id]);
+          if (saleRes.rows.length > 0) {
+            const sale = saleRes.rows[0];
+            const newDelivered = Math.max(0, Number(sale.delivered_qty || 0) - Number(item.quantity));
+            const newPending = Number(sale.pending_qty || 0) + Number(item.quantity);
+            let newStatus = 'Pending';
+            if (newDelivered >= Number(sale.ordered_qty)) {
+              newStatus = 'Delivered';
+            } else if (newDelivered > 0) {
+              newStatus = 'Partial';
+            }
+            await db.query(
+              'UPDATE sales SET delivered_qty = $1, pending_qty = $2, status = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4',
+              [newDelivered, newPending, newStatus, sale.id]
+            );
+          }
+        }
       }
     }
 
     await db.query(
-      'UPDATE challans SET is_cancelled = TRUE, cancelled_at = CURRENT_TIMESTAMP WHERE challan_number = $1',
+      `UPDATE challans SET is_cancelled = TRUE, status = 'Cancelled', cancelled_at = CURRENT_TIMESTAMP WHERE challan_no = $1`,
       [challanNumber]
     );
+
+    // Cascade: also cancel any linked P-xxx pending draft for the same sale
+    const salesIdForCascade = existingItems[0] ? existingItems[0].sales_id : null;
+    if (salesIdForCascade) {
+      await db.query(
+        "UPDATE challans SET is_cancelled = TRUE, status = 'Cancelled', cancelled_at = CURRENT_TIMESTAMP WHERE sales_id = $1 AND challan_no LIKE 'P-%' AND is_cancelled = FALSE",
+        [salesIdForCascade]
+      );
+      await db.query(
+        "UPDATE sales SET status = 'Cancelled', updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+        [salesIdForCascade]
+      );
+    }
 
     await db.query('COMMIT');
     res.json({ success: true });
@@ -1045,26 +1797,215 @@ app.put('/api/challans/cancel/:challanNumber', async (req, res) => {
   }
 });
 
+// Confirm an entire challan group (Pending â†’ Confirmed, no stock deduction)
+app.put('/api/challans/group/:challanNumber/confirm', async (req, res) => {
+  const { challanNumber } = req.params;
+  try {
+    await db.query('BEGIN');
+    const challanRes = await db.query(
+      "SELECT * FROM challans WHERE challan_no = $1 AND is_cancelled = FALSE AND status != 'Delivered'",
+      [challanNumber]
+    );
+    if (challanRes.rows.length === 0) {
+      await db.query('ROLLBACK');
+      return res.status(404).json({ error: 'No confirmable challan items found.' });
+    }
+    // Update all items to Confirmed
+    await db.query(
+      "UPDATE challans SET status = 'Confirmed' WHERE challan_no = $1 AND is_cancelled = FALSE AND status = 'Pending'",
+      [challanNumber]
+    );
+    // Update related sales to Confirmed (only if currently Pending)
+    const salesIds = [...new Set(challanRes.rows.map(c => c.sales_id).filter(Boolean))];
+    for (const sid of salesIds) {
+      await db.query(
+        "UPDATE sales SET status = 'Confirmed', updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND status = 'Pending'",
+        [sid]
+      );
+    }
+    await db.query('COMMIT');
+    res.json({ success: true });
+  } catch (err) {
+    await db.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Deliver an entire challan group â€” FIFO stock deduction for every item
+app.put('/api/challans/group/:challanNumber/deliver', async (req, res) => {
+  const { challanNumber } = req.params;
+  try {
+    await db.query('BEGIN');
+    const challanRes = await db.query(
+      "SELECT * FROM challans WHERE challan_no = $1 AND is_cancelled = FALSE AND status != 'Delivered'",
+      [challanNumber]
+    );
+    if (challanRes.rows.length === 0) {
+      await db.query('ROLLBACK');
+      return res.status(404).json({ error: 'No deliverable challan items found.' });
+    }
+
+    for (const challan of challanRes.rows) {
+      const quantityToDeliver = Number(challan.quantity);
+      const stockCategory = challan.stock_category || 'Available';
+      const productName = challan.product;
+      const batchNo = challan.batch_no;
+
+      let updateCol = 'available_qty';
+      if (stockCategory === 'Damage') updateCol = 'damage_qty';
+      else if (stockCategory === 'Display') updateCol = 'display_qty';
+
+      // FIFO batch deduction
+      let bQuery = 'SELECT id, batch_number, available_qty, display_qty, damage_qty FROM batches WHERE product_name = $1';
+      let bParams = [productName];
+      if (batchNo && batchNo !== '0') {
+        bQuery += ' AND batch_number = $2';
+        bParams.push(batchNo);
+      }
+      bQuery += ' ORDER BY date ASC';
+
+      const batchesResult = await db.query(bQuery, bParams);
+      let remainingToSell = quantityToDeliver;
+      let lastBatchNo = batchNo;
+
+      for (const b of batchesResult.rows) {
+        if (remainingToSell <= 0) break;
+        const availableInBatch = Number(b[updateCol] || 0);
+        const canDeduct = Math.min(remainingToSell, availableInBatch);
+        if (canDeduct > 0) {
+          await db.query(`UPDATE batches SET ${updateCol} = ${updateCol} - $1 WHERE id = $2`, [canDeduct, b.id]);
+          remainingToSell -= canDeduct;
+        }
+        lastBatchNo = b.batch_number;
+      }
+
+      // Allow negative stock if needed
+      if (remainingToSell > 0) {
+        const checkBatch = await db.query(
+          'SELECT id FROM batches WHERE product_name = $1 AND batch_number = $2',
+          [productName, batchNo || '0']
+        );
+        if (checkBatch.rows.length > 0) {
+          await db.query(`UPDATE batches SET ${updateCol} = ${updateCol} - $1 WHERE id = $2`, [remainingToSell, checkBatch.rows[0].id]);
+        } else {
+          const productLookup = await db.query('SELECT category FROM products WHERE name = $1 LIMIT 1', [productName]);
+          const prodCat = productLookup.rows.length > 0 ? productLookup.rows[0].category : 'Other';
+          let insertCols = 'product_name, category, batch_number, quantity, date';
+          let insertVals = '$1, $2, $3, 0, CURRENT_DATE';
+          const params = [productName, prodCat, batchNo || '0'];
+          if (stockCategory === 'Display') { insertCols += ', display_qty'; insertVals += ', -' + remainingToSell; }
+          else if (stockCategory === 'Damage') { insertCols += ', damage_qty'; insertVals += ', -' + remainingToSell; }
+          else { insertCols += ', available_qty'; insertVals += ', -' + remainingToSell; }
+          await db.query(`INSERT INTO batches (${insertCols}) VALUES (${insertVals})`, params);
+        }
+      }
+
+      // Update related sale
+      if (challan.sales_id) {
+        const saleRes = await db.query('SELECT * FROM sales WHERE id = $1', [challan.sales_id]);
+        if (saleRes.rows.length > 0) {
+          const sale = saleRes.rows[0];
+          const newDeliveredQty = Number(sale.delivered_qty || 0) + quantityToDeliver;
+          const newPendingQty = Math.max(0, Number(sale.pending_qty || 0) - quantityToDeliver);
+          let newStatus = 'Pending';
+          if (newDeliveredQty >= Number(sale.ordered_qty)) newStatus = 'Delivered';
+          else if (newDeliveredQty > 0) newStatus = 'Partial';
+          await db.query(
+            'UPDATE sales SET delivered_qty = $1, pending_qty = $2, status = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4',
+            [newDeliveredQty, newPendingQty, newStatus, challan.sales_id]
+          );
+        }
+      }
+
+      // Mark challan item as Delivered
+      await db.query(
+        "UPDATE challans SET status = 'Delivered', batch_no = $1 WHERE id = $2",
+        [lastBatchNo || batchNo || '0', challan.id]
+      );
+    }
+
+    await db.query('COMMIT');
+    res.json({ success: true });
+  } catch (err) {
+    await db.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete entire challan group by challanNo (safe – only for cancelled/pending rows)
+app.delete('/api/challans/group/:challanNumber', async (req, res) => {
+  const { challanNumber } = req.params;
+  try {
+    const existing = await db.query('SELECT * FROM challans WHERE challan_no = $1', [challanNumber]);
+    if (existing.rows.length === 0) return res.status(404).json({ error: 'Challan not found' });
+    // Safety: refuse to delete delivered, non-cancelled challans
+    const hasActiveDelivered = existing.rows.some(r => r.status === 'Delivered' && !r.is_cancelled);
+    if (hasActiveDelivered) return res.status(400).json({ error: 'Cannot delete a delivered challan.' });
+    // Delete the challan group
+    await db.query('DELETE FROM challans WHERE challan_no = $1', [challanNumber]);
+    // Also delete any linked P-xxx drafts for the same sale (orphan cleanup)
+    const salesId = existing.rows[0] ? existing.rows[0].sales_id : null;
+    const isCancelled = existing.rows.some(r => r.is_cancelled || r.status === 'Cancelled');
+    if (salesId) {
+      if (isCancelled) {
+        // If deleting a cancelled challan, delete all cancelled challans for this sale (both CH- and P-)
+        await db.query(
+          "DELETE FROM challans WHERE sales_id = $1 AND is_cancelled = TRUE",
+          [salesId]
+        );
+      }
+      await db.query(
+        "DELETE FROM challans WHERE sales_id = $1 AND challan_no LIKE 'P-%'",
+        [salesId]
+      );
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.delete('/api/challans/:id', async (req, res) => {
   const { id } = req.params;
   try {
     await db.query('BEGIN');
     
-    // Get the order_number before deleting
-    const challanRes = await db.query('SELECT order_number FROM challans WHERE id = $1', [id]);
+    const challanRes = await db.query('SELECT * FROM challans WHERE id = $1', [id]);
     
     if (challanRes.rows.length > 0) {
-      const orderNumber = challanRes.rows[0].order_number;
-      
-      // Delete the challan
-      await db.query('DELETE FROM challans WHERE id = $1', [id]);
-      
-      // Check if there are any OTHER challans for this order (in case of partial delivery etc. though current logic is 1:1)
-      const others = await db.query('SELECT id FROM challans WHERE order_number = $1', [orderNumber]);
-      if (others.rows.length === 0) {
-        await db.query('UPDATE orders SET is_challan_generated = FALSE WHERE order_number = $1', [orderNumber]);
+      const challan = challanRes.rows[0];
+
+      if (challan.status === 'Delivered' && !challan.is_cancelled) {
+        // Revert stock from batches
+        const stockCategory = challan.stock_category || 'Available';
+        let updateCol = 'available_qty';
+        if (stockCategory === 'Display') updateCol = 'display_qty';
+        else if (stockCategory === 'Damage') updateCol = 'damage_qty';
+
+        await db.query(
+          `UPDATE batches SET ${updateCol} = CASE WHEN quantity > 0 THEN LEAST(quantity, ${updateCol} + $1) ELSE ${updateCol} + $1 END WHERE product_name = $2 AND batch_number = $3`,
+          [challan.quantity, challan.product, challan.batch_no || '0']
+        );
+
+        // Update Sale quantities and status
+        const saleRes = await db.query('SELECT * FROM sales WHERE id = $1', [challan.sales_id]);
+        if (saleRes.rows.length > 0) {
+          const sale = saleRes.rows[0];
+          const newDelivered = Math.max(0, Number(sale.delivered_qty || 0) - Number(challan.quantity));
+          const newPending = Number(sale.pending_qty || 0) + Number(challan.quantity);
+          let newStatus = 'Pending';
+          if (newDelivered >= Number(sale.ordered_qty)) {
+            newStatus = 'Delivered';
+          } else if (newDelivered > 0) {
+            newStatus = 'Partial';
+          }
+          await db.query(
+            'UPDATE sales SET delivered_qty = $1, pending_qty = $2, status = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4',
+            [newDelivered, newPending, newStatus, sale.id]
+          );
+        }
       }
-    } else {
+      
       await db.query('DELETE FROM challans WHERE id = $1', [id]);
     }
 
@@ -1156,7 +2097,6 @@ app.delete('/api/users/:id', async (req, res) => {
   }
 });
 
-
 // --- Holds ---
 app.get('/api/holds', async (req, res) => {
   try {
@@ -1178,7 +2118,7 @@ app.post('/api/holds', async (req, res) => {
       [client_name, client_phone, product_name, category, quantity, batch_no, hold_date || new Date().toISOString().split('T')[0]]
     );
 
-    // Deduct stock from available and add to hold
+    // Calculate held quantity based on available stock without modifying batches table
     let bQuery = 'SELECT id, batch_number, available_qty FROM batches WHERE product_name = $1';
     let bParams = [product_name];
     if (batch_no) {
@@ -1194,7 +2134,6 @@ app.post('/api/holds', async (req, res) => {
     for (const b of batchesResult.rows) {
       if (remainingToHold <= 0) break;
       const canHold = Math.min(remainingToHold, b.available_qty);
-      await db.query('UPDATE batches SET available_qty = available_qty - $1, hold_qty = hold_qty + $1 WHERE id = $2', [canHold, b.id]);
       remainingToHold -= canHold;
       lastBatchNo = b.batch_number;
     }
@@ -1214,44 +2153,109 @@ app.post('/api/holds', async (req, res) => {
 
 app.delete('/api/holds/:id', async (req, res) => {
   const { id } = req.params;
+  const ids = id.split(',');
   try {
     await db.query('BEGIN');
     
-    const holdRes = await db.query('SELECT * FROM holds WHERE id = $1', [id]);
+    const holdRes = await db.query('SELECT * FROM holds WHERE id = ANY($1)', [ids]);
     if (holdRes.rows.length > 0) {
-      const hold = holdRes.rows[0];
+      const holdsToRelease = holdRes.rows;
       
-      const heldQty = hold.held_qty !== null && hold.held_qty !== undefined ? Number(hold.held_qty) : Number(hold.quantity);
-      const pendingQty = Math.max(0, Number(hold.quantity) - heldQty);
-
-      // Decrease hold_qty in batches (do not add back to available_qty since it is sold now)
-      if (hold.product_name && heldQty > 0) {
-        await db.query(
-          'UPDATE batches SET hold_qty = GREATEST(0, hold_qty - $1) WHERE product_name = $2 AND batch_number = $3',
-          [heldQty, hold.product_name, hold.batch_no || '0']
-        );
-      }
-      
-      // Generate a unique order number
+      // Generate one order number for all released items
       const orderNum = `ORD-${Date.now().toString(36).toUpperCase()}`;
 
-      // Insert into sales table
-      await db.query(
-        `INSERT INTO sales 
-        (client_name, client_phone, product_name, category, quantity, rate, total_price, order_date, value_category, batch_no, narration, damage_qty, stock_category, pending_qty, fulfilled_qty) 
-        VALUES ($1, $2, $3, $4, $5, 0, 0, $6, 'Standard', $7, 'Released from Hold', 0, 'Available', $8, $9)`,
-        [hold.client_name, hold.client_phone, hold.product_name, hold.category || 'Regular', hold.quantity, hold.hold_date, hold.batch_no || '0', pendingQty, heldQty]
-      );
+      // Check if we need to generate CH- or P- challan numbers
+      let hasCH = false;
+      let hasP = false;
 
-      // Insert into orders table (moves to order tracking)
-      await db.query(
-        `INSERT INTO orders 
-        (order_number, client_name, client_phone, product_name, quantity, total_amount, order_date, status, batch_no, pending_qty, fulfilled_qty, narration, stock_category) 
-        VALUES ($1, $2, $3, $4, $5, 0, $6, 'Pending', $7, $8, $9, 'Released from Hold', 'Available')`,
-        [orderNum, hold.client_name, hold.client_phone, hold.product_name, hold.quantity, hold.hold_date, hold.batch_no || '0', pendingQty, heldQty]
-      );
+      const itemsDetails = holdsToRelease.map(hold => {
+        const heldQty = hold.held_qty !== null && hold.held_qty !== undefined ? Number(hold.held_qty) : Number(hold.quantity);
+        const pendingQty = Math.max(0, Number(hold.quantity) - heldQty);
+
+        if (heldQty > 0) hasCH = true;
+        if (pendingQty > 0) hasP = true;
+
+        return {
+          hold,
+          heldQty,
+          pendingQty
+        };
+      });
+
+      let challanNum = null;
+      let pChallanNum = null;
+
+      if (hasCH) {
+        challanNum = await getNextChallanNumber('CH-');
+      }
+      if (hasP) {
+        pChallanNum = await getNextChallanNumber('P-');
+      }
+
+      for (const details of itemsDetails) {
+        const { hold, heldQty, pendingQty } = details;
+        const quantityVal = Number(hold.quantity || 0);
+
+        // Insert into sales table sharing the same order number
+        const saleInsertRes = await db.query(
+          `INSERT INTO sales 
+          (order_no, customer, client_phone, product, category, ordered_qty, delivered_qty, pending_qty, rate, "GST", total_price, order_date, value_category, batch_no, remarks, status, stock_category, damage_qty, created_at, updated_at) 
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, 0, 0, $9, 'Standard', $10, 'Release from stock', $11, 'Available', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING *`,
+          [
+            orderNum, 
+            hold.client_name, 
+            hold.client_phone, 
+            hold.product_name, 
+            hold.category || 'Regular', 
+            quantityVal, 
+            0, 
+            quantityVal, 
+            hold.hold_date || new Date().toISOString().split('T')[0], 
+            hold.batch_no || '0', 
+            'Pending'
+          ]
+        );
+
+        const createdSale = saleInsertRes.rows[0];
+
+        // Insert into challans using the shared challan number
+        if (heldQty > 0 && challanNum) {
+          await db.query(
+            `INSERT INTO challans 
+            (challan_no, sales_id, customer, client_phone, product, batch_no, quantity, status, created_at, notes, stock_category, is_printed, is_built, is_cancelled) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 'Confirmed', CURRENT_DATE, 'Release from stock', 'Available', FALSE, FALSE, FALSE)`,
+            [
+              challanNum,
+              createdSale.id,
+              hold.client_name,
+              hold.client_phone,
+              hold.product_name,
+              hold.batch_no || '0',
+              heldQty
+            ]
+          );
+        }
+
+        if (pendingQty > 0 && pChallanNum) {
+          await db.query(
+            `INSERT INTO challans 
+            (challan_no, sales_id, customer, client_phone, product, batch_no, quantity, status, created_at, notes, stock_category, is_printed, is_built, is_cancelled) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending', CURRENT_DATE, 'Release from stock', 'Available', FALSE, FALSE, FALSE)`,
+            [
+              pChallanNum,
+              createdSale.id,
+              hold.client_name,
+              hold.client_phone,
+              hold.product_name,
+              hold.batch_no || '0',
+              pendingQty
+            ]
+          );
+        }
+      }
       
-      await db.query('DELETE FROM holds WHERE id = $1', [id]);
+      // Delete the holds
+      await db.query('DELETE FROM holds WHERE id = ANY($1)', [ids]);
     }
 
     await db.query('COMMIT');
@@ -1267,11 +2271,18 @@ db.query('SELECT NOW()', (err, res) => {
   if (err) {
     console.error('❌ Database connection failed:', err.message);
   } else {
-    console.log('✅ Connected to PostgreSQL at:', res.rows[0].now);
+    console.log('Connected to PostgreSQL at:', res.rows[0].now);
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+const server = app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
 
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`❌ Port ${PORT} is already in use. Please stop the background process or kill port ${PORT}.`);
+  } else {
+    console.error('❌ Server error:', err.message);
+  }
+});

@@ -1,12 +1,17 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   getChallans,
+  getSales,
   updateChallan,
   updateChallanGroup,
   deleteChallan,
+  deleteChallanGroup,
   cancelChallanGroup,
+  confirmChallanGroup,
+  deliverChallanGroup,
   exportCSV,
   Challan,
+  Sale,
 } from "@/lib/store";
 import { printElement } from "@/lib/print";
 import { Card, CardContent } from "@/components/ui/card";
@@ -29,6 +34,9 @@ import {
   CheckSquare,
   CheckCircle2,
   Ban,
+  Truck,
+  FileSpreadsheet,
+  Search,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -50,58 +58,126 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 
+const renderCustomer = (customerName: string) => {
+  const match = customerName.match(/(.*?)\s*\(([^)]+)\)$/);
+  if (match) {
+    return (
+      <div className="flex flex-col gap-0.5">
+        <span className="font-semibold text-slate-900 leading-tight">{match[1]}</span>
+        <span className="text-[11px] text-slate-500 font-medium leading-none mt-0.5">({match[2]})</span>
+      </div>
+    );
+  }
+  return <span className="font-semibold text-slate-900 leading-tight">{customerName}</span>;
+};
+
 export default function ChallanPage() {
   const [challans, setChallans] = useState<Challan[]>([]);
+  const [sales, setSales] = useState<Sale[]>([]);
   const [editingGroup, setEditingGroup] = useState<any>(null);
+  const [filter, setFilter] = useState("");
   const { toast } = useToast();
 
-  const groupedChallans = useMemo(() => {
-    const groups: Record<string, Challan[]> = {};
-    challans.forEach((c) => {
-      if (!groups[c.challanNumber]) groups[c.challanNumber] = [];
-      groups[c.challanNumber].push(c);
+  const refresh = useCallback(() => {
+    Promise.all([getChallans(), getSales()]).then(([c, s]) => {
+      setChallans(c);
+      setSales(s);
     });
-    return Object.entries(groups)
-      .map(([challanNumber, items]) => ({
-        challanNumber,
-        clientName: items[0].clientName,
-        date: items[0].date,
-        items: items,
-        isPrinted: items.every((i) => i.isPrinted),
-        isBuilt: items.every((i) => i.isBuilt),
-        id: items[0].id, // Use first item's ID for keys/editing
-      }))
-      .sort((a, b) => {
-        const dateA = a.date ? new Date(a.date).getTime() : 0;
-        const dateB = b.date ? new Date(b.date).getTime() : 0;
-        return dateB - dateA;
-      });
-  }, [challans]);
+  }, []);
 
-  const openEditDialog = (group: any) => {
-    setEditingGroup({
-      challanNumber: group.challanNumber,
-      clientName: group.clientName,
-      clientPhone: group.items[0]?.clientPhone || "",
-      date: group.date,
-      items: group.items.map((item: Challan) => ({
-        id: item.id,
-        productName: item.productName,
-        quantity: item.quantity,
-        originalQuantity: item.quantity,
-        batchNo: item.batchNo,
-        notes: item.notes || "",
-        stockCategory: item.stockCategory || "Available",
-      })),
-    });
-  };
-
-  const refresh = useCallback(() => getChallans().then(setChallans), []);
   useEffect(() => {
     refresh();
   }, [refresh]);
 
-  const handleDelete = async (challanNumber: string) => {
+  const groupedChallans = useMemo(() => {
+    const groups: Record<string, Challan[]> = {};
+    challans.forEach((c) => {
+      if (!groups[c.challanNo]) groups[c.challanNo] = [];
+      groups[c.challanNo].push(c);
+    });
+    return Object.entries(groups)
+      .map(([challanNo, items]) => ({
+        challanNo,
+        customer: items[0].customer,
+        createdAt: items[0].createdAt,
+        items: items,
+        isPrinted: items.every((i) => i.isPrinted),
+        isBuilt: items.every((i) => i.isBuilt),
+        isChallanGenerated: items.every((i) => i.isChallanGenerated),
+        isCancelled: items.some((i) => i.isCancelled || i.status === "Cancelled"),
+        status: items[0].status,
+        salesId: items[0].salesId,
+        id: items[0].id,
+      }))
+      .filter((g) => {
+        if (g.status === "Delivered") return false;
+        const isCH = g.challanNo.startsWith("CH-") || g.challanNo.startsWith("CH");
+        const isP = g.challanNo.startsWith("P-");
+        if (isCH) return true;
+        if (isP) return g.status === "Confirmed";
+        return true;
+      })
+      .sort((a, b) => {
+        const saleA = sales.find(s => s.id === a.salesId);
+        const saleB = sales.find(s => s.id === b.salesId);
+        const dateA = saleA?.updatedAt || a.createdAt || "";
+        const dateB = saleB?.updatedAt || b.createdAt || "";
+        const dateCompare = dateB.localeCompare(dateA);
+        if (dateCompare !== 0) return dateCompare;
+        return b.challanNo.localeCompare(a.challanNo, undefined, { numeric: true, sensitivity: "base" });
+      });
+  }, [challans, sales]);
+
+  const filteredGroupedChallans = useMemo(() => {
+    if (!filter) return groupedChallans;
+    const f = filter.toLowerCase();
+    return groupedChallans.filter(g => {
+      const orderNo = sales.find(s => s.id === g.salesId)?.orderNo || "";
+      return g.challanNo.toLowerCase().includes(f) ||
+             g.customer.toLowerCase().includes(f) ||
+             orderNo.toLowerCase().includes(f) ||
+             g.items.some(item => item.product.toLowerCase().includes(f));
+    });
+  }, [groupedChallans, filter, sales]);
+
+  const filteredChallansForExport = useMemo(() => {
+    if (!filter) return challans;
+    const f = filter.toLowerCase();
+    return challans.filter(c => {
+      const sale = sales.find(s => s.id === c.salesId);
+      const orderNo = sale?.orderNo || "";
+      return c.customer.toLowerCase().includes(f) ||
+             c.product.toLowerCase().includes(f) ||
+             c.challanNo.toLowerCase().includes(f) ||
+             orderNo.toLowerCase().includes(f);
+    });
+  }, [challans, sales, filter]);
+
+  const openEditDialog = (group: any) => {
+    setEditingGroup({
+      challanNumber: group.challanNo,
+      salesId: group.salesId,
+      clientName: group.customer,
+      clientPhone: group.items[0]?.clientPhone || "",
+      date: group.createdAt ? new Date(group.createdAt).toISOString().slice(0, 10) : "",
+      items: group.items.map((item: Challan) => {
+        const itemSale = sales.find((s) => s.id === item.salesId);
+        const totalOrderQty = itemSale ? itemSale.orderedQty : item.quantity;
+        return {
+          id: item.id,
+          salesId: item.salesId,
+          productName: item.product,
+          quantity: totalOrderQty,
+          fulfilledQty: item.quantity,
+          batchNo: item.batchNo,
+          notes: item.notes || "",
+          stockCategory: item.stockCategory || "Available",
+        };
+      }),
+    });
+  };
+
+  const handleDelete = async (challanNo: string) => {
     const password = window.prompt(
       "Please enter admin password to delete entire challan:",
     );
@@ -112,31 +188,53 @@ export default function ChallanPage() {
     }
     if (
       window.confirm(
-        `Are you sure you want to delete challan ${challanNumber} and all its items?`,
+        `Are you sure you want to delete challan ${challanNo} and all its items?`,
       )
     ) {
-      const itemsToDelete = challans.filter(
-        (c) => c.challanNumber === challanNumber,
-      );
-      for (const item of itemsToDelete) {
-        await deleteChallan(item.id);
+      try {
+        await deleteChallanGroup(challanNo);
+        refresh();
+        toast({ title: "Challan deleted" });
+      } catch (err: any) {
+        toast({ title: "Delete failed", description: err.message, variant: "destructive" });
       }
+    }
+  };
+
+  const handleStatusChange = async (group: any, newStatus: string) => {
+    if (newStatus === group.status) return;
+    try {
+      if (newStatus === "Confirmed") {
+        await confirmChallanGroup(group.challanNo);
+        toast({ title: "Challan Confirmed", description: `${group.challanNo} marked as Confirmed. No stock deducted.` });
+      } else if (newStatus === "Delivered") {
+        const ok = window.confirm(`Deliver ${group.challanNo}? Stock will be deducted from inventory.`);
+        if (!ok) return;
+        await deliverChallanGroup(group.challanNo);
+        toast({ title: "Challan Delivered", description: `${group.challanNo} delivered. Stock deducted.` });
+      }
+      window.dispatchEvent(new CustomEvent("erp-stock-updated"));
       refresh();
-      toast({ title: "Challan deleted" });
+    } catch (err: any) {
+      toast({ title: "Status Change Failed", description: err.message, variant: "destructive" });
     }
   };
 
   const handleEditSave = async () => {
     if (!editingGroup) return;
-    await updateChallanGroup(editingGroup.challanNumber, editingGroup);
-    window.dispatchEvent(new CustomEvent("erp-stock-updated"));
-    refresh();
-    setEditingGroup(null);
-    toast({ title: "Challan updated" });
+    try {
+      await updateChallanGroup(editingGroup.challanNumber, editingGroup);
+      window.dispatchEvent(new CustomEvent("erp-stock-updated"));
+      refresh();
+      setEditingGroup(null);
+      toast({ title: "Challan updated successfully" });
+    } catch (err: any) {
+      toast({ title: "Update Failed", description: err.message, variant: "destructive" });
+    }
   };
 
   const handleBuildToggle = async (group: any, nextBuilt: boolean) => {
-    if (group.items.some((item: Challan) => item.isCancelled)) {
+    if (group.isCancelled) {
       toast({ title: "Cancelled challan", description: "Cancelled challans cannot be marked as built.", variant: "destructive" });
       return;
     }
@@ -145,674 +243,525 @@ export default function ChallanPage() {
     toast({ title: nextBuilt ? "Challan marked as built" : "Built mark removed" });
   };
 
-  const handleCancel = async (challanNumber: string) => {
+  const handleChallanGeneratedToggle = async (group: any, nextVal: boolean) => {
+    if (group.isCancelled) {
+      toast({ title: "Cancelled challan", description: "Cancelled challans cannot be edited.", variant: "destructive" });
+      return;
+    }
+    await Promise.all(group.items.map((item: Challan) => updateChallan(item.id, { isChallanGenerated: nextVal })));
+    refresh();
+    toast({ title: nextVal ? "Challan marked as generated" : "Challan generation status removed" });
+  };
+
+  const handleCancel = async (challanNo: string) => {
     const ok = window.confirm(
-      `Cancel challan ${challanNumber}? Stock will be restored.`,
+      `Cancel challan ${challanNo}? Stock will be restored if delivered.`,
     );
     if (!ok) return;
-    await cancelChallanGroup(challanNumber);
+    await cancelChallanGroup(challanNo);
     window.dispatchEvent(new CustomEvent("erp-stock-updated"));
     refresh();
     toast({ title: "Challan cancelled" });
   };
 
-  const getQuantityDeltaLabel = (item: any) => {
-    const original = Number(item.originalQuantity || 0);
-    const current = Number(item.quantity || 0);
-    const diff = current - original;
-    if (diff === 0) return "No stock change";
-    if (diff < 0) return `+${Math.abs(diff)} stock will return`;
-    return `-${diff} stock will be deducted`;
-  };
-
   const printChallan = async (group: any) => {
-    const win = window.open("", "_blank");
-    if (!win) return;
+    // Mark as printed in the DB
+    try {
+      await Promise.all(group.items.map((item: any) => updateChallan(item.id, { isPrinted: true })));
+      refresh();
+    } catch (e) {
+      console.error("Failed to mark as printed", e);
+    }
 
-    const rowsHtml = group.items
-      .map((item: any) => {
-        const netQty = item.quantity - (item.returnedQty || 0);
-        const returnLabel = item.returnedQty > 0 ? ` (${item.returnedQty} returned)` : '';
-        return `
-          <tr>
-            <td>${item.productName}</td>
-            <td>${item.stockCategory || 'Available'}</td>
-            <td style="text-align:right;">${netQty}${returnLabel}</td>
-          </tr>
-        `;
-      })
-      .join("");
-
-    win.document.write(`<!DOCTYPE html><html><head><title></title>
-    <style>
-      @page { size: 653px 266px; margin: 0; }
-      * { box-sizing: border-box; -webkit-print-color-adjust: exact; }
-      html, body {
-        width: 653px;
-        height: 266px;
-        margin: 0;
-        padding: 0;
-        overflow: hidden;
-        font-family: Arial, Helvetica, sans-serif;
-        font-size: 9px;
-      }
-      .challan {
-        width: 653px;
-        height: 266px;
-        padding: 8px 12px;
-        display: flex;
-        flex-direction: column;
-      }
-      .header { text-align: center; border-bottom: 1px solid #333; padding-bottom: 4px; margin-bottom: 6px; }
-      .header h1 { margin: 0; font-size: 14px; }
-      .header p { margin: 0; font-size: 8px; }
-      .meta { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 9px; }
-      table { width: 100%; border-collapse: collapse; flex: 1; }
-      th, td { border: 1px solid #ccc; padding: 3px 6px; font-size: 9px; }
-      th { background: #f5f5f5; text-align: left; }
-      .footer { display: flex; justify-content: space-between; margin-top: 6px; font-size: 8px; }
-    </style></head><body>
-      <div class="challan">
-        <div class="header">
-          <h1>PLYWOOD PRO</h1>
-          <p>DELIVERY CHALLAN</p>
-        </div>
-        <div class="meta">
-          <span><strong>Client:</strong> ${group.clientName}</span>
-          <span><strong>Challan #:</strong> ${group.challanNumber}</span>
-          <span><strong>Date:</strong> ${group.date ? format(new Date(group.date), "dd-MM-yyyy") : ""}</span>
-        </div>
-        <table>
-          <thead><tr><th>Product</th><th>Category</th><th style="text-align:right;">Quantity</th></tr></thead>
-          <tbody>${rowsHtml}</tbody>
-        </table>
-        <div class="footer">
-          <span>Receiver's Signature</span>
-          <span>For PLYWOOD PRO</span>
-        </div>
-      </div>
-    </body></html>`);
-    win.document.close();
-
-    setTimeout(async () => {
-      win.focus();
-      win.print();
-      win.close();
-      const unprinted = group.items.filter((i: any) => !i.isPrinted);
-      if (unprinted.length > 0) {
-        await Promise.all(
-          unprinted.map((i: any) => updateChallan(i.id, { isPrinted: true })),
-        );
-        refresh();
-      }
-    }, 500);
-  };
-
-  const downloadCheat = async (group: any) => {
-    const win = window.open("", "_blank");
-    if (!win) return;
-
-    const itemsHtml = group.items
-      .map((i: any) => {
-        const netQty = i.quantity - (i.returnedQty || 0);
-        const returnLabel = i.returnedQty > 0 ? ` (${i.returnedQty} returned)` : '';
-        return `
-          <div class="item-row">
-            ${i.productName}<br/>
-            QTY: ${netQty}${returnLabel} [${i.stockCategory || 'Available'}]
-            ${i.notes ? `<div style="font-size: 8pt; color: #666;">Note: ${i.notes}</div>` : ""}
-          </div>
-        `;
-      })
-      .join("");
-
-    win.document.write(`<!DOCTYPE html><html><head><title></title>
-      <style>
-        @page { size: 80mm auto; margin: 0 !important; }
-        @media print { html, body { width: 80mm !important; margin: 0 !important; padding: 0 !important; overflow: hidden; } }
-        * { box-sizing: border-box; -webkit-print-color-adjust: exact; }
-        body { font-family: 'Courier New', Courier, monospace; width: 80mm !important; padding: 0 !important; margin: 0 !important; background: #fff; }
-        .cheat-container { border: 2px solid #000; padding: 2mm; width: 78mm; margin: 0 !important; float: left; }
-        .header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 2mm; margin-bottom: 3mm; }
-        .title { font-size: 16pt; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; }
-        .subtitle { font-size: 10pt; font-weight: bold; margin-top: 1mm; border: 1px solid #000; display: inline-block; padding: 1px 5px; }
-        .details { font-size: 11pt; line-height: 1.3; margin-top: 3mm; }
-        .row { display: flex; justify-content: space-between; margin-bottom: 1.5mm; border-bottom: 1px dashed #999; }
-        .item-row { margin-top: 4mm; font-weight: 900; font-size: 13pt; border-top: 2px solid #000; border-bottom: 2px solid #000; padding: 2mm 0; text-align: center; }
-        .footer { text-align: center; margin-top: 6mm; border-top: 1px solid #000; padding-top: 3mm; font-size: 9pt; font-weight: bold; }
-      </style></head><body>
-        <div class="cheat-container">
-          <div class="header">
+    const content = `
+      <html>
+        <head>
+          <title>Print Challan</title>
+          <style>
+            @media print {
+              body { margin: 0; padding: 0; }
+              @page { size: auto; margin: 0mm; }
+            }
+          </style>
+        </head>
+        <body style="margin: 0; padding: 10px; -webkit-print-color-adjust: exact;">
+          <div style="width: 260px; border: 1px solid #000; padding: 10px; box-sizing: border-box; font-family: 'Courier New', Courier, monospace; font-size: 13px; line-height: 1.3; color: #000; margin: 0;">
+            <div style="text-align: center; margin-bottom: 8px;">
+              <span style="border: 1px solid #000; padding: 2px 6px; font-weight: bold; display: inline-block; font-size: 12px; letter-spacing: 0.5px;">DELIVERY SLIP</span>
+            </div>
             
-            <div class="subtitle">DELIVERY SLIP</div>
+            <div style="border-top: 2px solid #000; border-bottom: 2px solid #000; text-align: center; padding: 4px 0; margin-bottom: 8px; font-weight: bold; font-size: 14px;">
+              CLIENT: ${group.customer}
+            </div>
+
+            <div style="border-bottom: 1px dashed #000; padding-bottom: 4px; margin-bottom: 8px;">
+              <table style="width: 100%; font-family: inherit; font-size: inherit; border-collapse: collapse;">
+                <tr>
+                  <td style="text-align: left; padding: 1px 0;">Challan:</td>
+                  <td style="text-align: right; padding: 1px 0; font-weight: bold;">${group.challanNo}</td>
+                </tr>
+                <tr>
+                  <td style="text-align: left; padding: 1px 0;">Date:</td>
+                  <td style="text-align: right; padding: 1px 0;">${group.createdAt ? format(new Date(group.createdAt), "dd-MM-yyyy") : ""}</td>
+                </tr>
+              </table>
+            </div>
+
+            <div style="border-top: 2px solid #000; padding-top: 8px;">
+              ${group.items.map((item: any) => `
+                <div style="text-align: center; margin-bottom: 10px; font-weight: bold;">
+                  <div style="font-size: 14px;">${item.product}</div>
+                  <div style="font-size: 13px; margin-top: 1px;">QTY: ${item.quantity} [${item.stockCategory || "Available"}]</div>
+                </div>
+              `).join("")}
+            </div>
+            <div style="border-top: 2px solid #000; margin-top: 8px;"></div>
           </div>
-          <div class="details">
-            <div style="margin-bottom: 3mm; font-weight: 900; font-size: 14pt; border-bottom: 2px solid #000; padding-bottom: 1mm; text-align: center;">CLIENT: ${group.clientName}</div>
-            <div class="row"><span>Challan:</span> <span>${group.challanNumber}</span></div>
-            <div class="row"><span>Date:</span> <span>${group.date ? format(new Date(group.date), "dd-MM-yyyy") : ""}</span></div>
-            ${itemsHtml}
-          </div>  
-        </div>
-      </body></html>`);
-    win.document.close();
-    setTimeout(() => {
-      win.focus();
-      win.print();
-      win.close();
-      const unprinted = group.items.filter((i: any) => !i.isPrinted);
-      if (unprinted.length > 0) {
-        Promise.all(
-          unprinted.map((i: any) => updateChallan(i.id, { isPrinted: true })),
-        ).then(refresh);
-      }
-    }, 500);
+        </body>
+      </html>
+    `;
+    const printWindow = window.open("", "_blank");
+    if (printWindow) {
+      printWindow.document.write(content);
+      printWindow.document.close();
+      setTimeout(() => {
+        printWindow.print();
+        printWindow.close();
+      }, 250);
+    }
   };
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">Delivery Challans</h1>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() =>
-              exportCSV(
-                challans as any,
-                `challans-${new Date().toISOString().slice(0, 10)}.csv`,
-              )
-            }
-          >
-            <Download className="mr-1 h-4 w-4" />
-            Export
+        <h1 className="text-2xl font-bold text-primary">Delivery Challans</h1>
+        <div className="flex flex-wrap gap-2 items-center">
+          <div className="relative w-full sm:w-72">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search customer, product or challan/order #..."
+              value={filter}
+              onChange={e => setFilter(e.target.value)}
+              className="pl-9 h-9"
+            />
+          </div>
+          <Button variant="outline" size="sm" onClick={() => exportCSV(filteredChallansForExport as any, `challans-${new Date().toISOString().slice(0, 10)}.csv`)}>
+            <Download className="mr-1 h-4 w-4" /> Export CSV
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => printElement("delivery-challans-table")}>
+            <Printer className="mr-1 h-4 w-4" /> Print
           </Button>
         </div>
       </div>
 
       <Card>
-        <CardContent className="p-0">
+        <CardContent className="p-0 overflow-hidden" id="delivery-challans-table">
           <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Challan #</TableHead>
-                  <TableHead>Client</TableHead>
-                  <TableHead>Items</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+            <Table className="border-collapse border-2 border-slate-300 w-full">
+              <TableHeader className="bg-slate-50/75">
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Date</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Challan #</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Client</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Items / Quantities</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Status</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {groupedChallans.length === 0 ? (
+                {filteredGroupedChallans.length === 0 ? (
                   <TableRow>
                     <TableCell
-                      colSpan={5}
-                      className="text-center text-muted-foreground py-8"
+                      colSpan={6}
+                      className="border-2 border-slate-300 text-center text-muted-foreground py-8"
                     >
-                      No challans yet
+                      No active challans in delivery workflow.
                     </TableCell>
                   </TableRow>
                 ) : (
-                  groupedChallans.map((group) => (
-                    <TableRow
-                      key={group.challanNumber}
-                      className={`${group.isBuilt ? "bg-blue-50/60" : ""} ${group.isPrinted ? "bg-green-50/50" : ""} ${group.items.some((i) => i.isCancelled) ? "bg-red-50/70 border-l-4 border-l-red-500" : ""}`}
-                    >
-                      <TableCell className="font-medium">
-                        <div className="flex flex-col">
-                          <span>{group.challanNumber}</span>
-                          <label className={`mt-1 flex items-center gap-2 text-xs w-fit ${group.items.some((i) => i.isCancelled) ? "text-muted-foreground/60 cursor-not-allowed" : "text-muted-foreground cursor-pointer"}`}>
-                            <input
-                              type="checkbox"
-                              checked={group.isBuilt}
-                              disabled={group.items.some((i) => i.isCancelled)}
-                              onChange={(e) => handleBuildToggle(group, e.target.checked)}
-                            />
-                            <span>{group.isBuilt ? "Billed" : "Mark as billed"}</span>
-                          </label>
-                          {group.isPrinted && (
-                            <Badge
-                              variant="secondary"
-                              className="w-fit mt-1 bg-green-100 text-green-700 hover:bg-green-100 flex gap-1 h-5 px-1.5 border-green-200"
-                            >
-                              <CheckCircle2 className="h-3 w-3" /> Printed
-                            </Badge>
-                          )}
-
-                          {group.isBuilt && (
-                            <Badge
-                              variant="secondary"
-                              className="w-fit mt-1 bg-blue-100 text-blue-700 hover:bg-blue-100 flex gap-1 h-5 px-1.5 border-blue-200"
-                            >
-                              <CheckSquare className="h-3 w-3" /> Billed
-                            </Badge>
-                          )}
-
-                          {group.items.some((i) => i.isCancelled) && (
-                            <Badge
-                              variant="destructive"
-                              className="w-fit mt-1 flex gap-1 h-5 px-1.5"
-                            >
-                              Cancelled
-                            </Badge>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>{group.clientName}</TableCell>
-                      <TableCell>
-                        <div className="text-sm space-y-1">
-                          {group.items.map((item: any, idx: number) => (
-                            <div
-                              key={idx}
-                              className="flex justify-between gap-4 border-b border-dashed last:border-0 pb-1"
-                            >
-                              <span className="text-muted-foreground flex items-center gap-1.5 flex-wrap">
-                                <span>{item.productName}</span>
-                                {item.batchNo && (
-                                  <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-muted text-muted-foreground border border-muted-foreground/20">
-                                    Batch: {item.batchNo}
-                                  </span>
-                                )}
-                                {item.stockCategory && (
-                                  <span className={`text-[10px] px-1 rounded font-bold ${
-                                    item.stockCategory === 'Display' ? 'bg-amber-100 text-amber-800' :
-                                    item.stockCategory === 'Damage' ? 'bg-red-100 text-red-800' :
-                                    'bg-blue-100 text-blue-800'
-                                  }`}>
-                                    {item.stockCategory}
-                                  </span>
-                                )}
-                              </span>
-                              <span className="font-bold">
-                                {item.returnedQty > 0 ? (
-                                  <span>
-                                    {item.quantity - item.returnedQty}
-                                    <span className="text-[10px] text-muted-foreground ml-1 font-normal">
-                                      ({item.returnedQty} returned)
-                                    </span>
-                                  </span>
-                                ) : (
-                                  item.quantity
-                                )}
-                              </span>
+                  filteredGroupedChallans.map((group) => {
+                    const parentSale = sales.find((s) => s.id === group.salesId);
+                    return (
+                      <TableRow
+                        key={group.challanNo}
+                        className={group.isCancelled ? "bg-red-50/50 border-l-4 border-l-red-400 opacity-80" : "hover:bg-slate-50/40"}
+                      >
+                        <TableCell className="border-2 border-slate-300 px-4 py-3 text-sm text-slate-700 font-medium whitespace-nowrap">
+                          {group.createdAt
+                            ? format(new Date(group.createdAt), "dd-MM-yyyy")
+                            : ""}
+                        </TableCell>
+                        <TableCell className="border-2 border-slate-300 px-4 py-3 font-medium">
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-sm text-slate-950">{group.challanNo}</span>
+                              {parentSale && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-slate-100 text-slate-600 border border-slate-200">
+                                  {parentSale.orderNo}
+                                </span>
+                              )}
                             </div>
-                          ))}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {group.date
-                          ? format(new Date(group.date), "dd-MM-yyyy")
-                          : ""}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={() => downloadCheat(group)}
-                            title="Print Full Challan"
-                          >
-                            <Printer className="h-4 w-4 text-primary" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={() => downloadCheat(group)}
-                            title="Download Cheat Slip"
-                          >
-                            <Download className="h-4 w-4 text-success" />
-                          </Button>
-                          <Dialog
-                            open={
-                              !!editingGroup &&
-                              editingGroup.challanNumber === group.challanNumber
-                            }
-                            onOpenChange={(open) =>
-                              !open && setEditingGroup(null)
-                            }
-                          >
-                            <DialogTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 text-blue-600"
-                                onClick={() => openEditDialog(group)}
-                                title="Edit"
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </Button>
-                            </DialogTrigger>
-                            <DialogContent className="max-w-2xl">
-                              <DialogHeader>
-                                <DialogTitle>Edit Challan</DialogTitle>
-                                <DialogDescription>
-                                  Update client details, items, and quantities.
-                                  Stock will be adjusted automatically.
-                                </DialogDescription>
-                              </DialogHeader>
-                              <div className="grid gap-4 py-4">
-                                <div className="grid gap-2">
-                                  <Label>Client Name</Label>
-                                  <Input
-                                    value={editingGroup?.clientName || ""}
-                                    onChange={(e) =>
-                                      setEditingGroup({
-                                        ...editingGroup,
-                                        clientName: e.target.value,
-                                      })
-                                    }
-                                  />
-                                </div>
-                                <div className="grid gap-2">
-                                  <Label>Client Phone</Label>
-                                  <Input
-                                    value={editingGroup?.clientPhone || ""}
-                                    onChange={(e) =>
-                                      setEditingGroup({
-                                        ...editingGroup,
-                                        clientPhone: e.target.value,
-                                      })
-                                    }
-                                  />
-                                </div>
-                            <div className="grid gap-2">
-                              <Label>Challan Date</Label>
-                              <Input
-                                type="date"
-                                value={editingGroup?.date || ""}
-                                    onChange={(e) =>
-                                      setEditingGroup({
-                                        ...editingGroup,
-                                        date: e.target.value,
-                                      })
-                                    }
-                                  />
-                                </div>
-                                <div className="space-y-3">
-                                  <div className="font-semibold">Items</div>
-                                  {editingGroup?.items?.map(
-                                    (item: any, idx: number) => (
-                                      <div
-                                        key={item.id || idx}
-                                        className="grid grid-cols-12 gap-2 items-end"
-                                      >
-                                        <div className="col-span-4">
-                                          <Label className="text-xs">
-                                            Product
-                                          </Label>
-                                          <Input
-                                            value={item.productName}
-                                            onChange={(e) => {
-                                              const next = [
-                                                ...editingGroup.items,
-                                              ];
-                                              next[idx] = {
-                                                ...next[idx],
-                                                productName: e.target.value,
-                                              };
-                                              setEditingGroup({
-                                                ...editingGroup,
-                                                items: next,
-                                              });
-                                            }}
-                                          />
-                                        </div>
-                                        <div className="col-span-3">
-                                          <Label className="text-xs">
-                                            Quantity
-                                          </Label>
-                                          <Input
-                                            type="number"
-                                            value={item.quantity}
-                                            onChange={(e) => {
-                                              const next = [
-                                                ...editingGroup.items,
-                                              ];
-                                              next[idx] = {
-                                                ...next[idx],
-                                                quantity: +e.target.value,
-                                              };
-                                              setEditingGroup({
-                                                ...editingGroup,
-                                                items: next,
-                                              });
-                                            }}
-                                          />
-                                          <div className="mt-1 text-[11px] text-muted-foreground">
-                                            {getQuantityDeltaLabel(item)}
-                                          </div>
-                                        </div>
-                                        <div className="col-span-3">
-                                          <Label className="text-xs">
-                                            Category
-                                          </Label>
-                                          <Select
-                                            value={item.stockCategory || "Available"}
-                                            onValueChange={(v) => {
-                                              const next = [
-                                                ...editingGroup.items,
-                                              ];
-                                              next[idx] = {
-                                                ...next[idx],
-                                                stockCategory: v,
-                                              };
-                                              setEditingGroup({
-                                                ...editingGroup,
-                                                items: next,
-                                              });
-                                            }}
-                                          >
-                                            <SelectTrigger className="w-full">
-                                              <SelectValue placeholder="Select Category" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                              <SelectItem value="Available">Available</SelectItem>
-                                              <SelectItem value="Display">Display</SelectItem>
-                                              <SelectItem value="Damage">Damage</SelectItem>
-                                            </SelectContent>
-                                          </Select>
-                                        </div>
-                                        <div className="col-span-2">
-                                          <Button
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={() => {
-                                              const next =
-                                                editingGroup.items.filter(
-                                                  (_: any, i: number) =>
-                                                    i !== idx,
-                                                );
-                                              setEditingGroup({
-                                                ...editingGroup,
-                                                items: next,
-                                              });
-                                            }}
-                                          >
-                                            Remove
-                                          </Button>
-                                        </div>
-                                      </div>
-                                    ),
-                                  )}
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() =>
-                                      setEditingGroup({
-                                        ...editingGroup,
-                                        items: [
-                                          ...editingGroup.items,
-                                          {
-                                            productName: "",
-                                            quantity: 0,
-                                            batchNo: "",
-                                            notes: "",
-                                            stockCategory: "Available",
-                                          },
-                                        ],
-                                      })
-                                    }
-                                  >
-                                    Add Item
-                                  </Button>
-                                </div>
-                              </div>
-
-                              <DialogFooter>
-                              <Button onClick={handleEditSave}>
-                                  Save Changes
-                                </Button>
-                              </DialogFooter>
-                            </DialogContent>
-                          </Dialog>
-
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-destructive"
-                            onClick={() => handleCancel(group.challanNumber)}
-                            title="Cancel Challan"
-                          >
-                            <Ban className="h-4 w-4" />
-                          </Button>
-
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-destructive"
-                            onClick={() => handleDelete(group.challanNumber)}
-                            title="Delete"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-
-                        <div className="hidden">
-                          <div id={`print-challan-${group.challanNumber}`}>
-                            <div
-                              className="header"
-                              style={{
-                                borderBottom: "2px solid #333",
-                                paddingBottom: "10px",
-                                marginBottom: "20px",
-                                textAlign: "center",
-                              }}
-                            >
-                              <h1 style={{ margin: 0, fontSize: "24pt" }}>
-                                PLYWOOD PRO
-                              </h1>
-                              <p style={{ margin: 0 }}>
-                                Plywood & Hardware Management System
-                              </p>
-                            </div>
-                            <h2
-                              style={{
-                                textAlign: "center",
-                                textDecoration: "underline",
-                                marginBottom: "20px",
-                              }}
-                            >
-                              DELIVERY CHALLAN
-                            </h2>
-                            <div style={{ marginBottom: "20px" }}>
-                              <p>
-                                <strong>CLIENT:</strong> {group.clientName}
-                              </p>
-                              <p>
-                                <strong>Challan No:</strong>{" "}
-                                {group.challanNumber}
-                              </p>
-                              <p>
-                                <strong>Date:</strong>{" "}
-                                {group.date
-                                  ? format(new Date(group.date), "dd-MM-yyyy")
-                                  : ""}
-                              </p>
-                            </div>
-                            <table
-                              style={{
-                                width: "100%",
-                                borderCollapse: "collapse",
-                                marginBottom: "20px",
-                              }}
-                            >
-                              <thead>
-                                <tr style={{ backgroundColor: "#f5f5f5" }}>
-                                  <th
-                                    style={{
-                                      border: "1px solid #ddd",
-                                      padding: "8px",
-                                      textAlign: "left",
-                                    }}
-                                  >
-                                    Product
-                                  </th>
-                                  <th
-                                    style={{
-                                      border: "1px solid #ddd",
-                                      padding: "8px",
-                                      textAlign: "right",
-                                    }}
-                                  >
-                                    Quantity
-                                  </th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {group.items.map((item: any, idx: number) => (
-                                  <tr key={idx}>
-                                    <td
-                                      style={{
-                                        border: "1px solid #ddd",
-                                        padding: "8px",
-                                      }}
-                                    >
-                                      {item.productName}
-                                    </td>
-                                    <td
-                                      style={{
-                                        border: "1px solid #ddd",
-                                        padding: "8px",
-                                        textAlign: "right",
-                                      }}
-                                    >
-                                      {item.quantity}
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                            {group.items[0].notes && (
-                              <div
-                                style={{
-                                  marginBottom: "20px",
-                                  padding: "10px",
-                                  border: "1px solid #eee",
-                                  backgroundColor: "#fafafa",
-                                }}
-                              >
-                                <p style={{ margin: 0 }}>
-                                  <strong>NOTES:</strong> {group.items[0].notes}
-                                </p>
-                              </div>
-                            )}
-                            <div
-                              style={{
-                                display: "flex",
-                                justifyContent: "space-between",
-                                marginTop: "50px",
-                              }}
-                            >
-                              <div>Receiver's Signature</div>
-                              <div>For PLYWOOD PRO</div>
+                            <div className="flex flex-wrap gap-1 items-center mt-0.5">
+                              <label className={`inline-flex items-center gap-1.5 text-xs mr-2 cursor-pointer ${group.isCancelled ? "text-muted-foreground/60 cursor-not-allowed" : "text-slate-600 font-medium"}`}>
+                                <input
+                                  type="checkbox"
+                                  checked={group.isBuilt}
+                                  disabled={group.isCancelled}
+                                  onChange={(e) => handleBuildToggle(group, e.target.checked)}
+                                  className="rounded border-slate-300 text-primary focus:ring-primary h-3.5 w-3.5"
+                                />
+                                <span>Billed</span>
+                              </label>
+                              {group.isPrinted && (
+                                <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-50 text-green-700 border border-green-200">
+                                  <CheckCircle2 className="h-3 w-3" />
+                                  Printed
+                                </span>
+                              )}
+                              {group.isBuilt && (
+                                <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                                  <CheckSquare className="h-3 w-3" />
+                                  Billed
+                                </span>
+                              )}
+                              {group.isChallanGenerated && (
+                                <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
+                                  <CheckCircle2 className="h-3 w-3" />
+                                  Generated
+                                </span>
+                              )}
                             </div>
                           </div>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))
+                        </TableCell>
+                        <TableCell className="border-2 border-slate-300 px-4 py-3 text-sm min-w-[150px] max-w-[220px] break-words">
+                          {renderCustomer(group.customer)}
+                        </TableCell>
+                        <TableCell className="border-2 border-slate-300 px-4 py-3">
+                          <div className="text-sm space-y-2">
+                            {group.items.map((item: any, idx: number) => {
+                              const itemSale = sales.find((s) => s.id === item.salesId);
+                              const totalOrder = itemSale ? itemSale.orderedQty : item.quantity;
+                              const alreadyDelivered = itemSale ? (itemSale.deliveredQty || 0) : 0;
+                              const pendingQty = itemSale ? Math.max(0, itemSale.orderedQty - alreadyDelivered - item.quantity) : 0;
+                              return (
+                                <div key={idx} className="border-b border-slate-100 last:border-0 pb-2 last:pb-0">
+                                  <div className="flex items-center justify-between gap-4 flex-wrap">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span className="font-semibold text-slate-900">{item.product}</span>
+                                      {item.batchNo && (
+                                        <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                                          Batch: {item.batchNo}
+                                        </span>
+                                      )}
+                                      {item.stockCategory && (
+                                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
+                                          item.stockCategory === "Display" ? "bg-amber-50 text-amber-800 border border-amber-200" :
+                                          item.stockCategory === "Damage" ? "bg-red-50 text-red-800 border border-red-200" :
+                                          "bg-blue-50 text-blue-800 border border-blue-200"
+                                        }`}>
+                                          {item.stockCategory}
+                                        </span>
+                                      )}
+                                    </div>
+ 
+                                    <div className="text-right flex items-center gap-3">
+                                      {itemSale && (
+                                        <div className="text-[10px] text-muted-foreground font-semibold">
+                                          Order: {totalOrder}
+                                          {pendingQty > 0 && (
+                                            <span className="text-red-600 font-bold ml-1">
+                                              (Pend: {pendingQty})
+                                            </span>
+                                          )}
+                                        </div>
+                                      )}
+                                      <span className="font-bold text-xs text-green-700 bg-green-50 px-2 py-0.5 rounded border border-green-200">
+                                        Fulfill: {item.quantity}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                            {/* Show group-level narration one time only */}
+                            {(() => {
+                              const firstWithNotes = group.items.find(i => i.notes);
+                              if (firstWithNotes && firstWithNotes.notes) {
+                                return (
+                                  <div className="text-[10px] text-orange-600 font-semibold mt-2 bg-orange-50 px-2 py-1 rounded border border-orange-100 w-fit">
+                                    Narration: {firstWithNotes.notes}
+                                  </div>
+                                );
+                              }
+                              return null;
+                            })()}
+                          </div>
+                        </TableCell>
+
+                        {/* Status Dropdown Column */}
+                        <TableCell className="border-2 border-slate-300 px-4 py-3 align-middle">
+                          {group.isCancelled ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700">
+                              Cancelled
+                            </span>
+                          ) : (
+                            <Select
+                              value={group.status}
+                              onValueChange={(val) => handleStatusChange(group, val)}
+                              disabled={group.isCancelled}
+                            >
+                              <SelectTrigger
+                                className={`h-8 w-32 text-xs font-semibold border ${
+                                  group.status === "Confirmed"
+                                    ? "bg-blue-50 border-blue-300 text-blue-700"
+                                    : group.status === "Delivered"
+                                    ? "bg-green-50 border-green-300 text-green-700"
+                                    : "bg-yellow-50 border-yellow-300 text-yellow-700"
+                                }`}
+                              >
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="Pending" disabled={group.status !== "Pending"}>
+                                  Pending
+                                </SelectItem>
+                                <SelectItem value="Confirmed" disabled={group.status === "Delivered"}>
+                                  ✓ Confirmed
+                                </SelectItem>
+                                <SelectItem value="Delivered">
+                                  🚚 Delivered
+                                </SelectItem>
+                              </SelectContent>
+                            </Select>
+                          )}
+                        </TableCell>
+                        <TableCell className="border-2 border-slate-300 px-4 py-3 text-right align-middle">
+                          <div className="flex items-center justify-end gap-1">
+                            {/* When cancelled: show only Delete button */}
+                            {group.isCancelled ? (
+                              <>
+                                <span className="text-xs text-red-600 font-semibold mr-2 italic">Order Cancelled</span>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-destructive"
+                                  onClick={() => handleDelete(group.challanNo)}
+                                  title="Delete Cancelled Challan"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </>
+                            ) : (
+                            <>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() => printChallan(group)}
+                              title="Print Full Challan"
+                            >
+                              <Printer className="h-4 w-4 text-primary" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-purple-600 hover:text-purple-700 hover:bg-purple-50"
+                              onClick={() => handleChallanGeneratedToggle(group, !group.isChallanGenerated)}
+                              title="Toggle Challan Generated"
+                            >
+                              <FileSpreadsheet className="h-4 w-4" />
+                            </Button>
+                            
+                            {/* Edit Dialog - open with Total Order Qty prefilled */}
+                            {group.status !== "Delivered" && !group.isCancelled && (
+                              <Dialog
+                                open={
+                                  !!editingGroup &&
+                                  editingGroup.challanNumber === group.challanNo
+                                }
+                                onOpenChange={(open) =>
+                                  !open && setEditingGroup(null)
+                                }
+                              >
+                                <DialogTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-blue-600"
+                                    onClick={() => openEditDialog(group)}
+                                    title="Edit Total Order Qty"
+                                  >
+                                    <Pencil className="h-4 w-4" />
+                                  </Button>
+                                </DialogTrigger>
+                                <DialogContent className="max-w-2xl">
+                                  <DialogHeader>
+                                    <DialogTitle>Edit Total Order Details</DialogTitle>
+                                    <DialogDescription>
+                                      Enter the total intended order quantity below. The system automatically fulfills available stock in this Delivery Challans page and puts any remaining quantity into Pending Deliveries.
+                                    </DialogDescription>
+                                  </DialogHeader>
+                                  <div className="grid gap-4 py-4">
+                                    <div className="grid gap-2">
+                                      <Label>Customer Name</Label>
+                                      <Input
+                                        value={editingGroup?.clientName || ""}
+                                        onChange={(e) =>
+                                          setEditingGroup({
+                                            ...editingGroup,
+                                            clientName: e.target.value,
+                                          })
+                                        }
+                                      />
+                                    </div>
+                                    <div className="grid gap-2">
+                                      <Label>Client Phone</Label>
+                                      <Input
+                                        value={editingGroup?.clientPhone || ""}
+                                        onChange={(e) =>
+                                          setEditingGroup({
+                                            ...editingGroup,
+                                            clientPhone: e.target.value,
+                                          })
+                                        }
+                                      />
+                                    </div>
+                                    <div className="grid gap-2">
+                                      <Label>Challan Date</Label>
+                                      <Input
+                                        type="date"
+                                        value={editingGroup?.date || ""}
+                                        onChange={(e) =>
+                                          setEditingGroup({
+                                            ...editingGroup,
+                                            date: e.target.value,
+                                          })
+                                        }
+                                      />
+                                    </div>
+                                    <div className="space-y-3">
+                                      <div className="font-semibold text-sm">Items & Order Quantities</div>
+                                      {editingGroup?.items?.map(
+                                        (item: any, idx: number) => (
+                                          <div
+                                            key={item.id || idx}
+                                            className="grid grid-cols-12 gap-2 items-end border p-3 rounded-lg bg-muted/20"
+                                          >
+                                            <div className="col-span-4">
+                                              <Label className="text-xs">Product</Label>
+                                              <Input
+                                                value={item.productName}
+                                                onChange={(e) => {
+                                                  const next = [...editingGroup.items];
+                                                  next[idx] = {
+                                                    ...next[idx],
+                                                    productName: e.target.value,
+                                                  };
+                                                  setEditingGroup({
+                                                    ...editingGroup,
+                                                    items: next,
+                                                  });
+                                                }}
+                                              />
+                                            </div>
+                                            <div className="col-span-4">
+                                              <Label className="text-xs font-bold text-blue-700">
+                                                Total Order Qty
+                                              </Label>
+                                              <Input
+                                                type="number"
+                                                className="font-bold border-blue-300 bg-blue-50/50"
+                                                value={item.quantity}
+                                                onChange={(e) => {
+                                                  const next = [...editingGroup.items];
+                                                  next[idx] = {
+                                                    ...next[idx],
+                                                    quantity: +e.target.value,
+                                                  };
+                                                  setEditingGroup({
+                                                    ...editingGroup,
+                                                    items: next,
+                                                  });
+                                                }}
+                                              />
+                                              <div className="text-[10px] text-muted-foreground mt-1 font-semibold">
+                                                Current Fulfilled: <span className="text-green-700 font-bold">{item.fulfilledQty}</span>
+                                              </div>
+                                            </div>
+                                            <div className="col-span-4">
+                                              <Label className="text-xs">Stock Category</Label>
+                                              <Select
+                                                value={item.stockCategory || "Available"}
+                                                onValueChange={(v) => {
+                                                  const next = [...editingGroup.items];
+                                                  next[idx] = {
+                                                    ...next[idx],
+                                                    stockCategory: v,
+                                                  };
+                                                  setEditingGroup({
+                                                    ...editingGroup,
+                                                    items: next,
+                                                  });
+                                                }}
+                                              >
+                                                <SelectTrigger className="w-full">
+                                                  <SelectValue placeholder="Select Category" />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                  <SelectItem value="Available">Available</SelectItem>
+                                                  <SelectItem value="Display">Display</SelectItem>
+                                                  <SelectItem value="Damage">Damage</SelectItem>
+                                                </SelectContent>
+                                              </Select>
+                                            </div>
+                                          </div>
+                                        )
+                                      )}
+                                    </div>
+                                  </div>
+                                  <DialogFooter>
+                                    <Button
+                                      variant="outline"
+                                      onClick={() => setEditingGroup(null)}
+                                    >
+                                      Cancel
+                                    </Button>
+                                    <Button onClick={handleEditSave} className="bg-blue-600 hover:bg-blue-700">
+                                      Save Order Changes
+                                    </Button>
+                                  </DialogFooter>
+                                </DialogContent>
+                              </Dialog>
+                            )}
+
+                            {/* Cancel Button */}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-red-600 hover:text-red-700"
+                              onClick={() => handleCancel(group.challanNo)}
+                              title="Cancel Challan"
+                            >
+                              <Ban className="h-4 w-4" />
+                            </Button>
+
+                            {/* Delete Button */}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-destructive"
+                              onClick={() => handleDelete(group.challanNo)}
+                              title="Delete Challan"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                            </>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
                 )}
               </TableBody>
             </Table>

@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
-import { addBatch, getBatches, updateBatch, StockBatch } from "@/lib/store";
+import { addBatch, getBatches, updateBatch, StockBatch, getLocalDateString } from "@/lib/store";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -21,7 +21,7 @@ const STOCK_CATEGORIES = [
   "YOUR DECOR"
 ];
 
-const defaultForm = { productCode: '', productName: '', category: '', batchNumber: '', supplier: '', quantity: 0, date: new Date().toISOString().slice(0, 10), description: '' };
+const defaultForm = { productCode: '', productName: '', category: '', batchNumber: '', supplier: '', quantity: 0, date: getLocalDateString(), description: '' };
 
 export default function StockEntry() {
   const [form, setForm] = useState(defaultForm);

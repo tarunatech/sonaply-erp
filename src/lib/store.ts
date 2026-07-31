@@ -49,22 +49,27 @@ export interface Purchase {
 }
 export interface Sale {
   id: string;
-  clientName: string;
+  orderNo: string;
+  customer: string;
   clientPhone: string;
-  productName: string;
+  product: string;
   category: string;
-  quantity: number;
+  orderedQty: number;
+  deliveredQty: number;
+  pendingQty: number;
   rate?: number;
-  totalPrice: number;
+  GST?: number;
+  totalPrice?: number;
   orderDate: string;
   valueCategory: string;
   batchNo?: string;
-  pendingQty?: number;
-  fulfilledQty?: number;
   damageQty?: number;
   isDamageSale?: boolean;
-  narration?: string;
+  remarks?: string;
+  status: "Pending" | "Confirmed" | "Partial" | "Delivered" | "Cancelled";
   stockCategory?: "Available" | "Display" | "Damage";
+  createdAt?: string;
+  updatedAt?: string;
 }
 export interface SaleReturn {
   id: string;
@@ -78,53 +83,37 @@ export interface SaleReturn {
   notes?: string;
   createdAt?: string;
 }
-export interface Order {
-  id: string;
-  orderNumber: string;
-  clientName: string;
-  clientPhone: string;
-  productName: string;
-  quantity: number;
-  totalAmount: number;
-  orderDate: string;
-  status: "Pending" | "Confirmed" | "Delivered" | "Cancelled";
-  batchNo?: string;
-  isChallanGenerated?: boolean;
-  pendingQty?: number;
-  fulfilledQty?: number;
-  narration?: string;
-  deliveredAt?: string;
-  skipStockUpdate?: boolean;  stockCategory?: "Available" | "Display" | "Damage";
-}
 export interface Challan {
   id: string;
-  challanNumber: string;
-  orderNumber: string;
-  clientName: string;
+  challanNo: string;
+  salesId: string;
+  customer: string;
   clientPhone: string;
-  productName: string;
-  quantity: number;
-  date: string;
+  product: string;
   batchNo: string;
+  quantity: number;
+  createdAt: string;
   notes?: string;
-  shouldFulfill?: boolean;
-  skipStockUpdate?: boolean;
   isPrinted?: boolean;
   isBuilt?: boolean;
+  isChallanGenerated?: boolean;
   isCancelled?: boolean;
   cancelledAt?: string;
   stockCategory?: "Available" | "Display" | "Damage";
   returnedQty?: number;
   restoredQty?: number;
+  status: "Pending" | "Confirmed" | "Delivered" | "Cancelled";
 }
 
 export interface ChallanGroupItem {
   id?: string;
   productName: string;
+  product?: string;
   quantity: number;
   batchNo?: string;
   notes?: string;
   stockCategory?: "Available" | "Display" | "Damage";
+  stock_category?: "Available" | "Display" | "Damage";
 }
 
 export interface ChallanGroupUpdate {
@@ -169,7 +158,10 @@ const mapBatch = (b: any): StockBatch => ({
   productCode: b.product_code,
   productName: b.product_name,
   category: b.category,
-  batchNumber: (b.batch_number && String(b.batch_number).trim()) ? String(b.batch_number).trim() : '0',
+  batchNumber:
+    b.batch_number && String(b.batch_number).trim()
+      ? String(b.batch_number).trim()
+      : "0",
   supplier: b.supplier,
   quantity: b.quantity,
   rate: Number(b.rate),
@@ -183,42 +175,29 @@ const mapBatch = (b: any): StockBatch => ({
   isCancelled: b.is_cancelled,
 });
 
-const mapOrder = (o: any): Order => ({
-  id: o.id,
-  orderNumber: o.order_number,
-  clientName: o.client_name,
-  clientPhone: o.client_phone,
-  productName: o.product_name,
-  quantity: o.quantity,
-  totalAmount: Number(o.total_amount),
-  orderDate: o.order_date,
-  status: o.status,
-  batchNo: o.batch_no,
-  isChallanGenerated: o.is_challan_generated,
-  pendingQty: o.pending_qty,
-  fulfilledQty: o.fulfilled_qty,
-  deliveredAt: o.delivered_at,
-  stockCategory: o.stock_category,
-  narration: o.narration,
-});
-
 const mapSale = (s: any): Sale => ({
   id: s.id,
-  clientName: s.client_name,
+  orderNo: s.order_no,
+  customer: s.customer,
   clientPhone: s.client_phone,
-  productName: s.product_name,
+  product: s.product,
   category: s.category,
-  quantity: s.quantity,
-  rate: Number(s.rate),
-  totalPrice: Number(s.total_price),
+  orderedQty: Number(s.ordered_qty || 0),
+  deliveredQty: Number(s.delivered_qty || 0),
+  pendingQty: Number(s.pending_qty || 0),
+  rate: Number(s.rate || 0),
+  GST: Number(s.GST || 0),
+  totalPrice: Number(s.total_price || 0),
   orderDate: s.order_date,
   valueCategory: s.value_category,
   batchNo: s.batch_no,
-  pendingQty: s.pending_qty,
-  fulfilledQty: s.fulfilled_qty,
   damageQty: s.damage_qty,
   isDamageSale: Number(s.damage_qty || 0) > 0,
+  remarks: s.remarks,
+  status: s.status,
   stockCategory: s.stock_category,
+  createdAt: s.created_at,
+  updatedAt: s.updated_at,
 });
 
 const mapSaleReturn = (r: any): SaleReturn => ({
@@ -236,22 +215,24 @@ const mapSaleReturn = (r: any): SaleReturn => ({
 
 const mapChallan = (c: any): Challan => ({
   id: c.id,
-  challanNumber: c.challan_number,
-  orderNumber: c.order_number,
-  clientName: c.client_name,
+  challanNo: c.challan_no,
+  salesId: c.sales_id,
+  customer: c.customer,
   clientPhone: c.client_phone,
-  productName: c.product_name,
-  quantity: c.quantity,
-  date: c.date,
+  product: c.product,
   batchNo: c.batch_no,
+  quantity: Number(c.quantity || 0),
+  createdAt: c.created_at,
   notes: c.notes,
   isPrinted: c.is_printed,
   isBuilt: c.is_built,
+  isChallanGenerated: c.is_challan_generated,
   isCancelled: c.is_cancelled,
   cancelledAt: c.cancelled_at,
   stockCategory: c.stock_category,
   returnedQty: c.returned_qty,
   restoredQty: c.restored_qty,
+  status: c.status,
 });
 
 const mapPurchase = (p: any): Purchase => ({
@@ -263,7 +244,10 @@ const mapPurchase = (p: any): Purchase => ({
   quantity: p.quantity,
   rate: Number(p.rate),
   totalAmount: Number(p.total_amount),
-  batchNumber: (p.batch_number && String(p.batch_number).trim()) ? String(p.batch_number).trim() : '0',
+  batchNumber:
+    p.batch_number && String(p.batch_number).trim()
+      ? String(p.batch_number).trim()
+      : "0",
   date: p.date,
 });
 
@@ -309,7 +293,8 @@ export const updateBatch = (id: string, updates: Partial<StockBatch>) => {
   if (updates.rate !== undefined) body.rate = updates.rate;
   if (updates.productName) body.product_name = updates.productName;
   if (updates.category) body.category = updates.category;
-  if (updates.batchNumber !== undefined) body.batch_number = updates.batchNumber || '0';
+  if (updates.batchNumber !== undefined)
+    body.batch_number = updates.batchNumber || "0";
   if (updates.supplier) body.supplier = updates.supplier;
   if (updates.description !== undefined) body.description = updates.description;
   if (updates.isNil !== undefined) body.is_nil = updates.isNil;
@@ -396,38 +381,55 @@ export const releaseHold = (id: string) =>
 export const getSales = async () =>
   (await request<any[]>("/sales")).map(mapSale);
 export const addSale = (
-  s: Omit<Sale, "id" | "pendingQty" | "fulfilledQty">,
+  s: Omit<Sale, "id" | "pendingQty" | "deliveredQty" | "orderNo"> & { status?: string },
 ) => {
   const body = {
-    client_name: s.clientName,
+    customer: s.customer,
     client_phone: s.clientPhone,
-    product_name: s.productName,
+    product: s.product,
     category: s.category,
-    quantity: s.quantity,
-    rate: s.rate,
-    total_price: s.totalPrice,
-    order_date: s.orderDate,
+    ordered_qty: s.orderedQty,
+    remarks: s.remarks,
     value_category: s.valueCategory,
     batch_no: s.batchNo,
-    narration: s.narration,
     damage_qty: s.damageQty || 0,
     stock_category: s.stockCategory || "Available",
+    order_date: s.orderDate,
+    status: s.status,
   };
   return request<any>("/sales", {
     method: "POST",
     body: JSON.stringify(body),
   }).then(mapSale);
 };
+export const addSaleBulk = (payload: {
+  customer: string;
+  clientPhone: string;
+  orderDate: string;
+  status: string;
+  remarks?: string;
+  category: string;
+  items: any[];
+}) => {
+  return request<any[]>("/sales/bulk", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+};
 export const updateSale = (id: string, updates: Partial<Sale>) => {
   const body: any = {};
-  if (updates.clientName) body.client_name = updates.clientName;
-  if (updates.clientPhone) body.client_phone = updates.clientPhone;
-  if (updates.productName) body.product_name = updates.productName;
-  if (updates.quantity) body.quantity = updates.quantity;
-  if (updates.category) body.category = updates.category;
+  if (updates.customer !== undefined) body.customer = updates.customer;
+  if (updates.clientPhone !== undefined)
+    body.client_phone = updates.clientPhone;
+  if (updates.product !== undefined) body.product = updates.product;
+  if (updates.orderedQty !== undefined) body.ordered_qty = updates.orderedQty;
+  if (updates.category !== undefined) body.category = updates.category;
   if (updates.damageQty !== undefined) body.damage_qty = updates.damageQty;
-  if (updates.narration !== undefined) body.narration = updates.narration;
-  if (updates.stockCategory) body.stock_category = updates.stockCategory;
+  if (updates.remarks !== undefined) body.remarks = updates.remarks;
+  if (updates.stockCategory !== undefined)
+    body.stock_category = updates.stockCategory;
+  if (updates.batchNo !== undefined) body.batch_no = updates.batchNo;
+  if (updates.status !== undefined) body.status = updates.status;
   return request<any>(`/sales/${id}`, {
     method: "PUT",
     body: JSON.stringify(body),
@@ -456,91 +458,58 @@ export const addSalesReturn = (r: Omit<SaleReturn, "id" | "createdAt">) => {
   }).then(mapSaleReturn);
 };
 
-// Orders
-export const getOrders = async () =>
-  (await request<any[]>("/orders")).map(mapOrder);
-export const addOrder = (
-  o: Omit<Order, "id">,
-) => {
-  const body = {
-    order_number: o.orderNumber,
-    client_name: o.clientName,
-    client_phone: o.clientPhone,
-    product_name: o.productName,
-    quantity: o.quantity,
-    total_amount: o.totalAmount,
-    order_date: o.orderDate,
-    status: o.status,
-    batch_no: o.batchNo,
-    pending_qty: o.pendingQty !== undefined ? o.pendingQty : o.quantity,
-    fulfilled_qty: o.fulfilledQty !== undefined ? o.fulfilledQty : 0,
-    narration: o.narration,
-    stock_category: o.stockCategory || "Available",
-  };
-  return request<any>("/orders", {
-    method: "POST",
-    body: JSON.stringify(body),
-  }).then(mapOrder);
-};
-export const updateOrder = (id: string, updates: Partial<Order>) => {
+export const updateSalesReturn = (id: string, updates: Partial<SaleReturn>) => {
   const body: any = {};
-  if (updates.status) body.status = updates.status;
-  if (updates.clientName) body.client_name = updates.clientName;
-  if (updates.clientPhone) body.client_phone = updates.clientPhone;
-  if (updates.productName) body.product_name = updates.productName;
-  if (updates.quantity) body.quantity = updates.quantity;
-  if (updates.totalAmount) body.total_amount = updates.totalAmount;
-  if (updates.pendingQty !== undefined) body.pending_qty = updates.pendingQty;
-  if (updates.fulfilledQty !== undefined)
-    body.fulfilled_qty = updates.fulfilledQty;
+  if (updates.clientName !== undefined) body.client_name = updates.clientName;
+  if (updates.clientPhone !== undefined) body.client_phone = updates.clientPhone;
+  if (updates.priceCategory !== undefined) body.price_category = updates.priceCategory;
+  if (updates.receiveDate !== undefined) body.receive_date = updates.receiveDate;
+  if (updates.productName !== undefined) body.product_name = updates.productName;
+  if (updates.quantity !== undefined) body.quantity = updates.quantity;
   if (updates.batchNo !== undefined) body.batch_no = updates.batchNo;
-  if (updates.skipStockUpdate !== undefined)
-    body.skip_stock_update = updates.skipStockUpdate;
-  if (updates.stockCategory) body.stock_category = updates.stockCategory;
-  if (updates.narration !== undefined) body.narration = updates.narration;
-  if (updates.status === "Delivered")
-    body.delivered_at = new Date().toISOString();
-  return request<any>(`/orders/${id}`, {
+  if (updates.notes !== undefined) body.notes = updates.notes;
+
+  return request<any>(`/sales-returns/${id}`, {
     method: "PUT",
     body: JSON.stringify(body),
-  }).then(mapOrder);
+  }).then(mapSaleReturn);
 };
-export const deleteOrder = (id: string) =>
-  request(`/orders/${id}`, { method: "DELETE" });
+
+export const deleteSalesReturn = (id: string) =>
+  request(`/sales-returns/${id}`, { method: "DELETE" });
 
 // Challans
 export const getChallans = async () =>
   (await request<any[]>("/challans")).map(mapChallan);
-export const addChallan = (c: Omit<Challan, "id">) => {
+export const addChallan = (
+  c: Omit<Challan, "id" | "challanNo"> & { status?: string },
+) => {
   const body = {
-    challan_number: c.challanNumber,
-    order_number: c.orderNumber,
-    client_name: c.clientName,
-    client_phone: c.clientPhone,
-    product_name: c.productName,
+    sales_id: c.salesId,
     quantity: c.quantity,
-    date: c.date,
     batch_no: c.batchNo,
     notes: c.notes,
-    should_fulfill: c.shouldFulfill,
-    skip_stock_update: c.skipStockUpdate,
     stock_category: c.stockCategory || "Available",
+    status: c.status || "Pending",
   };
   return request<any>("/challans", {
     method: "POST",
     body: JSON.stringify(body),
-  });
+  }).then(mapChallan);
 };
 export const updateChallan = (id: string, updates: Partial<Challan>) => {
   const body: any = {};
-  if (updates.clientName) body.client_name = updates.clientName;
-  if (updates.productName) body.product_name = updates.productName;
-  if (updates.quantity) body.quantity = updates.quantity;
-  if (updates.batchNo) body.batch_no = updates.batchNo;
-  if (updates.notes) body.notes = updates.notes;
+  if (updates.customer !== undefined) body.customer = updates.customer;
+  if (updates.product !== undefined) body.product = updates.product;
+  if (updates.quantity !== undefined) body.quantity = updates.quantity;
+  if (updates.batchNo !== undefined) body.batch_no = updates.batchNo;
+  if (updates.notes !== undefined) body.notes = updates.notes;
   if (updates.isPrinted !== undefined) body.is_printed = updates.isPrinted;
   if (updates.isBuilt !== undefined) body.is_built = updates.isBuilt;
-  if (updates.stockCategory) body.stock_category = updates.stockCategory;
+  if (updates.isChallanGenerated !== undefined) body.is_challan_generated = updates.isChallanGenerated;
+  if (updates.stockCategory !== undefined)
+    body.stock_category = updates.stockCategory;
+  if (updates.status !== undefined) body.status = updates.status;
   return request<any>(`/challans/${id}`, {
     method: "PUT",
     body: JSON.stringify(body),
@@ -553,25 +522,38 @@ export const updateChallanGroup = (
   request<any>(`/challans/group/${encodeURIComponent(challanNumber)}`, {
     method: "PUT",
     body: JSON.stringify({
-      client_name: payload.clientName,
+      customer: payload.clientName,
       client_phone: payload.clientPhone,
       date: payload.date,
       items: payload.items.map((item) => ({
         id: item.id,
-        product_name: item.productName,
+        product: item.productName || item.product,
         quantity: item.quantity,
         batch_no: item.batchNo,
         notes: item.notes,
-        stock_category: item.stockCategory || "Available",
+        stock_category:
+          item.stockCategory || item.stock_category || "Available",
       })),
     }),
   });
 export const deleteChallan = (id: string) =>
   request(`/challans/${id}`, { method: "DELETE" });
+export const deleteChallanGroup = (challanNumber: string) =>
+  request(`/challans/group/${encodeURIComponent(challanNumber)}`, { method: "DELETE" });
 export const cancelChallanGroup = (challanNumber: string) =>
   request<any>(`/challans/cancel/${encodeURIComponent(challanNumber)}`, {
     method: "PUT",
   });
+export const deliverPendingChallan = (id: string) =>
+  request<any>(`/challans/deliver/${id}`, { method: "PUT" });
+export const confirmSale = (id: string) =>
+  request<any>(`/sales/${id}/confirm`, { method: "PUT" });
+export const deliverSale = (id: string) =>
+  request<any>(`/sales/${id}/deliver`, { method: "PUT" });
+export const confirmChallanGroup = (challanNo: string) =>
+  request<any>(`/challans/group/${encodeURIComponent(challanNo)}/confirm`, { method: "PUT" });
+export const deliverChallanGroup = (challanNo: string) =>
+  request<any>(`/challans/group/${encodeURIComponent(challanNo)}/deliver`, { method: "PUT" });
 // Users
 export const getUsers = () => request<User[]>("/users");
 export const addUser = (u: Omit<User, "id">) =>
@@ -651,6 +633,29 @@ export const exportCSV = (
   a.href = URL.createObjectURL(blob);
   a.download = filename;
   a.click();
+};
+
+// Date timezone-safe helper
+export const getLocalDateString = (date = new Date()) => {
+  return date.toLocaleDateString('en-CA'); // formats as YYYY-MM-DD
+};
+
+export const formatLocalDate = (dateStr: string | null | undefined): string => {
+  if (!dateStr) return '';
+  const clean = String(dateStr).trim().slice(0, 10);
+  if (clean.length === 10 && clean.includes('-')) {
+    const parts = clean.split('-');
+    if (parts.length === 3) {
+      if (parts[0].length === 4) {
+        // YYYY-MM-DD
+        return `${parts[2]}-${parts[1]}-${parts[0]}`;
+      } else if (parts[2].length === 4) {
+        // DD-MM-YYYY
+        return `${parts[0]}-${parts[1]}-${parts[2]}`;
+      }
+    }
+  }
+  return clean;
 };
 
 // WhatsApp

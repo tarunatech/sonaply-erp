@@ -1,22 +1,45 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { addSalesReturn, getClients, getSalesReturns, getBatches, SaleReturn, Client, StockBatch, exportCSV } from "@/lib/store";
+import { addSalesReturn, updateSalesReturn, deleteSalesReturn, getClients, getSalesReturns, getBatches, SaleReturn, Client, StockBatch, exportCSV, getLocalDateString } from "@/lib/store";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Download, Plus } from "lucide-react";
+import { Download, Plus, Pencil, Trash2, Calendar as CalendarIcon } from "lucide-react";
 import { format } from "date-fns";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+
+const renderCustomer = (customerName: string) => {
+  const match = customerName.match(/(.*?)\s*\(([^)]+)\)$/);
+  if (match) {
+    return (
+      <div className="flex flex-col gap-0.5">
+        <span className="font-semibold text-slate-900 leading-tight">{match[1]}</span>
+        <span className="text-[11px] text-slate-500 font-medium leading-none mt-0.5">({match[2]})</span>
+      </div>
+    );
+  }
+  return <span className="font-semibold text-slate-900 leading-tight">{customerName}</span>;
+};
 
 const PRICE_CATEGORIES = ['Regular', 'Premium', 'Only Cash'];
+
+const parseLocalDate = (dateStr: string) => {
+  if (!dateStr) return new Date();
+  const [year, month, day] = dateStr.split('-').map(Number);
+  if (isNaN(year) || isNaN(month) || isNaN(day)) return new Date();
+  return new Date(year, month - 1, day);
+};
 
 export default function SalesReturnPage() {
   const [clientName, setClientName] = useState("");
   const [clientPhone, setClientPhone] = useState("");
   const [priceCategory, setPriceCategory] = useState("Regular");
-  const [receiveDate, setReceiveDate] = useState(new Date().toISOString().slice(0, 10));
+  const [receiveDate, setReceiveDate] = useState(getLocalDateString());
   const [productName, setProductName] = useState("");
   const [batchNo, setBatchNo] = useState("");
   const [quantity, setQuantity] = useState<number>(0);
@@ -31,7 +54,46 @@ export default function SalesReturnPage() {
   const clientContainerRef = useRef<HTMLDivElement>(null);
   const productContainerRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
-  const receiveDateInputRef = useRef<HTMLInputElement>(null);
+  const receiveDateInputRef = useRef<HTMLButtonElement>(null);
+  const productNameInputRef = useRef<HTMLInputElement>(null);
+  const qtyInputRef = useRef<HTMLInputElement>(null);
+  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
+  const [editingReturn, setEditingReturn] = useState<SaleReturn | null>(null);
+
+  const handleDelete = async (id: string) => {
+    const password = window.prompt("Please enter admin password to delete sales return:");
+    if (password !== "admin") {
+      if (password !== null) toast({ title: "Incorrect password", variant: "destructive" });
+      return;
+    }
+    if (window.confirm("Are you sure you want to delete this return? Stock will be adjusted back.")) {
+      try {
+        await deleteSalesReturn(id);
+        await refresh();
+        window.dispatchEvent(new CustomEvent("erp-stock-updated"));
+        toast({ title: "Sales return deleted", description: "Stock updated accordingly." });
+      } catch (err: any) {
+        toast({ title: "Delete Failed", description: err.message, variant: "destructive" });
+      }
+    }
+  };
+
+  const handleEditSave = async () => {
+    if (!editingReturn) return;
+    if (editingReturn.quantity <= 0) {
+      toast({ title: "Quantity must be greater than 0", variant: "destructive" });
+      return;
+    }
+    try {
+      await updateSalesReturn(editingReturn.id, editingReturn);
+      await refresh();
+      window.dispatchEvent(new CustomEvent("erp-stock-updated"));
+      setEditingReturn(null);
+      toast({ title: "Sales return updated", description: "Stock adjusted accordingly." });
+    } catch (err: any) {
+      toast({ title: "Update Failed", description: err.message, variant: "destructive" });
+    }
+  };
 
   const refresh = async () => {
     const [r, c, b] = await Promise.all([getSalesReturns(), getClients(), getBatches()]);
@@ -100,6 +162,9 @@ export default function SalesReturnPage() {
     }
     setShowProductSuggestions(false);
     setSelectedProductIndex(-1);
+    setTimeout(() => {
+      qtyInputRef.current?.focus();
+    }, 50);
   };
 
   const handleSubmit = async () => {
@@ -123,7 +188,7 @@ export default function SalesReturnPage() {
     setClientName("");
     setClientPhone("");
     setPriceCategory("Regular");
-    setReceiveDate(new Date().toISOString().slice(0, 10));
+    setReceiveDate(getLocalDateString());
     setProductName("");
     setBatchNo("");
     setQuantity(0);
@@ -168,6 +233,9 @@ export default function SalesReturnPage() {
                       e.preventDefault();
                       setSelectedClientIndex(prev => (prev > 0 ? prev - 1 : prev));
                     } else if (e.key === 'Enter' && selectedClientIndex >= 0) {
+                      e.preventDefault();
+                      pickClient(filteredClients[selectedClientIndex]);
+                    } else if (e.key === 'Tab' && selectedClientIndex >= 0) {
                       e.preventDefault();
                       pickClient(filteredClients[selectedClientIndex]);
                     } else if (e.key === 'Escape') {
@@ -225,12 +293,49 @@ export default function SalesReturnPage() {
             </div>
             <div>
               <Label>Receive Date</Label>
-              <Input ref={receiveDateInputRef} type="date" value={receiveDate} onChange={e => setReceiveDate(e.target.value)} />
+              <Popover open={isCalendarOpen} onOpenChange={setIsCalendarOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    ref={receiveDateInputRef}
+                    variant="outline"
+                    className={`w-full justify-start text-left font-normal h-9 text-xs bg-background border-input ${!receiveDate ? 'text-slate-400' : 'text-slate-900 font-medium'}`}
+                    onKeyDown={e => {
+                      if (e.key === 'Tab' && !e.shiftKey) {
+                        const nextInput = productNameInputRef.current;
+                        if (nextInput) {
+                          e.preventDefault();
+                          nextInput.focus();
+                        }
+                      }
+                    }}
+                  >
+                    <CalendarIcon className="mr-2 h-4 w-4 text-slate-500 shrink-0" />
+                    {receiveDate ? format(parseLocalDate(receiveDate), "dd-MM-yyyy") : <span>Pick a date</span>}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="single"
+                    selected={receiveDate ? parseLocalDate(receiveDate) : undefined}
+                    onSelect={(d) => {
+                      if (d) {
+                        setReceiveDate(getLocalDateString(d));
+                        setIsCalendarOpen(false);
+                        setTimeout(() => {
+                          receiveDateInputRef.current?.focus();
+                        }, 50);
+                      }
+                    }}
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
             </div>
             <div className="sm:col-span-2">
               <Label>Product Name *</Label>
               <div className="relative">
                 <Input
+                  ref={productNameInputRef}
                   value={productName}
                   onChange={e => {
                     setProductName(e.target.value);
@@ -254,6 +359,9 @@ export default function SalesReturnPage() {
                       e.preventDefault();
                       setSelectedProductIndex(prev => (prev > 0 ? prev - 1 : prev));
                     } else if (e.key === 'Enter' && selectedProductIndex >= 0) {
+                      e.preventDefault();
+                      pickProduct(productSuggestions[selectedProductIndex]);
+                    } else if (e.key === 'Tab' && selectedProductIndex >= 0) {
                       e.preventDefault();
                       pickProduct(productSuggestions[selectedProductIndex]);
                     } else if (e.key === 'Escape') {
@@ -288,7 +396,7 @@ export default function SalesReturnPage() {
             <div>
               <Label>Batch No</Label>
               {productName ? (
-                <Select value={batchNo} onValueChange={setBatchNo}>
+                <Select value={batchNo} onValueChange={setBatchNo} disabled>
                   <SelectTrigger>
                     <SelectValue placeholder="Select Batch" />
                   </SelectTrigger>
@@ -309,7 +417,7 @@ export default function SalesReturnPage() {
             </div>
             <div>
               <Label>Return Quantity *</Label>
-              <Input type="number" value={quantity || ""} onChange={e => setQuantity(Number(e.target.value))} min={1} />
+              <Input ref={qtyInputRef} type="number" value={quantity || ""} onChange={e => setQuantity(Number(e.target.value))} min={1} />
             </div>
             <div className="sm:col-span-4">
               <Label>Notes</Label>
@@ -333,32 +441,144 @@ export default function SalesReturnPage() {
 
       <Card>
         <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Client</TableHead>
-                <TableHead>Phone</TableHead>
-                <TableHead>Price Category</TableHead>
-                <TableHead>Product</TableHead>
-                <TableHead className="text-right">Qty</TableHead>
-                <TableHead>Batch</TableHead>
-                <TableHead>Receive Date</TableHead>
-                <TableHead>Notes</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredReturns.length === 0 ? (
-                <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">No sales returns yet</TableCell></TableRow>
-              ) : filteredReturns.map(item => (
-                <TableRow key={item.id}>
-                  <TableCell className="font-medium">{item.clientName}</TableCell>
-                  <TableCell>{item.clientPhone || "-"}</TableCell>
-                  <TableCell>{item.priceCategory || "-"}</TableCell>
-                  <TableCell>{item.productName}</TableCell>
-                  <TableCell className="text-right">{item.quantity}</TableCell>
-                  <TableCell>{item.batchNo || "-"}</TableCell>
-                  <TableCell>{item.receiveDate ? format(new Date(item.receiveDate), 'dd-MM-yyyy') : "-"}</TableCell>
-                  <TableCell className="max-w-[220px] truncate" title={item.notes}>{item.notes || "-"}</TableCell>
+            <Table className="border-collapse border-2 border-slate-300 w-full">
+              <TableHeader className="bg-slate-50/75">
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Receive Date</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Client Name</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Phone</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Product</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Price Category</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right">Qty</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Batch</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Notes</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredReturns.length === 0 ? (
+                  <TableRow><TableCell colSpan={9} className="border-2 border-slate-300 text-center text-muted-foreground py-8">No sales returns yet</TableCell></TableRow>
+                ) : filteredReturns.map(item => (
+                  <TableRow key={item.id} className="hover:bg-slate-50/40">
+                    <TableCell className="border-2 border-slate-300 px-4 py-3 text-sm text-slate-700 font-medium whitespace-nowrap">
+                      {item.receiveDate ? format(new Date(item.receiveDate), 'dd-MM-yyyy') : "-"}
+                    </TableCell>
+                    <TableCell className="border-2 border-slate-300 px-4 py-3 text-sm min-w-[150px] max-w-[220px] break-words">
+                      {renderCustomer(item.clientName)}
+                    </TableCell>
+                    <TableCell className="border-2 border-slate-300 px-4 py-3 text-sm text-slate-700">{item.clientPhone || "-"}</TableCell>
+                    <TableCell className="border-2 border-slate-300 px-4 py-3 text-sm text-slate-900 font-semibold">{item.productName}</TableCell>
+                    <TableCell className="border-2 border-slate-300 px-4 py-3 text-sm text-slate-700">{item.priceCategory || "-"}</TableCell>
+                    <TableCell className="border-2 border-slate-300 px-4 py-3 text-sm text-right font-bold text-slate-800">{item.quantity}</TableCell>
+                    <TableCell className="border-2 border-slate-300 px-4 py-3 text-sm text-slate-700">{item.batchNo || "-"}</TableCell>
+                    <TableCell className="border-2 border-slate-300 px-4 py-3 text-sm text-slate-700 max-w-[200px] truncate" title={item.notes}>
+                      {item.notes || "-"}
+                    </TableCell>
+                    <TableCell className="border-2 border-slate-300 px-4 py-3 text-right align-middle">
+                      <div className="flex justify-end gap-1">
+                      <Dialog open={!!editingReturn && editingReturn.id === item.id} onOpenChange={(open) => !open && setEditingReturn(null)}>
+                        <DialogTrigger asChild>
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-8 w-8 text-blue-600" 
+                            onClick={() => setEditingReturn({ ...item })} 
+                            title="Edit Return"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                        </DialogTrigger>
+                        {editingReturn && (
+                          <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
+                            <DialogHeader><DialogTitle>Edit Sales Return</DialogTitle></DialogHeader>
+                            <div className="grid grid-cols-2 gap-3 py-4 text-left">
+                              <div className="grid gap-1">
+                                <Label className="text-xs">Client Name</Label>
+                                <Input 
+                                  value={editingReturn.clientName || ''} 
+                                  onChange={e => setEditingReturn({...editingReturn, clientName: e.target.value})} 
+                                  className="h-8 text-xs"
+                                />
+                              </div>
+                              <div className="grid gap-1">
+                                <Label className="text-xs">Client Phone</Label>
+                                <Input 
+                                  value={editingReturn.clientPhone || ''} 
+                                  onChange={e => setEditingReturn({...editingReturn, clientPhone: e.target.value})} 
+                                  className="h-8 text-xs"
+                                />
+                              </div>
+                              <div className="grid gap-1">
+                                <Label className="text-xs">Price Category</Label>
+                                <Select 
+                                  value={editingReturn.priceCategory || 'Regular'} 
+                                  onValueChange={val => setEditingReturn({...editingReturn, priceCategory: val})}
+                                >
+                                  <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    {PRICE_CATEGORIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="grid gap-1">
+                                <Label className="text-xs">Receive Date</Label>
+                                <Input 
+                                  type="date"
+                                  value={editingReturn.receiveDate ? editingReturn.receiveDate.slice(0, 10) : ''} 
+                                  onChange={e => setEditingReturn({...editingReturn, receiveDate: e.target.value})} 
+                                  className="h-8 text-xs"
+                                />
+                              </div>
+                              <div className="grid gap-1 col-span-2">
+                                <Label className="text-xs">Product Name</Label>
+                                <Input 
+                                  value={editingReturn.productName || ''} 
+                                  onChange={e => setEditingReturn({...editingReturn, productName: e.target.value})} 
+                                  className="h-8 text-xs"
+                                />
+                              </div>
+                              <div className="grid gap-1">
+                                <Label className="text-xs">Batch No</Label>
+                                <Input 
+                                  value={editingReturn.batchNo || ''} 
+                                  onChange={e => setEditingReturn({...editingReturn, batchNo: e.target.value})} 
+                                  className="h-8 text-xs"
+                                />
+                              </div>
+                              <div className="grid gap-1">
+                                <Label className="text-xs">Quantity</Label>
+                                <Input 
+                                  type="number"
+                                  value={editingReturn.quantity || ''} 
+                                  onChange={e => setEditingReturn({...editingReturn, quantity: Number(e.target.value)})} 
+                                  className="h-8 text-xs"
+                                />
+                              </div>
+                              <div className="grid gap-1 col-span-2">
+                                <Label className="text-xs">Notes</Label>
+                                <Input 
+                                  value={editingReturn.notes || ''} 
+                                  onChange={e => setEditingReturn({...editingReturn, notes: e.target.value})} 
+                                  className="h-8 text-xs"
+                                />
+                              </div>
+                            </div>
+                            <DialogFooter><Button onClick={handleEditSave} size="sm">Save Changes</Button></DialogFooter>
+                          </DialogContent>
+                        )}
+                      </Dialog>
+
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-8 w-8 text-destructive" 
+                        onClick={() => handleDelete(item.id)} 
+                        title="Delete Return"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { addPurchase, addBatch, getPurchases, updatePurchase, deletePurchase, exportCSV, Purchase, getBatches, StockBatch } from "@/lib/store";
+import { addPurchase, addBatch, getPurchases, updatePurchase, deletePurchase, exportCSV, Purchase, getBatches, StockBatch, getLocalDateString } from "@/lib/store";
 import { printElement } from "@/lib/print";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -8,9 +8,11 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import { Download, Printer, Plus, Trash2, Pencil, ChevronDown, ChevronRight } from "lucide-react";
+import { Download, Printer, Plus, Trash2, Pencil, ChevronDown, ChevronRight, Calendar as CalendarIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { format } from "date-fns";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
 
 interface PurchaseItem {
   productName: string;
@@ -34,9 +36,16 @@ const PURCHASE_CATEGORIES = [
 ];
 const defaultItem: PurchaseItem = { productName: '', category: '', quantity: 0, batchNumber: '0' };
 
+const parseLocalDate = (dateStr: string) => {
+  if (!dateStr) return new Date();
+  const [year, month, day] = dateStr.split('-').map(Number);
+  if (isNaN(year) || isNaN(month) || isNaN(day)) return new Date();
+  return new Date(year, month - 1, day);
+};
+
 export default function PurchasePage() {
   const [supplierName, setSupplierName] = useState('');
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(getLocalDateString());
   const [items, setItems] = useState<PurchaseItem[]>([{ ...defaultItem }]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [editingPurchase, setEditingPurchase] = useState<any>(null);
@@ -59,6 +68,8 @@ export default function PurchasePage() {
   const [selectedBatchSuggestionIndex, setSelectedBatchSuggestionIndex] = useState<number>(-1);
   const batchContainerRef = useRef<HTMLDivElement>(null);
   const recordPurchaseBtnRef = useRef<HTMLButtonElement>(null);
+  const purchaseDateRef = useRef<HTMLButtonElement>(null);
+  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
 
   useEffect(() => {
     if (selectedBatchSuggestionIndex >= 0 && batchContainerRef.current) {
@@ -259,12 +270,19 @@ export default function PurchasePage() {
                         setSupplierName(filtered[selectedSupplierIndex]);
                         setShowSupplierSuggestions(false);
                         setSelectedSupplierIndex(-1);
+                        setTimeout(() => {
+                          purchaseDateRef.current?.focus();
+                        }, 50);
                       }
                     } else if (e.key === 'Tab') {
                       if (selectedSupplierIndex >= 0 && selectedSupplierIndex < filtered.length) {
+                        e.preventDefault();
                         setSupplierName(filtered[selectedSupplierIndex]);
                         setShowSupplierSuggestions(false);
                         setSelectedSupplierIndex(-1);
+                        setTimeout(() => {
+                          purchaseDateRef.current?.focus();
+                        }, 50);
                       }
                     } else if (e.key === 'Escape') {
                       setShowSupplierSuggestions(false);
@@ -286,6 +304,9 @@ export default function PurchasePage() {
                             e.preventDefault();
                             setSupplierName(s);
                             setShowSupplierSuggestions(false);
+                            setTimeout(() => {
+                              purchaseDateRef.current?.focus();
+                            }, 50);
                           }}
                         >
                           {s}
@@ -297,7 +318,46 @@ export default function PurchasePage() {
                   </div>
                 )}
               </div>
-              <div><Label>Date</Label><Input type="date" value={date} onChange={e => setDate(e.target.value)} /></div>
+              <div>
+                <Label>Date</Label>
+                <Popover open={isCalendarOpen} onOpenChange={setIsCalendarOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      ref={purchaseDateRef}
+                      variant="outline"
+                      className={`w-full justify-start text-left font-normal h-9 text-xs bg-background border-input ${!date ? 'text-slate-400' : 'text-slate-900 font-medium'}`}
+                      onKeyDown={e => {
+                        if (e.key === 'Tab' && !e.shiftKey) {
+                          const firstInput = productInputsRef.current[0];
+                          if (firstInput) {
+                            e.preventDefault();
+                            firstInput.focus();
+                          }
+                        }
+                      }}
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4 text-slate-500 shrink-0" />
+                      {date ? format(parseLocalDate(date), "dd-MM-yyyy") : <span>Pick a date</span>}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={date ? parseLocalDate(date) : undefined}
+                      onSelect={(d) => {
+                        if (d) {
+                          setDate(getLocalDateString(d));
+                          setIsCalendarOpen(false);
+                          setTimeout(() => {
+                            purchaseDateRef.current?.focus();
+                          }, 50);
+                        }
+                      }}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
               <div className="hidden lg:block"></div>
               <div className="hidden lg:block"></div>
             </div>

@@ -17,15 +17,14 @@ import StockEntry from "./pages/StockEntry";
 import PurchasePage from "./pages/PurchasePage";
 import SalesPage from "./pages/SalesPage";
 import SalesReturnPage from "./pages/SalesReturnPage";
-import OrderTracking from "./pages/OrderTracking";
 import HoldPage from "./pages/HoldPage";
-import PendingOrders from "./pages/PendingOrders";
-import DeliveredOrders from "./pages/DeliveredOrders";
 import ChallanPage from "./pages/ChallanPage";
 import DailyExport from "./pages/DailyExport";
 import ClientsPage from "./pages/ClientsPage";
 import UserManagement from "./pages/UserManagement";
 import NotFound from "./pages/NotFound";
+import PendingDeliveries from "./pages/PendingDeliveries";
+import DeliveredDeliveries from "./pages/DeliveredDeliveries";
 
 
 const queryClient = new QueryClient();
@@ -112,10 +111,9 @@ const App = () => {
                     <Route path="/purchases" element={<PurchasePage />} />
                     <Route path="/sales" element={<SalesPage />} />
                     <Route path="/sales-returns" element={<SalesReturnPage />} />
-                    <Route path="/orders" element={<OrderTracking />} />
                     <Route path="/holds" element={<HoldPage />} />
-                    <Route path="/pending-orders" element={<PendingOrders />} />
-                    <Route path="/delivered-orders" element={<DeliveredOrders />} />
+                    <Route path="/pending-orders" element={<PendingDeliveries />} />
+                    <Route path="/delivered-orders" element={<DeliveredDeliveries />} />
                     <Route path="/challans" element={<ChallanPage />} />
                     <Route path="/export" element={<DailyExport />} />
                     <Route path="/clients" element={<ClientsPage />} />

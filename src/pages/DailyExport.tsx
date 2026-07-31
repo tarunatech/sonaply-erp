@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo } from "react";
 import { 
-  getSales, getPurchases, getBatches, getOrders, exportCSV, 
+  getSales, getPurchases, getBatches, exportCSV, 
   deleteSale, deletePurchase, deleteBatch, getSalesReturns,
-  getChallans, StockBatch, Sale, Purchase, SaleReturn, Challan 
+  getChallans, StockBatch, Sale, Purchase, SaleReturn, Challan, getLocalDateString
 } from "@/lib/store";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -19,22 +19,22 @@ interface LedgerTransaction {
   type: 'Addition' | 'Subtraction';
   qty: number;
   description: string;
-  source: 'purchase' | 'batch' | 'sale' | 'sales_return' | 'challan_cancel';
+  source: 'purchase' | 'batch' | 'sale' | 'sales_return' | 'challan_cancel' | 'delivered_challan';
 }
 
 export default function DailyExport() {
   const { toast } = useToast();
 
   // Daily Export State
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(getLocalDateString());
 
   // Date Range Ledger States
   const [fromDate, setFromDate] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() - 30);
-    return d.toISOString().slice(0, 10);
+    return getLocalDateString(d);
   });
-  const [toDate, setToDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [toDate, setToDate] = useState(() => getLocalDateString());
   const [searchQuery, setSearchQuery] = useState("");
 
   // DB States
@@ -81,7 +81,6 @@ export default function DailyExport() {
       case 'sales': data = (await getSales()).filter(s => s.orderDate === d); break;
       case 'purchases': data = (await getPurchases()).filter(p => p.date === d); break;
       case 'stock': data = (await getBatches()).filter(b => b.date === d); break;
-      case 'orders': data = (await getOrders()).filter(o => o.orderDate === d); break;
     }
     if (!data.length) { alert('No data for this date'); return; }
     exportCSV(data, `daily-${type}-${d}.csv`);
@@ -91,7 +90,7 @@ export default function DailyExport() {
   const ledgerData = useMemo(() => {
     const productNames = new Set<string>();
     allBatches.forEach(b => { if (b.productName) productNames.add(b.productName); });
-    allSales.forEach(s => { if (s.productName) productNames.add(s.productName); });
+    allSales.forEach(s => { if (s.product) productNames.add(s.product); });
     allPurchases.forEach(p => { if (p.productName) productNames.add(p.productName); });
 
     const getProductCategory = (name: string): string => {
@@ -99,7 +98,7 @@ export default function DailyExport() {
       if (b) return b.category;
       const p = allPurchases.find(x => x.productName === name);
       if (p) return p.category;
-      const s = allSales.find(x => x.productName === name);
+      const s = allSales.find(x => x.product === name);
       if (s) return s.category;
       return "Other";
     };
@@ -140,16 +139,18 @@ export default function DailyExport() {
         }
       });
 
-      // C. Sales (Stock Subtraction)
-      allSales.forEach(s => {
-        if (s.productName === productName && s.orderDate >= fromDate && s.orderDate <= toDate) {
+      // C. Delivered Challans (Stock Subtraction)
+      allChallans.forEach(c => {
+        const dateStr = c.createdAt ? c.createdAt.slice(0, 10) : '';
+        const wasDelivered = c.status === 'Delivered' || (c.isCancelled && c.restoredQty !== null && c.restoredQty !== undefined);
+        if (c.product === productName && wasDelivered && dateStr && dateStr >= fromDate && dateStr <= toDate) {
           transactions.push({
-            id: s.id,
-            date: s.orderDate,
+            id: c.id,
+            date: dateStr,
             type: 'Subtraction',
-            qty: s.quantity,
-            description: `Sale (Client: ${s.clientName}, Batch: ${s.batchNo || 'N/A'})`,
-            source: 'sale'
+            qty: c.quantity,
+            description: `Challan Delivered (Challan: ${c.challanNo}, Customer: ${c.customer}, Batch: ${c.batchNo || 'N/A'})`,
+            source: 'delivered_challan'
           });
         }
       });
@@ -170,16 +171,16 @@ export default function DailyExport() {
 
       // E. Cancelled Challans (Stock Addition)
       allChallans.forEach(c => {
-        const cancelDate = c.cancelledAt ? c.cancelledAt.slice(0, 10) : c.date;
-        if (c.productName === productName && c.isCancelled && cancelDate >= fromDate && cancelDate <= toDate) {
-          const qty = c.restoredQty ?? (c.quantity - (c.returnedQty || 0));
+        const cancelDate = c.cancelledAt ? c.cancelledAt.slice(0, 10) : (c.createdAt ? c.createdAt.slice(0, 10) : '');
+        if (c.product === productName && c.isCancelled && cancelDate && cancelDate >= fromDate && cancelDate <= toDate) {
+          const qty = c.restoredQty !== null && c.restoredQty !== undefined ? Number(c.restoredQty) : 0;
           if (qty > 0) {
             transactions.push({
               id: c.id,
               date: cancelDate,
               type: 'Addition',
               qty: qty,
-              description: `Challan Cancelled (Challan: ${c.challanNumber}, Client: ${c.clientName}, Batch: ${c.batchNo || 'N/A'})`,
+              description: `Challan Cancelled (Challan: ${c.challanNo}, Client: ${c.customer}, Batch: ${c.batchNo || 'N/A'})`,
               source: 'challan_cancel'
             });
           }
@@ -294,7 +295,6 @@ export default function DailyExport() {
     { key: 'sales', title: 'Daily Sales', desc: 'Export all sales for the selected date' },
     { key: 'purchases', title: 'Daily Purchases', desc: 'Export all purchases for the selected date' },
     { key: 'stock', title: 'Daily Stock Updates', desc: 'Export stock entries for the selected date' },
-    { key: 'orders', title: 'Daily Orders', desc: 'Export all orders for the selected date' },
   ];
 
   return (
@@ -487,7 +487,7 @@ export default function DailyExport() {
                           {t.description}
                         </TableCell>
                         <TableCell className="text-right">
-                          {t.source !== 'sales_return' && t.source !== 'challan_cancel' ? (
+                          {t.source === 'purchase' || t.source === 'batch' ? (
                             <Button
                               variant="ghost"
                               size="icon"

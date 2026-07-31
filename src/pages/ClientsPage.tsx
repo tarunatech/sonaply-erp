@@ -9,6 +9,7 @@ import { Download, Pencil, Trash2, UserCircle, UserPlus } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { format } from "date-fns";
 
 const PRICE_CATEGORIES = ['Regular', 'Premium', 'Only Cash'];
 
@@ -243,7 +244,7 @@ export default function ClientsPage() {
                           {c.priceCategory}
                         </span>
                       </TableCell>
-                      <TableCell>{new Date(c.createdAt).toLocaleDateString()}</TableCell>
+                      <TableCell>{c.createdAt ? format(new Date(c.createdAt), "dd-MM-yyyy") : "-"}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1">
                           <Dialog open={!!editingClient && editingClient.id === c.id} onOpenChange={(open) => !open && setEditingClient(null)}>

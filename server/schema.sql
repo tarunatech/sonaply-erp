@@ -48,17 +48,26 @@ CREATE TABLE IF NOT EXISTS purchases (
 
 CREATE TABLE IF NOT EXISTS sales (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  client_name TEXT NOT NULL,
+  order_no TEXT,
+  customer TEXT NOT NULL,
   client_phone TEXT,
-  product_name TEXT NOT NULL,
+  product TEXT NOT NULL,
   category TEXT NOT NULL,
-  quantity INTEGER NOT NULL,
+  ordered_qty INTEGER NOT NULL,
+  delivered_qty INTEGER DEFAULT 0,
+  pending_qty INTEGER DEFAULT 0,
   rate NUMERIC,
+  "GST" NUMERIC DEFAULT 0,
   total_price NUMERIC,
   order_date DATE DEFAULT CURRENT_DATE,
   value_category TEXT,
   batch_no TEXT,
-  stock_category TEXT DEFAULT 'Available'
+  stock_category TEXT DEFAULT 'Available',
+  remarks TEXT,
+  status TEXT DEFAULT 'Pending' CHECK (status IN ('Pending', 'Partial', 'Delivered', 'Cancelled')),
+  damage_qty INTEGER DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS sales_returns (
@@ -74,33 +83,24 @@ CREATE TABLE IF NOT EXISTS sales_returns (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS orders (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  order_number TEXT NOT NULL,
-  client_name TEXT NOT NULL,
-  client_phone TEXT,
-  product_name TEXT NOT NULL,
-  quantity INTEGER NOT NULL,
-  total_amount NUMERIC,
-  order_date DATE DEFAULT CURRENT_DATE,
-  status TEXT NOT NULL CHECK (status IN ('Pending', 'Confirmed', 'Delivered', 'Cancelled')),
-  batch_no TEXT,
-  stock_category TEXT DEFAULT 'Available'
-);
-
 CREATE TABLE IF NOT EXISTS challans (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  challan_number TEXT UNIQUE NOT NULL,
-  order_number TEXT NOT NULL,
-  client_name TEXT NOT NULL,
+  challan_no TEXT NOT NULL,
+  sales_id UUID REFERENCES sales(id),
+  customer TEXT NOT NULL,
   client_phone TEXT,
-  product_name TEXT NOT NULL,
-  quantity INTEGER NOT NULL,
-  date DATE DEFAULT CURRENT_DATE,
+  product TEXT NOT NULL,
   batch_no TEXT,
+  quantity INTEGER NOT NULL,
+  created_at DATE DEFAULT CURRENT_DATE,
   notes TEXT,
   is_printed BOOLEAN DEFAULT FALSE,
-  stock_category TEXT DEFAULT 'Available'
+  stock_category TEXT DEFAULT 'Available',
+  is_cancelled BOOLEAN DEFAULT FALSE,
+  cancelled_at TIMESTAMP,
+  is_built BOOLEAN DEFAULT FALSE,
+  restored_qty INTEGER,
+  status TEXT DEFAULT 'Delivered'
 );
  
 CREATE TABLE IF NOT EXISTS clients (
