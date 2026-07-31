@@ -27,6 +27,22 @@ async function addColumnIfNotExist(table, colDef) {
   }
 }
 
+async function tableExists(table) {
+  const check = await db.query(
+    `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1`,
+    [table]
+  );
+  return check.rows.length > 0;
+}
+
+async function columnExists(table, col) {
+  const check = await db.query(
+    `SELECT column_name FROM information_schema.columns WHERE table_name = $1 AND column_name = $2`,
+    [table, col]
+  );
+  return check.rows.length > 0;
+}
+
 async function migrate() {
   console.log('🚀 Starting database migration...');
 
@@ -71,50 +87,67 @@ async function migrate() {
 
     // 3. Alterations from add_pending_qty.cjs
     console.log('Step 3: Adding pending/fulfilled quantities (add_pending_qty.cjs)...');
-    await db.query(`
-      ALTER TABLE orders 
-      ADD COLUMN IF NOT EXISTS pending_qty INTEGER DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS fulfilled_qty INTEGER DEFAULT 0
-    `);
-    await db.query('UPDATE orders SET pending_qty = 0 WHERE pending_qty IS NULL');
-    await db.query('UPDATE orders SET fulfilled_qty = 0 WHERE fulfilled_qty IS NULL');
-    await db.query('ALTER TABLE orders ALTER COLUMN pending_qty SET DEFAULT 0');
-    await db.query('ALTER TABLE orders ALTER COLUMN fulfilled_qty SET DEFAULT 0');
+    if (await tableExists('orders')) {
+      await db.query(`
+        ALTER TABLE orders 
+        ADD COLUMN IF NOT EXISTS pending_qty INTEGER DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS fulfilled_qty INTEGER DEFAULT 0
+      `);
+      await db.query('UPDATE orders SET pending_qty = 0 WHERE pending_qty IS NULL');
+      await db.query('UPDATE orders SET fulfilled_qty = 0 WHERE fulfilled_qty IS NULL');
+      await db.query('ALTER TABLE orders ALTER COLUMN pending_qty SET DEFAULT 0');
+      await db.query('ALTER TABLE orders ALTER COLUMN fulfilled_qty SET DEFAULT 0');
+    }
 
-    await db.query(`
-      ALTER TABLE sales 
-      ADD COLUMN IF NOT EXISTS pending_qty INTEGER DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS fulfilled_qty INTEGER DEFAULT 0
-    `);
-    await db.query('UPDATE sales SET pending_qty = 0 WHERE pending_qty IS NULL');
-    await db.query('UPDATE sales SET fulfilled_qty = 0 WHERE fulfilled_qty IS NULL');
-    await db.query('ALTER TABLE sales ALTER COLUMN pending_qty SET DEFAULT 0');
-    await db.query('ALTER TABLE sales ALTER COLUMN fulfilled_qty SET DEFAULT 0');
+    // Only alter sales table if "quantity" still exists (otherwise it has been renamed/promoted)
+    if (await columnExists('sales', 'quantity')) {
+      await db.query(`
+        ALTER TABLE sales 
+        ADD COLUMN IF NOT EXISTS pending_qty INTEGER DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS fulfilled_qty INTEGER DEFAULT 0
+      `);
+      await db.query('UPDATE sales SET pending_qty = 0 WHERE pending_qty IS NULL');
+      await db.query('UPDATE sales SET fulfilled_qty = 0 WHERE fulfilled_qty IS NULL');
+      await db.query('ALTER TABLE sales ALTER COLUMN pending_qty SET DEFAULT 0');
+      await db.query('ALTER TABLE sales ALTER COLUMN fulfilled_qty SET DEFAULT 0');
+      
+      const updateSalesRes = await db.query(`
+        UPDATE sales SET fulfilled_qty = quantity WHERE fulfilled_qty = 0 AND pending_qty = 0;
+      `);
+      console.log(`Updated ${updateSalesRes.rowCount} legacy sales rows with default fulfilled/pending quantities.`);
+    } else {
+      console.log('Skipping sales pending/fulfilled quantities update (already migrated).');
+    }
     
     // Set initial values for existing orders
-    const updateOrdersRes = await db.query(`
-      UPDATE orders SET fulfilled_qty = quantity WHERE fulfilled_qty = 0 AND pending_qty = 0;
-    `);
-    console.log(`Updated ${updateOrdersRes.rowCount} legacy order rows with default fulfilled/pending quantities.`);
-    
-    const updateSalesRes = await db.query(`
-      UPDATE sales SET fulfilled_qty = quantity WHERE fulfilled_qty = 0 AND pending_qty = 0;
-    `);
-    console.log(`Updated ${updateSalesRes.rowCount} legacy sales rows with default fulfilled/pending quantities.`);
+    if (await tableExists('orders')) {
+      const updateOrdersRes = await db.query(`
+        UPDATE orders SET fulfilled_qty = quantity WHERE fulfilled_qty = 0 AND pending_qty = 0;
+      `);
+      console.log(`Updated ${updateOrdersRes.rowCount} legacy order rows with default fulfilled/pending quantities.`);
+    }
 
     // 4. Alterations from add_challan_flag_to_orders.cjs
     console.log('Step 4: Adding is_challan_generated to orders (add_challan_flag_to_orders.cjs)...');
-    await db.query(`
-      ALTER TABLE orders 
-      ADD COLUMN IF NOT EXISTS is_challan_generated BOOLEAN DEFAULT FALSE
-    `);
-    await db.query('UPDATE orders SET is_challan_generated = FALSE WHERE is_challan_generated IS NULL');
-    await db.query('ALTER TABLE orders ALTER COLUMN is_challan_generated SET DEFAULT FALSE');
+    if (await tableExists('orders')) {
+      await db.query(`
+        ALTER TABLE orders 
+        ADD COLUMN IF NOT EXISTS is_challan_generated BOOLEAN DEFAULT FALSE
+      `);
+      await db.query('UPDATE orders SET is_challan_generated = FALSE WHERE is_challan_generated IS NULL');
+      await db.query('ALTER TABLE orders ALTER COLUMN is_challan_generated SET DEFAULT FALSE');
+    } else {
+      console.log('Skipping step 4: orders table does not exist.');
+    }
 
     // 5. Alterations from add_narration.js
     console.log('Step 5: Adding narration to sales and orders (add_narration.js)...');
-    await db.query('ALTER TABLE sales ADD COLUMN IF NOT EXISTS narration TEXT');
-    await db.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS narration TEXT');
+    if (!(await columnExists('sales', 'narration')) && !(await columnExists('sales', 'remarks'))) {
+      await db.query('ALTER TABLE sales ADD COLUMN IF NOT EXISTS narration TEXT');
+    }
+    if (await tableExists('orders')) {
+      await db.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS narration TEXT');
+    }
 
     // 6. Alterations from add_batch_status.js
     console.log('Step 6: Adding is_nil and is_cancelled to batches (add_batch_status.js)...');
@@ -127,7 +160,11 @@ async function migrate() {
 
     // 7. Alterations from migrate_orders.js
     console.log('Step 7: Dropping UNIQUE constraint from orders.order_number (migrate_orders.js)...');
-    await db.query('ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_order_number_key');
+    if (await tableExists('orders')) {
+      await db.query('ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_order_number_key');
+    } else {
+      console.log('Skipping step 7: orders table does not exist.');
+    }
 
     // 8. Alterations from remove_challan_unique.cjs
     console.log('Step 8: Dropping UNIQUE constraints from challans (remove_challan_unique.cjs)...');
@@ -143,7 +180,9 @@ async function migrate() {
 
     // 9. Alterations for recent schema additions (delivered_at, challan cancel, sales_returns, display_qty, stock_category)
     console.log('Step 9: Adding delivered_at, challan cancel fields, sales_returns, display_qty, and stock_category...');
-    await db.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP');
+    if (await tableExists('orders')) {
+      await db.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP');
+    }
     await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS is_cancelled BOOLEAN DEFAULT FALSE');
     await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP');
     await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS is_built BOOLEAN DEFAULT FALSE');
@@ -166,7 +205,9 @@ async function migrate() {
     `);
     await db.query('ALTER TABLE batches ADD COLUMN IF NOT EXISTS display_qty INTEGER DEFAULT 0');
     await db.query("ALTER TABLE sales ADD COLUMN IF NOT EXISTS stock_category TEXT DEFAULT 'Available'");
-    await db.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS stock_category TEXT DEFAULT 'Available'");
+    if (await tableExists('orders')) {
+      await db.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS stock_category TEXT DEFAULT 'Available'");
+    }
     await db.query("ALTER TABLE challans ADD COLUMN IF NOT EXISTS stock_category TEXT DEFAULT 'Available'");
 
     // 10. Clean up empty/NULL batch numbers
