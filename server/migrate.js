@@ -237,7 +237,7 @@ async function migrate() {
           await db.query(
             `INSERT INTO sales 
              (id, order_no, customer, client_phone, product, category, ordered_qty, delivered_qty, pending_qty, rate, total_price, order_date, value_category, batch_no, remarks, status, stock_category, created_at, updated_at) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'Standard', $13, $14, $15, $16, $12, CURRENT_TIMESTAMP)`,
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'Standard', $13, $14, $15, $16, $17, CURRENT_TIMESTAMP)`,
             [
               order.id,
               order.order_number,
@@ -254,7 +254,8 @@ async function migrate() {
               order.batch_no || '0',
               order.narration,
               order.status,
-              order.stock_category || 'Available'
+              order.stock_category || 'Available',
+              order.order_date
             ]
           );
         }
