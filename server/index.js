@@ -234,6 +234,9 @@ app.post('/api/purchases', async (req, res) => {
       );
     }
 
+    // Resolve any negative stock across batches of this product
+    await resolveNegativeStock(product_name);
+
     await db.query('COMMIT');
     res.json(result.rows[0]);
   } catch (err) {
@@ -304,6 +307,9 @@ app.put('/api/purchases/:id', async (req, res) => {
     const values = Object.values(fields);
     const result = await db.query(`UPDATE purchases SET ${setClause} WHERE id = $${values.length + 1} RETURNING *`, [...values, id]);
 
+    // Resolve any negative stock across batches of this product
+    await resolveNegativeStock(newProduct);
+
     await db.query('COMMIT');
     res.json(result.rows[0]);
   } catch (err) {
@@ -359,7 +365,152 @@ async function getNextChallanNumber(prefix) {
   return `${prefix}${String(nextNum).padStart(4, '0')}`;
 }
 
+// --- Helpers for Stock Deduction and Restoration ---
+async function deductStock(productName, batchNo, quantityToDeduct, stockCategory) {
+  const qty = Number(quantityToDeduct || 0);
+  if (qty <= 0) return batchNo || '0';
+
+  // FIFO Stock Deduction
+  let bQuery = 'SELECT id, batch_number, available_qty, display_qty, damage_qty FROM batches WHERE product_name = $1';
+  let bParams = [productName];
+  if (batchNo && batchNo !== '0') {
+    bQuery += ' AND batch_number = $2';
+    bParams.push(batchNo);
+  }
+  bQuery += ' ORDER BY date ASC';
+
+  const batchesResult = await db.query(bQuery, bParams);
+  let remainingToSell = qty;
+  let lastBatchNo = batchNo;
+
+  let updateCol = 'available_qty';
+  if (stockCategory === 'Damage') updateCol = 'damage_qty';
+  else if (stockCategory === 'Display') updateCol = 'display_qty';
+
+  for (const b of batchesResult.rows) {
+    if (remainingToSell <= 0) break;
+    const availableInBatch = Number(b[updateCol] || 0);
+    const canDeduct = Math.min(remainingToSell, availableInBatch);
+    if (canDeduct > 0) {
+      await db.query(`UPDATE batches SET ${updateCol} = ${updateCol} - $1 WHERE id = $2`, [canDeduct, b.id]);
+      remainingToSell -= canDeduct;
+    }
+    lastBatchNo = b.batch_number;
+  }
+
+  // Allow negative stock if needed
+  if (remainingToSell > 0) {
+    const checkBatch = await db.query(
+      'SELECT id FROM batches WHERE product_name = $1 AND batch_number = $2',
+      [productName, batchNo || '0']
+    );
+    if (checkBatch.rows.length > 0) {
+      await db.query(`UPDATE batches SET ${updateCol} = ${updateCol} - $1 WHERE id = $2`, [remainingToSell, checkBatch.rows[0].id]);
+    } else {
+      const productLookup = await db.query('SELECT category FROM products WHERE name = $1 LIMIT 1', [productName]);
+      const category = productLookup.rows.length > 0 ? productLookup.rows[0].category : 'Other';
+      let insertCols = 'product_name, category, batch_number, quantity, date';
+      let insertVals = '$1, $2, $3, 0, CURRENT_DATE';
+      const params = [productName, category, batchNo || '0'];
+      if (stockCategory === 'Display') { insertCols += ', display_qty'; insertVals += ', -' + remainingToSell; }
+      else if (stockCategory === 'Damage') { insertCols += ', damage_qty'; insertVals += ', -' + remainingToSell; }
+      else { insertCols += ', available_qty'; insertVals += ', -' + remainingToSell; }
+      await db.query(`INSERT INTO batches (${insertCols}) VALUES (${insertVals})`, params);
+    }
+  }
+
+  return lastBatchNo || batchNo || '0';
+}
+
+async function restoreStock(productName, batchNo, quantityToRestore, stockCategory) {
+  const qty = Number(quantityToRestore || 0);
+  if (qty <= 0) return;
+
+  let updateCol = 'available_qty';
+  if (stockCategory === 'Damage') updateCol = 'damage_qty';
+  else if (stockCategory === 'Display') updateCol = 'display_qty';
+
+  // Find if the batch exists
+  const checkBatch = await db.query(
+    'SELECT id, quantity FROM batches WHERE product_name = $1 AND batch_number = $2',
+    [productName, batchNo || '0']
+  );
+
+  if (checkBatch.rows.length > 0) {
+    // Update the batch
+    await db.query(
+      `UPDATE batches SET ${updateCol} = CASE WHEN quantity > 0 THEN LEAST(quantity, ${updateCol} + $1) ELSE ${updateCol} + $1 END WHERE id = $2`,
+      [qty, checkBatch.rows[0].id]
+    );
+  } else {
+    // If batch doesn't exist, we can try finding the first batch of the product
+    const batchLookup = await db.query(
+      'SELECT id FROM batches WHERE product_name = $1 ORDER BY date ASC LIMIT 1',
+      [productName]
+    );
+    if (batchLookup.rows.length > 0) {
+      await db.query(
+        `UPDATE batches SET ${updateCol} = CASE WHEN quantity > 0 THEN LEAST(quantity, ${updateCol} + $1) ELSE ${updateCol} + $1 END WHERE id = $2`,
+        [qty, batchLookup.rows[0].id]
+      );
+    } else {
+      const productLookup = await db.query('SELECT category FROM products WHERE name = $1 LIMIT 1', [productName]);
+      const category = productLookup.rows.length > 0 ? productLookup.rows[0].category : 'Other';
+      await db.query(
+        `INSERT INTO batches (product_name, category, batch_number, quantity, ${updateCol}, date) VALUES ($1, $2, $3, 0, $4, CURRENT_DATE)`,
+        [productName, category, batchNo || '0', qty]
+      );
+    }
+  }
+}
+
+async function resolveNegativeStock(productName) {
+  const cols = ['available_qty', 'display_qty', 'damage_qty'];
+  
+  for (const col of cols) {
+    // Find all batches of this product with negative quantity in this column
+    const negativeBatches = await db.query(
+      `SELECT id, "${col}" FROM batches WHERE product_name = $1 AND "${col}" < 0 ORDER BY date ASC`,
+      [productName]
+    );
+    
+    if (negativeBatches.rows.length === 0) continue;
+    
+    for (const negBatch of negativeBatches.rows) {
+      let needed = Math.abs(Number(negBatch[col]));
+      if (needed <= 0) continue;
+      
+      // Find other batches of the same product with positive quantity in this column
+      const positiveBatches = await db.query(
+        `SELECT id, "${col}" FROM batches WHERE product_name = $1 AND "${col}" > 0 AND id != $2 ORDER BY date ASC`,
+        [productName, negBatch.id]
+      );
+      
+      for (const posBatch of positiveBatches.rows) {
+        if (needed <= 0) break;
+        const available = Number(posBatch[col]);
+        const transfer = Math.min(needed, available);
+        
+        if (transfer > 0) {
+          // Subtract from positive batch
+          await db.query(
+            `UPDATE batches SET "${col}" = "${col}" - $1 WHERE id = $2`,
+            [transfer, posBatch.id]
+          );
+          // Add to negative batch
+          await db.query(
+            `UPDATE batches SET "${col}" = "${col}" + $1 WHERE id = $2`,
+            [transfer, negBatch.id]
+          );
+          needed -= transfer;
+        }
+      }
+    }
+  }
+}
+
 // --- Sales ---
+
 
 app.get('/api/sales', async (req, res) => {
   try {
@@ -459,6 +610,9 @@ app.post('/api/sales/bulk', async (req, res) => {
       const finalGST = Number(item.GST || 0);
       const totalPrice = finalOrderedQty * finalRate;
 
+      // Deduct stock immediately
+      const actualBatchNo = await deductStock(finalProduct, finalBatchNo || '0', finalOrderedQty, finalStockCategory);
+
       const saleInsertResult = await db.query(
         `INSERT INTO sales 
         (order_no, customer, client_phone, product, category, ordered_qty, delivered_qty, pending_qty, rate, "GST", total_price, order_date, value_category, batch_no, remarks, status, stock_category, damage_qty, created_at, updated_at) 
@@ -476,7 +630,7 @@ app.post('/api/sales/bulk', async (req, res) => {
           finalGST,
           totalPrice,
           finalOrderDate,
-          lastBatchNo || finalBatchNo || '0',
+          actualBatchNo,
           finalRemarks,
           finalStatus,
           finalStockCategory,
@@ -498,7 +652,7 @@ app.post('/api/sales/bulk', async (req, res) => {
             finalCustomer,
             finalClientPhone,
             finalProduct,
-            lastBatchNo || finalBatchNo || '0',
+            actualBatchNo,
             fulfillableQty,
             finalRemarks,
             finalStockCategory
@@ -517,7 +671,7 @@ app.post('/api/sales/bulk', async (req, res) => {
             finalCustomer,
             finalClientPhone,
             finalProduct,
-            lastBatchNo || finalBatchNo || '0',
+            actualBatchNo,
             pendingRemaining,
             finalRemarks,
             finalStockCategory
@@ -604,6 +758,9 @@ app.post('/api/sales', async (req, res) => {
     const orderNum = `ORD-${Date.now().toString(36).toUpperCase()}`;
     const totalPrice = finalOrderedQty * finalRate;
 
+    // Deduct stock immediately
+    const actualBatchNo = await deductStock(finalProduct, finalBatchNo || '0', finalOrderedQty, finalStockCategory);
+
     // 3. Insert Sales record
     const result = await db.query(
       `INSERT INTO sales 
@@ -623,7 +780,7 @@ app.post('/api/sales', async (req, res) => {
         totalPrice,
         finalOrderDate,
         finalValueCategory,
-        lastBatchNo || finalBatchNo || '0',
+        actualBatchNo,
         finalRemarks,
         finalStatus,
         finalStockCategory,
@@ -648,7 +805,7 @@ app.post('/api/sales', async (req, res) => {
           finalCustomer,
           finalClientPhone,
           finalProduct,
-          lastBatchNo || finalBatchNo || '0',
+          actualBatchNo,
           fulfillableQty,
           finalRemarks || '',
           finalStockCategory
@@ -668,7 +825,7 @@ app.post('/api/sales', async (req, res) => {
           finalCustomer,
           finalClientPhone,
           finalProduct,
-          lastBatchNo || finalBatchNo || '0',
+          actualBatchNo,
           pendingRemaining,
           finalRemarks || '',
           finalStockCategory
@@ -735,15 +892,71 @@ app.put('/api/sales/:id', async (req, res) => {
           await db.query('ROLLBACK');
           return res.status(400).json({ error: `Quantity cannot be reduced below the delivered quantity (${deliveredQty}).` });
         }
+        
+        const oldQty = Number(sale.ordered_qty);
+        const diff = newQty - oldQty;
+        if (diff > 0) {
+          await deductStock(sale.product, sale.batch_no, diff, sale.stock_category);
+        } else if (diff < 0) {
+          await restoreStock(sale.product, sale.batch_no, Math.abs(diff), sale.stock_category);
+        }
+
         updates.ordered_qty = newQty;
         updates.pending_qty = newQty - deliveredQty;
         updates.status = (newQty === deliveredQty) ? 'Delivered' : 'Partial';
+
+        // Sync pending challans
+        const newPending = newQty - deliveredQty;
+        const pChallanRes = await db.query(
+          "SELECT * FROM challans WHERE sales_id = $1 AND challan_no LIKE 'P-%' AND is_cancelled = FALSE AND status = 'Pending' LIMIT 1",
+          [id]
+        );
+        if (pChallanRes.rows.length > 0) {
+          const pChallan = pChallanRes.rows[0];
+          if (newPending > 0) {
+            await db.query('UPDATE challans SET quantity = $1 WHERE id = $2', [newPending, pChallan.id]);
+          } else {
+            await db.query('DELETE FROM challans WHERE id = $1', [pChallan.id]);
+          }
+        } else if (newPending > 0) {
+          const pChallanNum = await getNextChallanNumber('P-');
+          await db.query(
+            `INSERT INTO challans 
+            (challan_no, sales_id, customer, client_phone, product, batch_no, quantity, status, created_at, notes, stock_category, is_printed, is_built, is_cancelled) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending', CURRENT_DATE, $8, $9, FALSE, FALSE, FALSE)`,
+            [
+              pChallanNum,
+              id,
+              sale.customer,
+              sale.client_phone,
+              sale.product,
+              sale.batch_no,
+              newPending,
+              sale.remarks || '',
+              sale.stock_category
+            ]
+          );
+        }
       }
     }
 
     // Pending State (delivered_qty === 0): allow all edits
+    let isInventoryChanged = false;
     if (deliveredQty === 0) {
       const newQty = req.body.ordered_qty !== undefined ? Number(req.body.ordered_qty) : (req.body.quantity !== undefined ? Number(req.body.quantity) : null);
+      const newProduct = req.body.product !== undefined ? req.body.product : (req.body.productName !== undefined ? req.body.productName : null);
+      const newBatchNo = req.body.batch_no !== undefined ? req.body.batch_no : (req.body.batchNo !== undefined ? req.body.batchNo : null);
+      const newStockCategory = req.body.stock_category !== undefined ? req.body.stock_category : (req.body.stockCategory !== undefined ? req.body.stockCategory : null);
+
+      if (
+        (newQty !== null && newQty !== Number(sale.ordered_qty)) ||
+        (newProduct !== null && newProduct !== sale.product) ||
+        (newBatchNo !== null && newBatchNo !== sale.batch_no) ||
+        (newStockCategory !== null && newStockCategory !== sale.stock_category)
+      ) {
+        isInventoryChanged = true;
+      }
+
       if (newQty !== null) {
         updates.ordered_qty = newQty;
         updates.pending_qty = newQty;
@@ -753,8 +966,87 @@ app.put('/api/sales/:id', async (req, res) => {
       const newCustomer = req.body.customer !== undefined ? req.body.customer : req.body.clientName;
       if (newCustomer !== undefined) updates.customer = newCustomer;
       
-      const newProduct = req.body.product !== undefined ? req.body.product : req.body.productName;
-      if (newProduct !== undefined) updates.product = newProduct;
+      if (newProduct !== null) updates.product = newProduct;
+
+      if (isInventoryChanged) {
+        const finalQty = updates.ordered_qty !== undefined ? updates.ordered_qty : Number(sale.ordered_qty);
+        const finalProd = updates.product !== undefined ? updates.product : sale.product;
+        const finalBatch = req.body.batch_no !== undefined ? req.body.batch_no : (req.body.batchNo !== undefined ? req.body.batchNo : sale.batch_no);
+        const finalStockCat = req.body.stock_category !== undefined ? req.body.stock_category : (req.body.stockCategory !== undefined ? req.body.stockCategory : sale.stock_category);
+
+        // 1. Revert old stock deduction
+        await restoreStock(sale.product, sale.batch_no, sale.ordered_qty, sale.stock_category);
+
+        // 2. Check stock availability for new product/batch (to decide CH- vs P- challans)
+        let bQuery = 'SELECT id, batch_number, available_qty, display_qty, damage_qty FROM batches WHERE product_name = $1';
+        let bParams = [finalProd];
+        if (finalBatch && finalBatch !== '0') {
+          bQuery += ' AND batch_number = $2';
+          bParams.push(finalBatch);
+        }
+        bQuery += ' ORDER BY date ASC';
+        const batchesResult = await db.query(bQuery, bParams);
+
+        let updateCol = 'available_qty';
+        if (finalStockCat === 'Damage') updateCol = 'damage_qty';
+        else if (finalStockCat === 'Display') updateCol = 'display_qty';
+
+        const totalAvailable = batchesResult.rows.reduce((sum, b) => sum + Number(b[updateCol] || 0), 0);
+        const fulfillableQty = Math.min(finalQty, Math.max(0, totalAvailable));
+        const pendingRemaining = finalQty - fulfillableQty;
+
+        // 3. Deduct new stock
+        const actualBatchNo = await deductStock(finalProd, finalBatch || '0', finalQty, finalStockCat);
+        updates.batch_no = actualBatchNo;
+
+        // 4. Delete old challans
+        await db.query('DELETE FROM challans WHERE sales_id = $1', [id]);
+
+        // 5. Create new challans
+        const finalCustomer = updates.customer !== undefined ? updates.customer : sale.customer;
+        const finalClientPhone = req.body.client_phone !== undefined ? req.body.client_phone : (req.body.clientPhone !== undefined ? req.body.clientPhone : sale.client_phone);
+        const finalRemarks = req.body.remarks !== undefined ? req.body.remarks : (req.body.narration !== undefined ? req.body.narration : sale.remarks);
+
+        if (fulfillableQty > 0) {
+          const challanNum = await getNextChallanNumber('CH-');
+          await db.query(
+            `INSERT INTO challans 
+            (challan_no, sales_id, customer, client_phone, product, batch_no, quantity, status, created_at, notes, stock_category, is_printed, is_built, is_cancelled) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending', CURRENT_DATE, $8, $9, FALSE, FALSE, FALSE)`,
+            [
+              challanNum,
+              id,
+              finalCustomer,
+              finalClientPhone,
+              finalProd,
+              actualBatchNo,
+              fulfillableQty,
+              finalRemarks || '',
+              finalStockCat
+            ]
+          );
+        }
+
+        if (pendingRemaining > 0) {
+          const pChallanNum = await getNextChallanNumber('P-');
+          await db.query(
+            `INSERT INTO challans 
+            (challan_no, sales_id, customer, client_phone, product, batch_no, quantity, status, created_at, notes, stock_category, is_printed, is_built, is_cancelled) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending', CURRENT_DATE, $8, $9, FALSE, FALSE, FALSE)`,
+            [
+              pChallanNum,
+              id,
+              finalCustomer,
+              finalClientPhone,
+              finalProd,
+              actualBatchNo,
+              pendingRemaining,
+              finalRemarks || '',
+              finalStockCat
+            ]
+          );
+        }
+      }
     }
 
     // Fields editable in all states (except fully locked Delivered if they affect price/qty, but here they are safety checked)
@@ -766,16 +1058,34 @@ app.put('/api/sales/:id', async (req, res) => {
     
     if (req.body.category !== undefined) updates.category = req.body.category;
     if (req.body.stock_category !== undefined || req.body.stockCategory !== undefined) {
-      updates.stock_category = req.body.stock_category !== undefined ? req.body.stock_category : req.body.stockCategory;
+      const newStockCategory = req.body.stock_category !== undefined ? req.body.stock_category : req.body.stockCategory;
+      if (deliveredQty > 0 || !isInventoryChanged) {
+        updates.stock_category = newStockCategory;
+      }
     }
     if (req.body.damage_qty !== undefined || req.body.damageQty !== undefined) {
       updates.damage_qty = req.body.damage_qty !== undefined ? req.body.damage_qty : req.body.damageQty;
     }
     if (req.body.batch_no !== undefined || req.body.batchNo !== undefined) {
-      updates.batch_no = req.body.batch_no !== undefined ? req.body.batch_no : req.body.batchNo;
+      const newBatchNo = req.body.batch_no !== undefined ? req.body.batch_no : req.body.batchNo;
+      if (deliveredQty > 0 || !isInventoryChanged) {
+        updates.batch_no = newBatchNo;
+      }
     }
     if (req.body.status !== undefined) {
       updates.status = req.body.status;
+    }
+
+    // Sync client_phone or customer to challans if inventory didn't change but customer/phone did
+    if (deliveredQty === 0 && !isInventoryChanged) {
+      const finalCustomer = updates.customer !== undefined ? updates.customer : sale.customer;
+      const finalClientPhone = updates.client_phone !== undefined ? updates.client_phone : sale.client_phone;
+      if (updates.customer !== undefined || updates.client_phone !== undefined) {
+        await db.query(
+          'UPDATE challans SET customer = $1, client_phone = $2 WHERE sales_id = $3',
+          [finalCustomer, finalClientPhone, id]
+        );
+      }
     }
 
     // Recalculate total price
@@ -806,6 +1116,44 @@ app.delete('/api/sales/:id', async (req, res) => {
   const { id } = req.params;
   try {
     await db.query('BEGIN');
+    // Fetch associated non-cancelled challans to restore their stock
+    const challansRes = await db.query(
+      'SELECT * FROM challans WHERE sales_id = $1 AND is_cancelled = FALSE',
+      [id]
+    );
+    for (const item of challansRes.rows) {
+      const stockCategory = item.stock_category || 'Available';
+      let updateCol = 'available_qty';
+      if (stockCategory === 'Display') updateCol = 'display_qty';
+      else if (stockCategory === 'Damage') updateCol = 'damage_qty';
+
+      // 1. Get total returns for this client, product and batch
+      const returnsRes = await db.query(
+        `SELECT COALESCE(SUM(quantity), 0) AS total_returns 
+         FROM sales_returns 
+         WHERE client_name = $1 AND product_name = $2 AND batch_no = $3`,
+        [item.customer, item.product, item.batch_no || '0']
+      );
+      const totalReturns = Number(returnsRes.rows[0].total_returns || 0);
+
+      // 2. Get total returns already applied to other cancelled challans
+      const appliedRes = await db.query(
+        `SELECT COALESCE(SUM(quantity - COALESCE(restored_qty, quantity)), 0) AS total_applied 
+         FROM challans 
+         WHERE customer = $1 AND product = $2 AND batch_no = $3 AND is_cancelled = TRUE`,
+        [item.customer, item.product, item.batch_no || '0']
+      );
+      const totalApplied = Number(appliedRes.rows[0].total_applied || 0);
+
+      const unappliedReturns = Math.max(0, totalReturns - totalApplied);
+      const restoreQty = Math.max(0, Number(item.quantity || 0) - unappliedReturns);
+
+      await db.query(
+        `UPDATE batches SET ${updateCol} = CASE WHEN quantity > 0 THEN LEAST(quantity, ${updateCol} + $1) ELSE ${updateCol} + $1 END WHERE product_name = $2 AND batch_number = $3`,
+        [restoreQty, item.product, item.batch_no || '0']
+      );
+    }
+
     // Delete associated challans first
     await db.query('DELETE FROM challans WHERE sales_id = $1', [id]);
     await db.query('DELETE FROM sales WHERE id = $1', [id]);
@@ -877,54 +1225,7 @@ app.put('/api/sales/:id/deliver', async (req, res) => {
     const productName = challan.product;
     const batchNo = challan.batch_no;
 
-    // FIFO Stock Deduction
-    let bQuery = 'SELECT id, batch_number, available_qty, display_qty, damage_qty FROM batches WHERE product_name = $1';
-    let bParams = [productName];
-    if (batchNo && batchNo !== '0') {
-      bQuery += ' AND batch_number = $2';
-      bParams.push(batchNo);
-    }
-    bQuery += ' ORDER BY date ASC';
-
-    const batchesResult = await db.query(bQuery, bParams);
-    let remainingToSell = quantityToDeliver;
-    let lastBatchNo = batchNo;
-
-    let updateCol = 'available_qty';
-    if (stockCategory === 'Damage') updateCol = 'damage_qty';
-    else if (stockCategory === 'Display') updateCol = 'display_qty';
-
-    for (const b of batchesResult.rows) {
-      if (remainingToSell <= 0) break;
-      const availableInBatch = Number(b[updateCol] || 0);
-      const canDeduct = Math.min(remainingToSell, availableInBatch);
-      if (canDeduct > 0) {
-        await db.query(`UPDATE batches SET ${updateCol} = ${updateCol} - $1 WHERE id = $2`, [canDeduct, b.id]);
-        remainingToSell -= canDeduct;
-      }
-      lastBatchNo = b.batch_number;
-    }
-
-    // Allow negative stock if needed
-    if (remainingToSell > 0) {
-      const checkBatch = await db.query(
-        'SELECT id FROM batches WHERE product_name = $1 AND batch_number = $2',
-        [productName, batchNo || '0']
-      );
-      if (checkBatch.rows.length > 0) {
-        await db.query(`UPDATE batches SET ${updateCol} = ${updateCol} - $1 WHERE id = $2`, [remainingToSell, checkBatch.rows[0].id]);
-      } else {
-        const productLookup = await db.query('SELECT category FROM products WHERE name = $1 LIMIT 1', [productName]);
-        const category = productLookup.rows.length > 0 ? productLookup.rows[0].category : 'Other';
-        let insertCols = 'product_name, category, batch_number, quantity, date';
-        let insertVals = '$1, $2, $3, 0, CURRENT_DATE';
-        const params = [productName, category, batchNo || '0'];
-        if (stockCategory === 'Display') { insertCols += ', display_qty'; insertVals += ', -' + remainingToSell; }
-        else if (stockCategory === 'Damage') { insertCols += ', damage_qty'; insertVals += ', -' + remainingToSell; }
-        else { insertCols += ', available_qty'; insertVals += ', -' + remainingToSell; }
-        await db.query(`INSERT INTO batches (${insertCols}) VALUES (${insertVals})`, params);
-      }
-    }
+    const lastBatchNo = batchNo;
 
     // Update Sale to Delivered
     const newDeliveredQty = Number(sale.delivered_qty || 0) + quantityToDeliver;
@@ -1005,6 +1306,9 @@ app.post('/api/sales-returns', async (req, res) => {
         [product_name, category, batch_no || `RET-${Date.now().toString(36).toUpperCase()}`, qty]
       );
     }
+
+    // Resolve any negative stock across batches of this product
+    await resolveNegativeStock(product_name);
 
     await db.query('COMMIT');
     res.json(result.rows[0]);
@@ -1107,6 +1411,9 @@ app.put('/api/sales-returns/:id', async (req, res) => {
         id
       ]
     );
+
+    // Resolve any negative stock across batches of this product
+    await resolveNegativeStock(finalProduct);
 
     await db.query('COMMIT');
     res.json(result.rows[0]);
@@ -1280,71 +1587,7 @@ app.put('/api/challans/deliver/:id', async (req, res) => {
     const productName = challan.product;
     const batchNo = challan.batch_no;
 
-    // 3. FIFO Stock Deduction
-    let bQuery = 'SELECT id, batch_number, available_qty, display_qty, damage_qty FROM batches WHERE product_name = $1';
-    let bParams = [productName];
-    if (batchNo) {
-      bQuery += ' AND batch_number = $2';
-      bParams.push(batchNo);
-    }
-    bQuery += ' ORDER BY date ASC';
-    
-    const batchesResult = await db.query(bQuery, bParams);
-    let remainingToSell = quantityToDeliver;
-    let totalDeducted = 0;
-    let lastBatchNo = batchNo;
-
-    let updateCol = 'available_qty';
-    if (stockCategory === 'Damage') {
-      updateCol = 'damage_qty';
-    } else if (stockCategory === 'Display') {
-      updateCol = 'display_qty';
-    }
-
-    for (const b of batchesResult.rows) {
-      if (remainingToSell <= 0) break;
-
-      const availableInBatch = Number(b[updateCol] || 0);
-      const canDeduct = Math.min(remainingToSell, availableInBatch);
-      if (canDeduct > 0) {
-        await db.query(`UPDATE batches SET ${updateCol} = ${updateCol} - $1 WHERE id = $2`, [canDeduct, b.id]);
-        remainingToSell -= canDeduct;
-        totalDeducted += canDeduct;
-      }
-      lastBatchNo = b.batch_number;
-    }
-
-    // Allow negative stock
-    if (remainingToSell > 0) {
-      const checkBatch = await db.query(
-        'SELECT id FROM batches WHERE product_name = $1 AND batch_number = $2',
-        [productName, batchNo || '0']
-      );
-      if (checkBatch.rows.length > 0) {
-        await db.query(
-          `UPDATE batches SET ${updateCol} = ${updateCol} - $1 WHERE id = $2`,
-          [remainingToSell, checkBatch.rows[0].id]
-        );
-      } else {
-        const productLookup = await db.query('SELECT category FROM products WHERE name = $1 LIMIT 1', [productName]);
-        const category = productLookup.rows.length > 0 ? productLookup.rows[0].category : 'Other';
-        
-        let insertCols = 'product_name, category, batch_number, quantity, date';
-        let insertVals = '$1, $2, $3, 0, CURRENT_DATE';
-        let params = [productName, category, batchNo || '0'];
-        if (stockCategory === 'Display') {
-          insertCols += ', display_qty';
-          insertVals += ', -' + remainingToSell;
-        } else if (stockCategory === 'Damage') {
-          insertCols += ', damage_qty';
-          insertVals += ', -' + remainingToSell;
-        } else {
-          insertCols += ', available_qty';
-          insertVals += ', -' + remainingToSell;
-        }
-        await db.query(`INSERT INTO batches (${insertCols}) VALUES (${insertVals})`, params);
-      }
-    }
+    const lastBatchNo = batchNo;
 
     // 4. Update Sale quantities and status
     const newDeliveredQty = Number(sale.delivered_qty || 0) + quantityToDeliver;
@@ -1462,38 +1705,60 @@ app.put('/api/challans/group/:challanNumber', async (req, res) => {
 
       const newRequestedQty = Number(item.quantity || 0);
 
+      // Fetch corresponding sale record to check for delivered quantity, and get old values for adjustment
+      let oldQty = 0;
+      let oldBatchNo = '0';
+      let oldStockCat = 'Available';
+      let deliveredQty = 0;
+      let rate = 0;
+
+      if (salesId) {
+        const saleRes = await db.query('SELECT * FROM sales WHERE id = $1', [salesId]);
+        if (saleRes.rows.length > 0) {
+          const sale = saleRes.rows[0];
+          oldQty = Number(sale.ordered_qty || 0);
+          oldBatchNo = sale.batch_no || '0';
+          oldStockCat = sale.stock_category || 'Available';
+          deliveredQty = Number(sale.delivered_qty || 0);
+          rate = Number(sale.rate || 0);
+        }
+      }
+
+      // Revert/restore the old stock allocation for this product from the sale
+      if (salesId && oldQty > 0) {
+        await restoreStock(productName, oldBatchNo, oldQty, oldStockCat);
+      }
+
       let stockCol = 'available_qty';
       if (stockCategory === 'Damage') stockCol = 'damage_qty';
       else if (stockCategory === 'Display') stockCol = 'display_qty';
 
-      const stockRes = await db.query(
-        `SELECT COALESCE(SUM(${stockCol}), 0) as avail FROM batches WHERE product_name = $1`,
+      // Check available stock (positive only)
+      const currentBatches = await db.query(
+        `SELECT "${stockCol}" FROM batches WHERE product_name = $1`,
         [productName]
       );
-      const availStock = Number(stockRes.rows[0].avail || 0);
-
-      // Fetch corresponding sale record to check for delivered quantity
-      let deliveredQty = 0;
-      let rate = 0;
-      if (salesId) {
-        const saleRes = await db.query('SELECT * FROM sales WHERE id = $1', [salesId]);
-        if (saleRes.rows.length > 0) {
-          deliveredQty = Number(saleRes.rows[0].delivered_qty || 0);
-          rate = Number(saleRes.rows[0].rate || 0);
-        }
-      }
+      const tempAvail = currentBatches.rows.reduce((acc, r) => acc + Math.max(0, Number(r[stockCol])), 0);
 
       // Calculate quantities to distribute
       const remainingToDistribute = Math.max(0, newRequestedQty - deliveredQty);
-      const actualChallanQty = Math.min(remainingToDistribute, availStock);
+      const actualChallanQty = Math.min(remainingToDistribute, tempAvail);
       const pDraftQty = Math.max(0, remainingToDistribute - actualChallanQty);
+
+      // Deduct the new stock (allows negative stock)
+      let actualBatchNo = batchNo;
+      if (salesId) {
+        actualBatchNo = await deductStock(productName, batchNo || '0', newRequestedQty, stockCategory);
+        // Resolve any negative stock across batches of this product
+        await resolveNegativeStock(productName);
+      }
 
       // Update Sales record
       if (salesId) {
         const newPendingQtyForSale = Math.max(0, newRequestedQty - deliveredQty);
         await db.query(
-          'UPDATE sales SET ordered_qty = $1, pending_qty = $2, total_price = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4',
-          [newRequestedQty, newPendingQtyForSale, newRequestedQty * rate, salesId]
+          'UPDATE sales SET ordered_qty = $1, pending_qty = $2, total_price = $3, batch_no = $4, updated_at = CURRENT_TIMESTAMP WHERE id = $5',
+          [newRequestedQty, newPendingQtyForSale, newRequestedQty * rate, actualBatchNo || batchNo || '0', salesId]
         );
       }
 
@@ -1515,7 +1780,7 @@ app.put('/api/challans/group/:challanNumber', async (req, res) => {
               finalCustomer,
               client_phone || '',
               productName,
-              batchNo,
+              actualBatchNo || batchNo || '0',
               actualChallanQty,
               notes,
               stockCategory,
@@ -1535,7 +1800,7 @@ app.put('/api/challans/group/:challanNumber', async (req, res) => {
               finalCustomer,
               client_phone || '',
               productName,
-              batchNo,
+              actualBatchNo || batchNo || '0',
               actualChallanQty,
               existingStatus,
               date || new Date().toISOString().slice(0, 10),
@@ -1565,7 +1830,7 @@ app.put('/api/challans/group/:challanNumber', async (req, res) => {
           if (pRes.rows.length > 0) {
             await db.query(
               'UPDATE challans SET quantity = $1, customer = $2, client_phone = $3, product = $4, batch_no = $5, stock_category = $6 WHERE id = $7',
-              [pDraftQty, finalCustomer, client_phone || '', productName, batchNo || '0', stockCategory, pRes.rows[0].id]
+              [pDraftQty, finalCustomer, client_phone || '', productName, actualBatchNo || batchNo || '0', stockCategory, pRes.rows[0].id]
             );
           } else {
             const pChallanNum = await getNextChallanNumber('P-');
@@ -1573,7 +1838,7 @@ app.put('/api/challans/group/:challanNumber', async (req, res) => {
               `INSERT INTO challans
               (challan_no, sales_id, customer, client_phone, product, batch_no, quantity, status, created_at, notes, stock_category, is_printed, is_built, is_cancelled)
               VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending', CURRENT_DATE, $8, $9, FALSE, FALSE, FALSE)`,
-              [pChallanNum, salesId, finalCustomer, client_phone || '', productName, batchNo || '0', pDraftQty, notes, stockCategory]
+              [pChallanNum, salesId, finalCustomer, client_phone || '', productName, actualBatchNo || batchNo || '0', pDraftQty, notes, stockCategory]
             );
           }
         } else {
@@ -1613,7 +1878,7 @@ app.put('/api/challans/group/:challanNumber/cancel', async (req, res) => {
     const alreadyCancelled = existingItems.every((item) => item.is_cancelled || item.status === 'Cancelled');
     if (!alreadyCancelled) {
       for (const item of existingItems) {
-        if (item.status === 'Delivered') {
+        if (!item.is_cancelled && item.status !== 'Cancelled') {
           const stockCategory = item.stock_category || 'Available';
           let updateCol = 'available_qty';
           if (stockCategory === 'Display') updateCol = 'display_qty';
@@ -1712,7 +1977,7 @@ app.put('/api/challans/cancel/:challanNumber', async (req, res) => {
     const alreadyCancelled = existingItems.every((item) => item.is_cancelled || item.status === 'Cancelled');
     if (!alreadyCancelled) {
       for (const item of existingItems) {
-        if (item.status === 'Delivered') {
+        if (!item.is_cancelled && item.status !== 'Cancelled') {
           const stockCategory = item.stock_category || 'Available';
           let updateCol = 'available_qty';
           if (stockCategory === 'Display') updateCol = 'display_qty';
@@ -1851,54 +2116,7 @@ app.put('/api/challans/group/:challanNumber/deliver', async (req, res) => {
       const productName = challan.product;
       const batchNo = challan.batch_no;
 
-      let updateCol = 'available_qty';
-      if (stockCategory === 'Damage') updateCol = 'damage_qty';
-      else if (stockCategory === 'Display') updateCol = 'display_qty';
-
-      // FIFO batch deduction
-      let bQuery = 'SELECT id, batch_number, available_qty, display_qty, damage_qty FROM batches WHERE product_name = $1';
-      let bParams = [productName];
-      if (batchNo && batchNo !== '0') {
-        bQuery += ' AND batch_number = $2';
-        bParams.push(batchNo);
-      }
-      bQuery += ' ORDER BY date ASC';
-
-      const batchesResult = await db.query(bQuery, bParams);
-      let remainingToSell = quantityToDeliver;
-      let lastBatchNo = batchNo;
-
-      for (const b of batchesResult.rows) {
-        if (remainingToSell <= 0) break;
-        const availableInBatch = Number(b[updateCol] || 0);
-        const canDeduct = Math.min(remainingToSell, availableInBatch);
-        if (canDeduct > 0) {
-          await db.query(`UPDATE batches SET ${updateCol} = ${updateCol} - $1 WHERE id = $2`, [canDeduct, b.id]);
-          remainingToSell -= canDeduct;
-        }
-        lastBatchNo = b.batch_number;
-      }
-
-      // Allow negative stock if needed
-      if (remainingToSell > 0) {
-        const checkBatch = await db.query(
-          'SELECT id FROM batches WHERE product_name = $1 AND batch_number = $2',
-          [productName, batchNo || '0']
-        );
-        if (checkBatch.rows.length > 0) {
-          await db.query(`UPDATE batches SET ${updateCol} = ${updateCol} - $1 WHERE id = $2`, [remainingToSell, checkBatch.rows[0].id]);
-        } else {
-          const productLookup = await db.query('SELECT category FROM products WHERE name = $1 LIMIT 1', [productName]);
-          const prodCat = productLookup.rows.length > 0 ? productLookup.rows[0].category : 'Other';
-          let insertCols = 'product_name, category, batch_number, quantity, date';
-          let insertVals = '$1, $2, $3, 0, CURRENT_DATE';
-          const params = [productName, prodCat, batchNo || '0'];
-          if (stockCategory === 'Display') { insertCols += ', display_qty'; insertVals += ', -' + remainingToSell; }
-          else if (stockCategory === 'Damage') { insertCols += ', damage_qty'; insertVals += ', -' + remainingToSell; }
-          else { insertCols += ', available_qty'; insertVals += ', -' + remainingToSell; }
-          await db.query(`INSERT INTO batches (${insertCols}) VALUES (${insertVals})`, params);
-        }
-      }
+      const lastBatchNo = batchNo;
 
       // Update related sale
       if (challan.sales_id) {
@@ -2139,9 +2357,13 @@ app.post('/api/holds', async (req, res) => {
     }
 
     const totalHeld = quantity - remainingToHold;
-    await db.query('UPDATE holds SET held_qty = $1, batch_no = $2 WHERE id = $3', [totalHeld, lastBatchNo || batch_no, result.rows[0].id]);
+
+    // Deduct stock immediately (allows negative stock just like sales)
+    const actualBatchNo = await deductStock(product_name, batch_no || '0', quantity, 'Available');
+
+    await db.query('UPDATE holds SET held_qty = $1, batch_no = $2 WHERE id = $3', [totalHeld, actualBatchNo || batch_no, result.rows[0].id]);
     result.rows[0].held_qty = totalHeld;
-    result.rows[0].batch_no = lastBatchNo || batch_no;
+    result.rows[0].batch_no = actualBatchNo || batch_no;
 
     await db.query('COMMIT');
     res.json(result.rows[0]);

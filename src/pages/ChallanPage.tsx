@@ -206,12 +206,12 @@ export default function ChallanPage() {
     try {
       if (newStatus === "Confirmed") {
         await confirmChallanGroup(group.challanNo);
-        toast({ title: "Challan Confirmed", description: `${group.challanNo} marked as Confirmed. No stock deducted.` });
+        toast({ title: "Challan Confirmed", description: `${group.challanNo} marked as Confirmed.` });
       } else if (newStatus === "Delivered") {
-        const ok = window.confirm(`Deliver ${group.challanNo}? Stock will be deducted from inventory.`);
+        const ok = window.confirm(`Deliver ${group.challanNo}?`);
         if (!ok) return;
         await deliverChallanGroup(group.challanNo);
-        toast({ title: "Challan Delivered", description: `${group.challanNo} delivered. Stock deducted.` });
+        toast({ title: "Challan Delivered", description: `${group.challanNo} delivered successfully.` });
       }
       window.dispatchEvent(new CustomEvent("erp-stock-updated"));
       refresh();

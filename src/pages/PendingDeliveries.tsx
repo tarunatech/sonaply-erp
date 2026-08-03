@@ -298,9 +298,15 @@ export default function PendingDeliveries() {
                                     Batch: {item.sale.batchNo}
                                   </span>
                                 )}
-                                <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-blue-50 text-blue-800 border border-blue-200">
-                                  Stock: {item.totalStock} ({item.sale.stockCategory || "Available"})
-                                </span>
+                                {item.totalStock >= 0 ? (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-green-50 text-green-800 border border-green-200">
+                                    Stock: Ready ({item.totalStock} extra, {item.sale.stockCategory || "Available"})
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-red-50 text-red-800 border border-red-200">
+                                    Stock: Shortage (Need {Math.abs(item.totalStock)}, {item.sale.stockCategory || "Available"})
+                                  </span>
+                                )}
                               </div>
                             </div>
                           ))}
@@ -444,7 +450,7 @@ export default function PendingDeliveries() {
           <DialogHeader>
             <DialogTitle>Generate Pending Challan (P-xxxx)</DialogTitle>
             <DialogDescription>
-              Creates a P-xxxx pending challan — no stock deducted. After purchasing stock, click "Confirm Challan" to move it to the Delivery Challans page.
+              Creates a P-xxxx pending challan. After purchasing stock, click "Confirm Challan" to move it to the Delivery Challans page.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">

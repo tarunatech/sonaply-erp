@@ -89,6 +89,7 @@ async function migrate() {
         product_name TEXT NOT NULL,
         category TEXT NOT NULL,
         quantity INTEGER NOT NULL,
+        held_qty INTEGER,
         batch_no TEXT,
         hold_date DATE DEFAULT CURRENT_DATE,
         status TEXT DEFAULT 'Active'

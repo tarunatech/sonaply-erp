@@ -30,6 +30,9 @@ CREATE TABLE IF NOT EXISTS batches (
   available_qty INTEGER DEFAULT 0,
   damage_qty INTEGER DEFAULT 0,
   display_qty INTEGER DEFAULT 0,
+  hold_qty INTEGER DEFAULT 0,
+  is_nil BOOLEAN DEFAULT FALSE,
+  is_cancelled BOOLEAN DEFAULT FALSE,
   description TEXT
 );
 
@@ -109,6 +112,19 @@ CREATE TABLE IF NOT EXISTS clients (
   phone TEXT,
   price_category TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS holds (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_name TEXT NOT NULL,
+  client_phone TEXT,
+  product_name TEXT NOT NULL,
+  category TEXT NOT NULL,
+  quantity INTEGER NOT NULL,
+  held_qty INTEGER,
+  batch_no TEXT,
+  hold_date DATE DEFAULT CURRENT_DATE,
+  status TEXT DEFAULT 'Active'
 );
 
 -- Seed initial admin user

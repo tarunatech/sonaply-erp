@@ -139,19 +139,34 @@ export default function DailyExport() {
         }
       });
 
-      // C. Delivered Challans (Stock Subtraction)
-      allChallans.forEach(c => {
-        const dateStr = c.createdAt ? c.createdAt.slice(0, 10) : '';
-        const wasDelivered = c.status === 'Delivered' || (c.isCancelled && c.restoredQty !== null && c.restoredQty !== undefined);
-        if (c.product === productName && wasDelivered && dateStr && dateStr >= fromDate && dateStr <= toDate) {
-          transactions.push({
-            id: c.id,
-            date: dateStr,
-            type: 'Subtraction',
-            qty: c.quantity,
-            description: `Challan Delivered (Challan: ${c.challanNo}, Customer: ${c.customer}, Batch: ${c.batchNo || 'N/A'})`,
-            source: 'delivered_challan'
-          });
+      // C. Sales Recorded (Stock Subtraction) & Cancellations (Stock Addition)
+      allSales.forEach(s => {
+        if (s.product === productName) {
+          // 1. Record the sale subtraction
+          if (s.orderDate >= fromDate && s.orderDate <= toDate) {
+            transactions.push({
+              id: s.id,
+              date: s.orderDate,
+              type: 'Subtraction',
+              qty: s.orderedQty,
+              description: `Sale Recorded (Order: ${s.orderNo}, Customer: ${s.customer}, Batch: ${s.batchNo || '0'})`,
+              source: 'sale'
+            });
+          }
+          // 2. If cancelled, record the cancellation addition
+          if (s.status === 'Cancelled') {
+            const cancelDate = s.updatedAt ? s.updatedAt.slice(0, 10) : s.orderDate;
+            if (cancelDate >= fromDate && cancelDate <= toDate) {
+              transactions.push({
+                id: `${s.id}-cancel`,
+                date: cancelDate,
+                type: 'Addition',
+                qty: s.orderedQty,
+                description: `Sale Cancelled / Restored (Order: ${s.orderNo}, Customer: ${s.customer})`,
+                source: 'challan_cancel'
+              });
+            }
+          }
         }
       });
 
@@ -166,24 +181,6 @@ export default function DailyExport() {
             description: `Sales Return (Client: ${r.clientName}, Batch: ${r.batchNo || 'N/A'}, Notes: ${r.notes || ''})`,
             source: 'sales_return'
           });
-        }
-      });
-
-      // E. Cancelled Challans (Stock Addition)
-      allChallans.forEach(c => {
-        const cancelDate = c.cancelledAt ? c.cancelledAt.slice(0, 10) : (c.createdAt ? c.createdAt.slice(0, 10) : '');
-        if (c.product === productName && c.isCancelled && cancelDate && cancelDate >= fromDate && cancelDate <= toDate) {
-          const qty = c.restoredQty !== null && c.restoredQty !== undefined ? Number(c.restoredQty) : 0;
-          if (qty > 0) {
-            transactions.push({
-              id: c.id,
-              date: cancelDate,
-              type: 'Addition',
-              qty: qty,
-              description: `Challan Cancelled (Challan: ${c.challanNo}, Client: ${c.customer}, Batch: ${c.batchNo || 'N/A'})`,
-              source: 'challan_cancel'
-            });
-          }
         }
       });
 

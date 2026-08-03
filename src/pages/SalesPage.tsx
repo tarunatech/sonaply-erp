@@ -272,12 +272,12 @@ export default function SalesPage() {
   };
 
   const handleDeliverSale = async (group: any) => {
-    if (!window.confirm(`Deliver order ${group.orderNo}? This will deduct stock immediately.`)) return;
+    if (!window.confirm(`Deliver order ${group.orderNo}?`)) return;
     try {
       await Promise.all(group.items.map((item: any) => deliverSale(item.id)));
       refreshSales();
       window.dispatchEvent(new CustomEvent('erp-stock-updated'));
-      toast({ title: 'Order Delivered', description: 'Stock deducted for all items. Order moved to Delivered Orders.' });
+      toast({ title: 'Order Delivered', description: 'Order moved to Delivered Orders.' });
     } catch (err: any) {
       toast({ title: 'Delivery Failed', description: err.message, variant: 'destructive' });
     }
