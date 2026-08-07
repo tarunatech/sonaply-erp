@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
@@ -28,6 +28,39 @@ import DeliveredDeliveries from "./pages/DeliveredDeliveries";
 
 
 const queryClient = new QueryClient();
+
+const GlobalKeyboardShortcuts = () => {
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Check Alt key shortcuts
+      if (e.altKey && !e.ctrlKey && !e.metaKey) {
+        const key = e.key.toLowerCase();
+        const code = e.code;
+
+        if (key === 's' || code === 'KeyS') {
+          e.preventDefault();
+          navigate('/sales');
+        } else if (key === 'c' || code === 'KeyC') {
+          e.preventDefault();
+          navigate('/challans');
+        } else if (key === 'p' || code === 'KeyP') {
+          e.preventDefault();
+          navigate('/purchases');
+        } else if (key === 'l' || code === 'KeyL') {
+          e.preventDefault();
+          navigate('/stock');
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [navigate]);
+
+  return null;
+};
 
 
 const App = () => {
@@ -92,6 +125,7 @@ const App = () => {
       <TooltipProvider>
         <Toaster />
         <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <GlobalKeyboardShortcuts />
           <SidebarProvider>
             <div className="min-h-screen flex w-full">
               <AppSidebar isAdmin={isAdmin} />

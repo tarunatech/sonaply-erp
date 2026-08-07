@@ -23,6 +23,7 @@ export interface StockBatch {
   description?: string;
   isNil?: boolean;
   isCancelled?: boolean;
+  isDeadStock?: boolean;
 }
 export interface Hold {
   id: string;
@@ -46,6 +47,7 @@ export interface Purchase {
   totalAmount: number;
   batchNumber: string;
   date: string;
+  description?: string;
 }
 export interface Sale {
   id: string;
@@ -66,10 +68,12 @@ export interface Sale {
   damageQty?: number;
   isDamageSale?: boolean;
   remarks?: string;
+  description?: string;
   status: "Pending" | "Confirmed" | "Partial" | "Delivered" | "Cancelled";
   stockCategory?: "Available" | "Display" | "Damage";
   createdAt?: string;
   updatedAt?: string;
+  estimatedDeliveryDate?: string;
 }
 export interface SaleReturn {
   id: string;
@@ -173,6 +177,7 @@ const mapBatch = (b: any): StockBatch => ({
   description: b.description,
   isNil: b.is_nil,
   isCancelled: b.is_cancelled,
+  isDeadStock: b.is_dead_stock,
 });
 
 const mapSale = (s: any): Sale => ({
@@ -198,6 +203,7 @@ const mapSale = (s: any): Sale => ({
   stockCategory: s.stock_category,
   createdAt: s.created_at,
   updatedAt: s.updated_at,
+  estimatedDeliveryDate: s.estimated_delivery_date ? String(s.estimated_delivery_date).slice(0, 10) : undefined,
 });
 
 const mapSaleReturn = (r: any): SaleReturn => ({
@@ -277,6 +283,7 @@ export const addBatch = (b: Omit<StockBatch, "id">) => {
     description: b.description,
     is_nil: b.isNil || false,
     is_cancelled: b.isCancelled || false,
+    is_dead_stock: b.isDeadStock || false,
   };
   return request<any>("/batches", {
     method: "POST",
@@ -300,6 +307,8 @@ export const updateBatch = (id: string, updates: Partial<StockBatch>) => {
   if (updates.isNil !== undefined) body.is_nil = updates.isNil;
   if (updates.isCancelled !== undefined)
     body.is_cancelled = updates.isCancelled;
+  if (updates.isDeadStock !== undefined)
+    body.is_dead_stock = updates.isDeadStock;
 
   return request<any>(`/batches/${id}`, {
     method: "PUT",
@@ -376,6 +385,8 @@ export const addHold = (h: Omit<Hold, "id" | "status">) => {
 };
 export const releaseHold = (id: string) =>
   request(`/holds/${id}`, { method: "DELETE" });
+export const cancelHold = (id: string) =>
+  request(`/holds/cancel/${id}`, { method: "DELETE" });
 
 // Sales
 export const getSales = async () =>
@@ -430,6 +441,8 @@ export const updateSale = (id: string, updates: Partial<Sale>) => {
     body.stock_category = updates.stockCategory;
   if (updates.batchNo !== undefined) body.batch_no = updates.batchNo;
   if (updates.status !== undefined) body.status = updates.status;
+  if (updates.estimatedDeliveryDate !== undefined)
+    body.estimated_delivery_date = updates.estimatedDeliveryDate;
   return request<any>(`/sales/${id}`, {
     method: "PUT",
     body: JSON.stringify(body),

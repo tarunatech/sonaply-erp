@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { getHolds, releaseHold, Hold, exportCSV, formatLocalDate } from "@/lib/store";
+import { getHolds, releaseHold, cancelHold, Hold, exportCSV, formatLocalDate } from "@/lib/store";
 import { printElement } from "@/lib/print";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -48,10 +48,23 @@ export default function HoldPage() {
   const handleRelease = async (id: string) => {
     try {
       await releaseHold(id);
+      window.dispatchEvent(new CustomEvent("erp-stock-updated"));
       toast({ title: "Hold released", description: "Order moved to Sales." });
       navigate("/sales");
     } catch (error) {
       toast({ title: "Failed to release hold", variant: "destructive" });
+    }
+  };
+
+  const handleCancelHold = async (id: string) => {
+    if (!window.confirm("Cancel this hold and restore quantity back to Available stock?")) return;
+    try {
+      await cancelHold(id);
+      window.dispatchEvent(new CustomEvent("erp-stock-updated"));
+      toast({ title: "Hold cancelled", description: "Stock restored to Available." });
+      fetchHolds();
+    } catch (error: any) {
+      toast({ title: "Failed to cancel hold", description: error?.message || "An error occurred", variant: "destructive" });
     }
   };
 
@@ -167,14 +180,24 @@ export default function HoldPage() {
                         </div>
                       </TableCell>
                       <TableCell className="border-2 border-slate-300 px-4 py-3 text-right no-print">
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          onClick={() => handleRelease(h.id)} 
-                          className="text-amber-600 border-amber-200 hover:bg-amber-50 hover:text-amber-700 h-8"
-                        >
-                          Release Hold
-                        </Button>
+                        <div className="flex items-center justify-end gap-2">
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            onClick={() => handleRelease(h.id)} 
+                            className="text-amber-600 border-amber-200 hover:bg-amber-50 hover:text-amber-700 h-8"
+                          >
+                            Release Hold to Challan
+                          </Button>
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            onClick={() => handleCancelHold(h.id)} 
+                            className="text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700 h-8"
+                          >
+                            Cancel Hold
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))

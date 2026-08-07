@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Download, Search, RefreshCw, Layers, Eye, Trash2 } from "lucide-react";
+import { Download, Search, RefreshCw, Layers, Eye, Trash2, Filter } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
@@ -20,21 +20,32 @@ interface LedgerTransaction {
   qty: number;
   description: string;
   source: 'purchase' | 'batch' | 'sale' | 'sales_return' | 'challan_cancel' | 'delivered_challan';
+  isNil?: boolean;
+  isCancelled?: boolean;
 }
 
 export default function DailyExport() {
   const { toast } = useToast();
 
-  // Daily Export State
+  // Daily Export State (single date for daily sales, purchases, stock exports)
   const [date, setDate] = useState(getLocalDateString());
 
-  // Date Range Ledger States
+  // Stock Ledger Date Range States (for user selection)
   const [fromDate, setFromDate] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() - 30);
     return getLocalDateString(d);
   });
   const [toDate, setToDate] = useState(() => getLocalDateString());
+
+  // Applied Date Range States for Stock Ledger
+  const [appliedFromDate, setAppliedFromDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    return getLocalDateString(d);
+  });
+  const [appliedToDate, setAppliedToDate] = useState(() => getLocalDateString());
+
   const [searchQuery, setSearchQuery] = useState("");
 
   // DB States
@@ -74,19 +85,107 @@ export default function DailyExport() {
     loadLedgerData();
   }, []);
 
+  const handleApplyLedgerFilter = () => {
+    setAppliedFromDate(fromDate);
+    setAppliedToDate(toDate);
+    toast({
+      title: "Stock Ledger Filtered",
+      description: `Showing ledger records from ${fromDate} to ${toDate}`,
+    });
+  };
+
   const doExport = async (type: string) => {
     const d = date;
     let data: any[] = [];
+    const batches = await getBatches();
+
     switch (type) {
-      case 'sales': data = (await getSales()).filter(s => s.orderDate === d); break;
-      case 'purchases': data = (await getPurchases()).filter(p => p.date === d); break;
-      case 'stock': data = (await getBatches()).filter(b => b.date === d); break;
+      case 'sales': {
+        const rawSales = (await getSales()).filter(s => s.orderDate === d);
+        data = rawSales.map(s => {
+          const matchingBatch = batches.find(b => b.productName === s.product || (s.batchNo && b.batchNumber === s.batchNo));
+          const description = s.description || s.remarks || matchingBatch?.description || "";
+          const isCancelled = s.status === 'Cancelled' || matchingBatch?.isCancelled || false;
+          const isNil = !isCancelled && (s.orderedQty === 0 || matchingBatch?.isNil || false);
+          const status = isCancelled ? 'Cancelled' : isNil ? 'Nil' : s.status;
+          return {
+            "Order No": s.orderNo,
+            "Customer": s.customer,
+            "Phone": s.clientPhone || "",
+            "Product": s.product,
+            "Category": s.category,
+            "Description": description,
+            "Ordered Qty": s.orderedQty,
+            "Delivered Qty": s.deliveredQty || 0,
+            "Pending Qty": s.pendingQty || 0,
+            "Rate": s.rate || 0,
+            "GST (%)": s.GST || 0,
+            "Total Price": s.totalPrice || 0,
+            "Stock Category": s.stockCategory || "Available",
+            "Is Nil": isNil ? "Yes" : "No",
+            "Is Cancelled": isCancelled ? "Yes" : "No",
+            "Status": status,
+            "Order Date": s.orderDate
+          };
+        });
+        break;
+      }
+      case 'purchases': {
+        const rawPurchases = (await getPurchases()).filter(p => p.date === d);
+        data = rawPurchases.map(p => {
+          const matchingBatch = batches.find(b => (b.productName === p.productName && b.batchNumber === p.batchNumber) || b.batchNumber === p.batchNumber);
+          const description = p.description || matchingBatch?.description || "";
+          const isCancelled = matchingBatch?.isCancelled || false;
+          const isNil = p.quantity === 0 || matchingBatch?.isNil || false;
+          const status = isCancelled ? 'Cancelled' : isNil ? 'Nil' : 'Active';
+          return {
+            "Date": p.date,
+            "Supplier Name": p.supplierName,
+            "Supplier Phone": p.supplierPhone || "",
+            "Product Name": p.productName,
+            "Category": p.category,
+            "Batch Number": p.batchNumber,
+            "Quantity": p.quantity,
+            "Rate": p.rate || 0,
+            "Total Amount": p.totalAmount || 0,
+            "Description": description,
+            "Is Nil": isNil ? "Yes" : "No",
+            "Is Cancelled": isCancelled ? "Yes" : "No",
+            "Status": status
+          };
+        });
+        break;
+      }
+      case 'stock': {
+        const rawBatches = batches.filter(b => b.date === d);
+        data = rawBatches.map(b => {
+          const isCancelled = b.isCancelled || false;
+          const isNil = b.isNil || b.availableQty === 0 || false;
+          const status = isCancelled ? 'Cancelled' : isNil ? 'Nil' : 'Active';
+          return {
+            "Date": b.date,
+            "Product Name": b.productName,
+            "Category": b.category,
+            "Batch Number": b.batchNumber,
+            "Supplier": b.supplier,
+            "Quantity": b.quantity,
+            "Available Qty": b.availableQty || 0,
+            "Display Qty": b.displayQty || 0,
+            "Damage Qty": b.damageQty || 0,
+            "Description": b.description || "",
+            "Is Nil": isNil ? "Yes" : "No",
+            "Is Cancelled": isCancelled ? "Yes" : "No",
+            "Status": status
+          };
+        });
+        break;
+      }
     }
-    if (!data.length) { alert('No data for this date'); return; }
+    if (!data.length) { alert(`No data available for date: ${d}`); return; }
     exportCSV(data, `daily-${type}-${d}.csv`);
   };
 
-  // Compile transactions and ledger dynamically
+  // Compile transactions and ledger dynamically based on appliedFromDate & appliedToDate
   const ledgerData = useMemo(() => {
     const productNames = new Set<string>();
     allBatches.forEach(b => { if (b.productName) productNames.add(b.productName); });
@@ -106,34 +205,51 @@ export default function DailyExport() {
     return Array.from(productNames).map(productName => {
       const category = getProductCategory(productName);
       const transactions: LedgerTransaction[] = [];
+      const productBatches = allBatches.filter(b => b.productName === productName);
+      const isProductDeadStock = productBatches.some(b => b.isDeadStock);
+      const isProductCancelled = !isProductDeadStock && productBatches.some(b => b.isCancelled);
+      const isProductNil = !isProductDeadStock && !isProductCancelled && productBatches.some(b => b.isNil);
 
       // A. Purchases (Stock Addition)
       allPurchases.forEach(p => {
-        if (p.productName === productName && p.date >= fromDate && p.date <= toDate) {
+        if (p.productName === productName && p.date >= appliedFromDate && p.date <= appliedToDate) {
+          const matchingBatch = allBatches.find(b => b.productName === p.productName && b.batchNumber === p.batchNumber);
+          const desc = p.description || matchingBatch?.description || "";
+          const isNil = p.quantity === 0 || matchingBatch?.isNil || false;
+          const isCancelled = matchingBatch?.isCancelled || false;
+          const statusStr = isCancelled ? " [Cancelled]" : isNil ? " [Nil]" : "";
           transactions.push({
             id: p.id,
             date: p.date,
             type: 'Addition',
             qty: p.quantity,
-            description: `Purchase (Supplier: ${p.supplierName}, Batch: ${p.batchNumber})`,
-            source: 'purchase'
+            description: `Purchase (Supplier: ${p.supplierName}, Batch: ${p.batchNumber}${statusStr}${desc ? `, Desc: ${desc}` : ''})`,
+            source: 'purchase',
+            isNil,
+            isCancelled
           });
         }
       });
 
       // B. Manual Batches / Initial Stock (Stock Addition)
       allBatches.forEach(b => {
-        if (b.productName === productName && b.date >= fromDate && b.date <= toDate) {
+        if (b.productName === productName && b.date >= appliedFromDate && b.date <= appliedToDate) {
           // Avoid double counting if this batch was created from a purchase
           const hasPurchase = allPurchases.some(p => p.productName === b.productName && p.batchNumber === b.batchNumber);
           if (!hasPurchase) {
+            const desc = b.description || "";
+            const isNil = b.isNil || b.availableQty === 0 || false;
+            const isCancelled = b.isCancelled || false;
+            const statusStr = isCancelled ? " [Cancelled]" : isNil ? " [Nil]" : "";
             transactions.push({
               id: b.id,
               date: b.date,
               type: 'Addition',
               qty: b.quantity,
-              description: `Initial Stock / Manual Entry (Batch: ${b.batchNumber}, Supplier: ${b.supplier})`,
-              source: 'batch'
+              description: `Initial Stock / Manual Entry (Batch: ${b.batchNumber}, Supplier: ${b.supplier}${statusStr}${desc ? `, Desc: ${desc}` : ''})`,
+              source: 'batch',
+              isNil,
+              isCancelled
             });
           }
         }
@@ -142,28 +258,37 @@ export default function DailyExport() {
       // C. Sales Recorded (Stock Subtraction) & Cancellations (Stock Addition)
       allSales.forEach(s => {
         if (s.product === productName) {
+          const matchingBatch = allBatches.find(b => b.productName === s.product || (s.batchNo && b.batchNumber === s.batchNo));
+          const desc = s.description || s.remarks || matchingBatch?.description || "";
+          const isCancelled = s.status === 'Cancelled' || matchingBatch?.isCancelled || false;
+          const isNil = !isCancelled && (s.orderedQty === 0 || matchingBatch?.isNil || false);
+          const orderStatus = isCancelled ? 'Cancelled' : isNil ? 'Nil' : s.status;
+
           // 1. Record the sale subtraction
-          if (s.orderDate >= fromDate && s.orderDate <= toDate) {
+          if (s.orderDate >= appliedFromDate && s.orderDate <= appliedToDate) {
             transactions.push({
               id: s.id,
               date: s.orderDate,
               type: 'Subtraction',
               qty: s.orderedQty,
-              description: `Sale Recorded (Order: ${s.orderNo}, Customer: ${s.customer}, Batch: ${s.batchNo || '0'})`,
-              source: 'sale'
+              description: `Sale Recorded (Order: ${s.orderNo}, Customer: ${s.customer}, Batch: ${s.batchNo || '0'}, Status: ${orderStatus}${desc ? `, Desc: ${desc}` : ''})`,
+              source: 'sale',
+              isNil,
+              isCancelled
             });
           }
           // 2. If cancelled, record the cancellation addition
           if (s.status === 'Cancelled') {
             const cancelDate = s.updatedAt ? s.updatedAt.slice(0, 10) : s.orderDate;
-            if (cancelDate >= fromDate && cancelDate <= toDate) {
+            if (cancelDate >= appliedFromDate && cancelDate <= appliedToDate) {
               transactions.push({
                 id: `${s.id}-cancel`,
                 date: cancelDate,
                 type: 'Addition',
                 qty: s.orderedQty,
-                description: `Sale Cancelled / Restored (Order: ${s.orderNo}, Customer: ${s.customer})`,
-                source: 'challan_cancel'
+                description: `Sale Cancelled / Restored (Order: ${s.orderNo}, Customer: ${s.customer}, Status: Cancelled${desc ? `, Desc: ${desc}` : ''})`,
+                source: 'challan_cancel',
+                isCancelled: true
               });
             }
           }
@@ -172,7 +297,7 @@ export default function DailyExport() {
 
       // D. Sales Returns (Stock Addition)
       allSalesReturns.forEach(r => {
-        if (r.productName === productName && r.receiveDate >= fromDate && r.receiveDate <= toDate) {
+        if (r.productName === productName && r.receiveDate >= appliedFromDate && r.receiveDate <= appliedToDate) {
           transactions.push({
             id: r.id,
             date: r.receiveDate,
@@ -216,6 +341,9 @@ export default function DailyExport() {
       return {
         productName,
         category,
+        isDeadStock: isProductDeadStock,
+        isNil: isProductNil,
+        isCancelled: isProductCancelled,
         currentAvailable,
         totalAdditions,
         totalSubtractions,
@@ -225,7 +353,7 @@ export default function DailyExport() {
         transactions
       };
     }).sort((a, b) => a.productName.localeCompare(b.productName));
-  }, [allBatches, allSales, allPurchases, allSalesReturns, allChallans, fromDate, toDate]);
+  }, [allBatches, allSales, allPurchases, allSalesReturns, allChallans, appliedFromDate, appliedToDate]);
 
   // Filtered ledger data for live search preview
   const filteredLedger = useMemo(() => {
@@ -244,13 +372,16 @@ export default function DailyExport() {
   }, [ledgerData, activeLedgerProduct]);
 
   const handleExportLedger = () => {
-    if (!ledgerData.length) {
+    if (!filteredLedger.length) {
       alert("No data available to export.");
       return;
     }
-    const formatted = ledgerData.map(item => ({
+    const formatted = filteredLedger.map(item => ({
       "Product Name": item.productName,
       "Category": item.category,
+      "Is Nil": item.isNil ? "Yes" : "No",
+      "Is Cancelled": item.isCancelled ? "Yes" : "No",
+      "Status": item.isCancelled ? "Cancelled" : item.isNil ? "Nil" : "Active",
       "Current Available Stock": item.currentAvailable,
       "Total Additions (+)": item.totalAdditions,
       "Total Subtractions (-)": item.totalSubtractions,
@@ -258,7 +389,7 @@ export default function DailyExport() {
       "Transaction Sequence": item.sequence,
       "Detailed History": item.details
     }));
-    exportCSV(formatted as any[], `stock-ledger-totals-${fromDate}-to-${toDate}.csv`);
+    exportCSV(formatted as any[], `stock-ledger-totals-${appliedFromDate}-to-${appliedToDate}.csv`);
   };
 
   // Revert and delete a single transaction from the ledger
@@ -309,13 +440,15 @@ export default function DailyExport() {
             <Label>Select Date</Label>
             <Input type="date" value={date} onChange={e => setDate(e.target.value)} />
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             {exports.map(e => (
               <Card key={e.key} className="bg-accent/10 border-accent/20">
                 <CardHeader className="pb-2"><CardTitle className="text-base">{e.title}</CardTitle></CardHeader>
                 <CardContent>
                   <p className="text-xs text-muted-foreground mb-3">{e.desc}</p>
-                  <Button variant="outline" size="sm" onClick={() => doExport(e.key)}><Download className="mr-2 h-4 w-4" />Export CSV</Button>
+                  <Button variant="outline" size="sm" onClick={() => doExport(e.key)} className="w-full">
+                    <Download className="mr-2 h-4 w-4" /> Export CSV
+                  </Button>
                 </CardContent>
               </Card>
             ))}
@@ -325,7 +458,7 @@ export default function DailyExport() {
 
       <div className="border-t my-6" />
 
-      {/* Date Range Ledger & Totals Section */}
+      {/* Date Range Stock Ledger & Totals Section */}
       <Card className="border-2 border-primary/20 shadow-md">
         <CardHeader>
           <div className="flex items-center gap-2 text-primary">
@@ -333,21 +466,27 @@ export default function DailyExport() {
             <CardTitle>Date Range Stock Ledger & Totals</CardTitle>
           </div>
           <CardDescription>
-            Compute chronological additions (+), subtractions (-), net changes, and current available stocks for all products within a custom date range.
+            Compute chronological additions (+), subtractions (-), net changes, and current available stocks for all products within a custom date range. Enter Start Date & End Date, then click <strong>Filter</strong>.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          {/* Filters */}
+          {/* Filters Bar */}
           <div className="flex flex-wrap items-end gap-4 p-4 bg-muted/30 rounded-lg border">
-            <div className="space-y-1.5 flex-1 min-w-[150px]">
-              <Label>From Date</Label>
+            <div className="space-y-1.5 flex-1 min-w-[140px]">
+              <Label className="font-semibold text-slate-800">From Date</Label>
               <Input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} />
             </div>
-            <div className="space-y-1.5 flex-1 min-w-[150px]">
-              <Label>To Date</Label>
+            <div className="space-y-1.5 flex-1 min-w-[140px]">
+              <Label className="font-semibold text-slate-800">To Date</Label>
               <Input type="date" value={toDate} onChange={e => setToDate(e.target.value)} />
             </div>
-            <div className="space-y-1.5 flex-1 min-w-[200px] relative">
+            <Button 
+              onClick={handleApplyLedgerFilter} 
+              className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white font-bold px-5 shadow-sm gap-2"
+            >
+              <Filter className="h-4 w-4" /> Filter
+            </Button>
+            <div className="space-y-1.5 flex-1 min-w-[180px] relative">
               <Label>Search Product</Label>
               <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -362,6 +501,17 @@ export default function DailyExport() {
             <Button onClick={handleExportLedger} className="w-full sm:w-auto bg-primary hover:bg-primary/95 text-primary-foreground font-semibold shadow-sm">
               <Download className="mr-2 h-4 w-4" /> Export Ledger Totals
             </Button>
+          </div>
+
+          <div className="flex items-center justify-between text-xs text-muted-foreground px-1">
+            <span>
+              Showing Stock Ledger from: <strong className="text-slate-900 font-mono">{appliedFromDate}</strong> to <strong className="text-slate-900 font-mono">{appliedToDate}</strong>
+            </span>
+            {(appliedFromDate !== fromDate || appliedToDate !== toDate) && (
+              <span className="text-amber-700 font-semibold animate-pulse">
+                ⚠️ Click "Filter" to apply selected dates
+              </span>
+            )}
           </div>
 
           {/* Interactive Preview Table */}
@@ -395,20 +545,40 @@ export default function DailyExport() {
                     </TableRow>
                   ) : (
                     filteredLedger.map((item) => (
-                      <TableRow key={item.productName} className="hover:bg-muted/20">
-                        <TableCell className="font-semibold">{item.productName}</TableCell>
-                        <TableCell className="text-muted-foreground text-xs">{item.category}</TableCell>
+                      <TableRow 
+                        key={item.productName} 
+                        className={`transition-colors ${
+                          item.isDeadStock
+                            ? "bg-slate-200/90 text-slate-900 hover:bg-slate-300/90 border-slate-300"
+                            : item.isCancelled 
+                            ? "bg-red-100/90 text-red-950 hover:bg-red-200/90 border-red-300" 
+                            : item.isNil 
+                            ? "bg-blue-100/90 text-blue-950 hover:bg-blue-200/90 border-blue-300" 
+                            : "hover:bg-slate-50/50"
+                        }`}
+                      >
+                        <TableCell className={`font-semibold ${item.isCancelled ? "text-red-950" : item.isNil ? "text-blue-950" : "text-slate-800"}`}>
+                          <div className="flex items-center gap-2">
+                            <span>{item.productName}</span>
+                            {item.isCancelled && !item.isDeadStock && (
+                              <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-red-200 text-red-950 border border-red-400 shadow-2xs">
+                                Cancelled
+                              </span>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">{item.category}</TableCell>
                         <TableCell className="text-center">
-                          <span className="font-mono text-xs bg-muted px-2 py-1 rounded border inline-block max-w-[150px] truncate" title={item.sequence}>
+                          <span className="font-mono text-xs px-2 py-1 rounded border inline-block max-w-[150px] truncate bg-slate-100 border-slate-200 text-slate-700" title={item.sequence}>
                             {item.sequence}
                           </span>
                         </TableCell>
-                        <TableCell className="text-right text-green-600 font-medium font-mono">+{item.totalAdditions}</TableCell>
-                        <TableCell className="text-right text-red-600 font-medium font-mono">-{item.totalSubtractions}</TableCell>
-                        <TableCell className={`text-right font-bold font-mono ${item.netChange > 0 ? 'text-green-600' : item.netChange < 0 ? 'text-red-600' : 'text-muted-foreground'}`}>
+                        <TableCell className="text-right font-medium font-mono text-green-600">+{item.totalAdditions}</TableCell>
+                        <TableCell className="text-right font-medium font-mono text-red-600">-{item.totalSubtractions}</TableCell>
+                        <TableCell className={`text-right font-bold font-mono ${item.netChange > 0 ? 'text-green-600' : item.netChange < 0 ? 'text-red-600' : 'text-slate-600'}`}>
                           {item.netChange > 0 ? `+${item.netChange}` : item.netChange}
                         </TableCell>
-                        <TableCell className="text-right font-black text-blue-700 font-mono text-sm bg-blue-50/30">
+                        <TableCell className="text-right font-black font-mono text-sm bg-blue-50/50 text-blue-700">
                           {item.currentAvailable}
                         </TableCell>
                         <TableCell className="text-right">
@@ -472,34 +642,61 @@ export default function DailyExport() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    selectedProductLedger.transactions.map((t) => (
-                      <TableRow key={t.id} className="hover:bg-muted/10">
-                        <TableCell className="text-xs font-medium font-mono">{t.date}</TableCell>
-                        <TableCell className="text-center font-mono font-bold">
-                          <span className={`px-2 py-0.5 rounded text-xs ${t.type === 'Addition' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                            {t.type === 'Addition' ? `+${t.qty}` : `-${t.qty}`}
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-xs text-muted-foreground leading-snug">
-                          {t.description}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {t.source === 'purchase' || t.source === 'batch' ? (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 text-destructive hover:text-red-700 hover:bg-red-50"
-                              onClick={() => handleDeleteTransaction(t)}
-                              title="Delete Transaction & Revert Stock"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          ) : (
-                            <span className="text-[11px] text-muted-foreground italic px-2">System-locked</span>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))
+                    selectedProductLedger.transactions.map((t) => {
+                      const isCanc = t.isCancelled || t.description.includes("[Cancelled]") || t.description.includes("Status: Cancelled");
+                      const isNilItem = t.isNil || t.description.includes("[Nil]") || t.description.includes("Status: Nil");
+                      return (
+                        <TableRow 
+                          key={t.id} 
+                          className={`transition-colors ${
+                            isCanc 
+                              ? "bg-red-50/80 hover:bg-red-100/80" 
+                              : isNilItem 
+                              ? "bg-blue-50/80 hover:bg-blue-100/80" 
+                              : "hover:bg-muted/10"
+                          }`}
+                        >
+                          <TableCell className="text-xs font-medium font-mono">{t.date}</TableCell>
+                          <TableCell className="text-center font-mono font-bold">
+                            <span className={`px-2 py-0.5 rounded text-xs ${t.type === 'Addition' ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-red-100 text-red-700 border border-red-200'}`}>
+                              {t.type === 'Addition' ? `+${t.qty}` : `-${t.qty}`}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-xs leading-snug">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {isCanc && (
+                                <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-red-100 text-red-800 border border-red-200">
+                                  Cancelled
+                                </span>
+                              )}
+                              {isNilItem && !isCanc && (
+                                <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-blue-100 text-blue-800 border border-blue-200">
+                                  Nil
+                                </span>
+                              )}
+                              <span className={isCanc ? "text-red-950 font-medium" : isNilItem ? "text-blue-950 font-medium" : "text-slate-700"}>
+                                {t.description}
+                              </span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {t.source === 'purchase' || t.source === 'batch' ? (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-destructive hover:text-red-700 hover:bg-red-50"
+                                onClick={() => handleDeleteTransaction(t)}
+                                title="Delete Transaction & Revert Stock"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            ) : (
+                              <span className="text-[11px] text-muted-foreground italic px-2">System-locked</span>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
                   )}
                 </TableBody>
               </Table>

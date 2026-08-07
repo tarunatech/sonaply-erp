@@ -660,7 +660,14 @@ export default function SalesPage() {
                                           }, 50);
                                         }}
                                       >
-                                        <div className="font-semibold text-primary">{b.productName}</div>
+                                        <div className="flex items-center justify-between gap-1">
+                                          <div className="font-semibold text-primary">{b.productName}</div>
+                                          {b.category && (
+                                            <span className="text-[10px] font-bold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200 shrink-0">
+                                              {b.category}
+                                            </span>
+                                          )}
+                                        </div>
                                         <div className="text-xs text-muted-foreground mt-0.5 font-medium">
                                           Batch: {b.batchNumber} | <span className="text-blue-600 font-bold bg-blue-50 px-1 rounded">{label}</span>
                                         </div>
@@ -687,19 +694,31 @@ export default function SalesPage() {
                           </div>
                         )}
                         {item.isProductSelected && item.productName && (
-                          <div className="text-[10px] text-muted-foreground mt-1 ml-1 flex justify-end items-center bg-blue-50/50 p-1 rounded-sm border border-blue-100/50">
+                          <div className="text-[10px] text-muted-foreground mt-1 ml-1 flex flex-col gap-1 bg-blue-50/50 p-1.5 rounded-sm border border-blue-100/50">
                             {(() => {
-                              if (item.batchNo) {
-                                const batch = productBatches.find(b => b.batchNumber === item.batchNo);
-                                return batch ? (
-                                  <div className="flex flex-col items-end text-right w-full font-semibold">
-                                    <span className="text-blue-700">
-                                      Avail: {batch.availableQty} | Disp: {batch.displayQty || 0} | Dmg: {batch.damageQty}
-                                    </span>
+                              const batch = item.batchNo ? productBatches.find(b => b.batchNumber === item.batchNo) : productBatches[0];
+                              const productCat = batch?.category || allBatches.find(b => b.productName === item.productName)?.category;
+                              return (
+                                <>
+                                  <div className="flex items-center justify-between w-full font-semibold gap-2">
+                                    {productCat ? (
+                                      <span className="text-purple-700 font-bold bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200 shrink-0">
+                                        Cat: {productCat}
+                                      </span>
+                                    ) : <span />}
+                                    {batch ? (
+                                      <span className="text-blue-700 text-right">
+                                        Avail: {batch.availableQty} | Disp: {batch.displayQty || 0} | Dmg: {batch.damageQty}
+                                      </span>
+                                    ) : null}
                                   </div>
-                                ) : null;
-                              }
-                              return null;
+                                  {batch?.description && (
+                                    <div className="text-[11px] text-slate-700 font-medium italic bg-white px-2 py-0.5 rounded border border-slate-200 text-left">
+                                      Desc: {batch.description}
+                                    </div>
+                                  )}
+                                </>
+                              );
                             })()}
                           </div>
                         )}

@@ -365,25 +365,6 @@ export default function PurchasePage() {
             <div className="space-y-4 pb-48">
               <div className="flex justify-between items-center">
                 <h3 className="font-semibold">Products</h3>
-                <Button 
-                  ref={addProductBtnRef} 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={addItem}
-                  onKeyDown={e => {
-                    if (e.key === 'Tab' && !e.shiftKey) {
-                      e.preventDefault();
-                      const isFirstRowEmpty = !items[0]?.productName;
-                      if (isFirstRowEmpty) {
-                        productInputsRef.current[0]?.focus();
-                      } else {
-                        recordPurchaseBtnRef.current?.focus();
-                      }
-                    }
-                  }}
-                >
-                  <Plus className="mr-1 h-4 w-4" /> Add Product
-                </Button>
               </div>
               
               <div className="space-y-2">
@@ -617,8 +598,30 @@ export default function PurchasePage() {
                         </div>
                       )}
                     </div>
-                    <div className="col-span-1 flex justify-end">
-                      <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => removeItem(index)} disabled={items.length === 1}>
+                    <div className="col-span-1 flex justify-end gap-1 items-center">
+                      {index === items.length - 1 && (
+                        <Button 
+                          ref={addProductBtnRef}
+                          variant="outline" 
+                          size="sm" 
+                          onClick={addItem} 
+                          className="h-9 px-2 shrink-0"
+                          onKeyDown={e => {
+                            if (e.key === 'Tab' && !e.shiftKey) {
+                              e.preventDefault();
+                              const isFirstRowEmpty = !items[0]?.productName;
+                              if (isFirstRowEmpty) {
+                                productInputsRef.current[0]?.focus();
+                              } else {
+                                recordPurchaseBtnRef.current?.focus();
+                              }
+                            }
+                          }}
+                        >
+                          <Plus className="h-3 w-3" />
+                        </Button>
+                      )}
+                      <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10 shrink-0 h-9 w-9" onClick={() => removeItem(index)} disabled={items.length === 1}>
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>

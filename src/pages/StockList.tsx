@@ -155,31 +155,45 @@ export default function StockList() {
 
   const handleEditSave = async () => {
     if (editingBatch) {
-      const finalBatch = {
-        ...editingBatch,
-        batchNumber: editingBatch.batchNumber?.trim() || "0",
-      };
-      const originalBatch = batches.find((b) => b.id === finalBatch.id);
-      if (originalBatch) {
-        const oldAvailable = Number(originalBatch.availableQty || 0);
-        const oldDisplay = Number(originalBatch.displayQty || 0);
-        const oldDamage = Number(originalBatch.damageQty || 0);
+      try {
+        const finalBatch = {
+          ...editingBatch,
+          batchNumber: editingBatch.batchNumber?.trim() || "0",
+        };
+        const originalBatch = batches.find((b) => b.id === finalBatch.id);
+        if (originalBatch) {
+          const oldAvailable = Number(originalBatch.availableQty || 0);
+          const oldDisplay = Number(originalBatch.displayQty || 0);
+          const oldDamage = Number(originalBatch.damageQty || 0);
 
-        const newAvailable = Number(finalBatch.availableQty || 0);
-        const newDisplay = Number(finalBatch.displayQty || 0);
-        const newDamage = Number(finalBatch.damageQty || 0);
+          const newAvailable = Number(finalBatch.availableQty || 0);
+          const newDisplay = Number(finalBatch.displayQty || 0);
+          const newDamage = Number(finalBatch.damageQty || 0);
 
-        const diff =
-          newAvailable +
-          newDisplay +
-          newDamage -
-          (oldAvailable + oldDisplay + oldDamage);
+          const diff =
+            newAvailable +
+            newDisplay +
+            newDamage -
+            (oldAvailable + oldDisplay + oldDamage);
 
-        finalBatch.quantity = (originalBatch.quantity || 0) + diff;
+          finalBatch.quantity = (originalBatch.quantity || 0) + diff;
+        }
+        await updateBatch(finalBatch.id, finalBatch);
+        await refreshData();
+        window.dispatchEvent(new Event("erp-stock-updated"));
+        toast({
+          title: "Batch updated",
+          description: "Stock batch details saved successfully.",
+        });
+        setEditingBatch(null);
+      } catch (err: any) {
+        console.error("Failed to update batch:", err);
+        toast({
+          title: "Update failed",
+          description: err.message || "Could not save changes.",
+          variant: "destructive",
+        });
       }
-      await updateBatch(finalBatch.id, finalBatch);
-      refreshData();
-      setEditingBatch(null);
     }
   };
 
@@ -665,8 +679,8 @@ export default function StockList() {
               });
 
               for (const [brand, prefixes] of Object.entries(brands)) {
-                csvContent += `Brand: ${brand},,,,,,\n`;
-                csvContent += `Product Name,Product Number,Date,Quantity,Available,Display,Damaged\n`;
+                csvContent += `Brand: ${brand},,,,,,,,\n`;
+                csvContent += `Product Name,Product Number,Date,Quantity,Available,Hold,Display,Damaged,Description\n`;
 
                 const sortedPrefixes = Object.keys(prefixes).sort();
                 for (const prefix of sortedPrefixes) {
@@ -680,11 +694,12 @@ export default function StockList() {
                       return a.parsedSuffix.localeCompare(b.parsedSuffix);
                     })
                     .forEach((item) => {
+                      const cleanDesc = (item.description || "").replace(/"/g, '""');
                       // Data row
-                      csvContent += `${prefix},${item.parsedSuffix},${item.date || ""},${item.quantity || 0},${item.availableQty || 0},${item.displayQty || 0},${item.damageQty || 0}\n`;
+                      csvContent += `"${prefix}","${item.parsedSuffix}","${item.date || ""}","${item.quantity || 0}","${item.availableQty || 0}","${item.holdQty || 0}","${item.displayQty || 0}","${item.damageQty || 0}","${cleanDesc}"\n`;
                     });
                   // Empty row between groups
-                  csvContent += `,,,,,,,\n`;
+                  csvContent += `,,,,,,,,,\n`;
                 }
                 csvContent += `\n`;
               }
@@ -807,27 +822,28 @@ export default function StockList() {
       </div>
       <Card>
         <CardContent className="p-0" id="stock-table">
-          <Table wrapperClassName="max-h-[calc(100vh-250px)]">
-            <TableHeader className="sticky top-0 bg-background z-10 shadow-sm">
+          <Table className="border-collapse border-2 border-slate-300" wrapperClassName="max-h-[calc(100vh-250px)]">
+            <TableHeader className="sticky top-0 bg-slate-100 z-10 shadow-2xs border-b-2 border-slate-300">
               <TableRow>
-                <TableHead>Product</TableHead>
-                <TableHead>Category</TableHead>
-                <TableHead>Batch</TableHead>
-                <TableHead className="text-right">Sold</TableHead>
-                <TableHead className="text-right">Available</TableHead>
-                <TableHead className="text-right">Display</TableHead>
-                <TableHead className="text-right">Damaged</TableHead>
-                <TableHead>Description</TableHead>
-                <TableHead>Updated</TableHead>
-                <TableHead className="text-right no-print">Actions</TableHead>
+                <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-slate-800">Product</TableHead>
+                <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-slate-800">Category</TableHead>
+                <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-slate-800">Batch</TableHead>
+                <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-slate-800 text-right">Sold</TableHead>
+                <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-slate-800 text-right">Available</TableHead>
+                <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-amber-700 text-right">Hold</TableHead>
+                <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-slate-800 text-right">Display</TableHead>
+                <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-slate-800 text-right">Damaged</TableHead>
+                <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-slate-800">Description</TableHead>
+                <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-slate-800">Updated</TableHead>
+                <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-slate-800 text-right no-print">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {batches.length === 0 ? (
                 <TableRow>
                   <TableCell
-                    colSpan={10}
-                    className="text-center text-muted-foreground py-8"
+                    colSpan={11}
+                    className="border-2 border-slate-300 text-center text-muted-foreground py-8"
                   >
                     No stock entries found
                   </TableCell>
@@ -836,50 +852,71 @@ export default function StockList() {
                 batches.map((b) => (
                   <TableRow
                     key={b.id}
-                    className={`${b.isCancelled ? "bg-red-200 hover:bg-red-100" : ""} ${b.isNil ? "bg-blue-200 hover:bg-blue-300" : ""}`}
+                    className={`transition-colors ${
+                      b.isDeadStock
+                        ? "bg-slate-200/90 text-slate-900 hover:bg-slate-300/90 border-slate-300"
+                        : b.isCancelled
+                        ? "bg-red-100/90 text-red-950 hover:bg-red-200/90 border-red-300"
+                        : b.isNil
+                        ? "bg-blue-100/90 text-blue-950 hover:bg-blue-200/90 border-blue-300"
+                        : "hover:bg-slate-50/50"
+                    }`}
                   >
-                    <TableCell className="font-medium">
-                      {b.productName}
+                    <TableCell className={`border-2 border-slate-300 px-4 py-3 align-middle font-bold ${b.isCancelled ? "text-red-950" : b.isNil ? "text-blue-950" : "text-slate-800"}`}>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span>{b.productName}</span>
+                        {b.isCancelled && !b.isDeadStock && (
+                          <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-red-200 text-red-950 border border-red-400 shadow-2xs">
+                            Cancelled
+                          </span>
+                        )}
+                      </div>
                     </TableCell>
-                    <TableCell>{b.category}</TableCell>
-                    <TableCell>{b.batchNumber}</TableCell>
-                    <TableCell className="text-right text-blue-600 font-medium">
+                    <TableCell className="border-2 border-slate-300 px-4 py-3 align-middle font-medium text-slate-700">{b.category}</TableCell>
+                    <TableCell className="border-2 border-slate-300 px-4 py-3 align-middle font-medium text-slate-700">{b.batchNumber}</TableCell>
+                    <TableCell className="border-2 border-slate-300 px-4 py-3 align-middle text-right font-bold text-blue-700">
                       {b.quantity -
                         b.availableQty -
                         (b.displayQty || 0) -
-                        (b.damageQty || 0) || 0}
+                        (b.damageQty || 0) -
+                        (b.holdQty || 0) || 0}
                     </TableCell>
-                    <TableCell className="text-right font-semibold">
+                    <TableCell className="border-2 border-slate-300 px-4 py-3 align-middle text-right font-bold text-emerald-700">
                       {b.availableQty}
                     </TableCell>
-                    <TableCell className="text-right text-muted-foreground">
+                    <TableCell className="border-2 border-slate-300 px-4 py-3 align-middle text-right font-bold text-amber-600">
+                      {b.holdQty || 0}
+                    </TableCell>
+                    <TableCell className="border-2 border-slate-300 px-4 py-3 align-middle text-right font-medium text-slate-600">
                       {b.displayQty || 0}
                     </TableCell>
-                    <TableCell className="text-right text-stock-damaged">
+                    <TableCell className="border-2 border-slate-300 px-4 py-3 align-middle text-right font-medium text-red-600">
                       {b.damageQty}
                     </TableCell>
                     <TableCell
-                      className="max-w-[150px] truncate text-muted-foreground italic"
+                      className="border-2 border-slate-300 px-4 py-3 align-middle max-w-[200px] truncate font-medium text-sm text-slate-700"
                       title={b.description}
                     >
                       {b.description || "-"}
                     </TableCell>
-
-                    <TableCell>{formatUpdatedDate(b.date)}</TableCell>
-                    <TableCell className="text-right no-print">
-                      <div className="flex justify-end gap-2">
+                    <TableCell className="border-2 border-slate-300 px-4 py-3 align-middle text-xs font-medium text-slate-600">{formatUpdatedDate(b.date)}</TableCell>
+                    <TableCell className="border-2 border-slate-300 px-4 py-3 align-middle text-right no-print">
+                      <div className="flex justify-end gap-1.5">
                         <Button
                           variant="ghost"
                           size="icon"
+                          className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-100/80"
                           onClick={() => setEditingBatch(b)}
+                          title="Edit Batch"
                         >
                           <Pencil className="h-4 w-4" />
                         </Button>
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                          className="h-8 w-8 text-destructive hover:text-red-700 hover:bg-red-100/80"
                           onClick={() => handleDelete(b.id)}
+                          title="Delete Batch"
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -897,7 +934,7 @@ export default function StockList() {
         open={!!editingBatch}
         onOpenChange={(o) => !o && setEditingBatch(null)}
       >
-        <DialogContent>
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Edit Stock Batch</DialogTitle>
           </DialogHeader>
@@ -1046,9 +1083,17 @@ export default function StockList() {
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label className="text-right">Status</Label>
-                <div className="col-span-3 flex flex-wrap gap-3">
+                <div className="col-span-3 grid grid-cols-3 gap-1.5">
                   <div
-                    className={`flex items-center gap-2 rounded-md border px-3 py-2 transition-all duration-150 ${editingBatch.isNil ? "border-blue-600 bg-blue-100 shadow-md ring-1 ring-blue-300" : "border-muted-foreground/20 bg-background hover:border-blue-300"}`}
+                    onClick={() =>
+                      setEditingBatch({
+                        ...editingBatch,
+                        isNil: !editingBatch.isNil,
+                        isCancelled: false,
+                        isDeadStock: false,
+                      })
+                    }
+                    className={`flex items-center gap-1.5 rounded-md border px-2 py-1.5 transition-all duration-150 justify-center cursor-pointer select-none ${editingBatch.isNil ? "border-blue-600 bg-blue-100 shadow-md ring-1 ring-blue-300" : "border-muted-foreground/20 bg-background hover:border-blue-300"}`}
                   >
                     <Checkbox
                       id="isNil"
@@ -1060,19 +1105,28 @@ export default function StockList() {
                           isCancelled: c
                             ? false
                             : editingBatch.isCancelled || false,
+                          isDeadStock: c ? false : editingBatch.isDeadStock || false,
                         })
                       }
-                      className="data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600 data-[state=checked]:text-white"
+                      className="data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600 data-[state=checked]:text-white h-4 w-4 pointer-events-none"
                     />
                     <Label
                       htmlFor="isNil"
-                      className={`font-semibold cursor-pointer ${editingBatch.isNil ? "text-blue-800" : "text-blue-600"}`}
+                      className={`text-xs font-semibold cursor-pointer pointer-events-none ${editingBatch.isNil ? "text-blue-900 font-bold" : "text-blue-600"}`}
                     >
                       Nil
                     </Label>
                   </div>
                   <div
-                    className={`flex items-center gap-2 rounded-md border px-3 py-2 transition-all duration-150 ${editingBatch.isCancelled ? "border-red-600 bg-red-200 shadow-md ring-1 ring-red-300" : "border-muted-foreground/20 bg-background hover:border-red-300"}`}
+                    onClick={() =>
+                      setEditingBatch({
+                        ...editingBatch,
+                        isCancelled: !editingBatch.isCancelled,
+                        isNil: false,
+                        isDeadStock: false,
+                      })
+                    }
+                    className={`flex items-center gap-1.5 rounded-md border px-2 py-1.5 transition-all duration-150 justify-center cursor-pointer select-none ${editingBatch.isCancelled ? "border-red-600 bg-red-200 shadow-md ring-1 ring-red-300" : "border-muted-foreground/20 bg-background hover:border-red-300"}`}
                   >
                     <Checkbox
                       id="isCancelled"
@@ -1082,15 +1136,47 @@ export default function StockList() {
                           ...editingBatch,
                           isCancelled: c as boolean,
                           isNil: c ? false : editingBatch.isNil || false,
+                          isDeadStock: c ? false : editingBatch.isDeadStock || false,
                         })
                       }
-                      className="data-[state=checked]:bg-red-600 data-[state=checked]:border-red-600 data-[state=checked]:text-white"
+                      className="data-[state=checked]:bg-red-600 data-[state=checked]:border-red-600 data-[state=checked]:text-white h-4 w-4 pointer-events-none"
                     />
                     <Label
                       htmlFor="isCancelled"
-                      className={`font-semibold cursor-pointer ${editingBatch.isCancelled ? "text-red-800" : "text-destructive"}`}
+                      className={`text-xs font-semibold cursor-pointer pointer-events-none ${editingBatch.isCancelled ? "text-red-900 font-bold" : "text-destructive"}`}
                     >
                       Cancelled
+                    </Label>
+                  </div>
+                  <div
+                    onClick={() =>
+                      setEditingBatch({
+                        ...editingBatch,
+                        isDeadStock: !editingBatch.isDeadStock,
+                        isNil: false,
+                        isCancelled: false,
+                      })
+                    }
+                    className={`flex items-center gap-1.5 rounded-md border px-2 py-1.5 transition-all duration-150 justify-center cursor-pointer select-none ${editingBatch.isDeadStock ? "border-slate-900 bg-slate-900 text-white shadow-md ring-1 ring-slate-700" : "border-muted-foreground/20 bg-background hover:border-slate-800"}`}
+                  >
+                    <Checkbox
+                      id="isDeadStock"
+                      checked={editingBatch.isDeadStock || false}
+                      onCheckedChange={(c) =>
+                        setEditingBatch({
+                          ...editingBatch,
+                          isDeadStock: c as boolean,
+                          isNil: c ? false : editingBatch.isNil || false,
+                          isCancelled: c ? false : editingBatch.isCancelled || false,
+                        })
+                      }
+                      className="data-[state=checked]:bg-white data-[state=checked]:border-white data-[state=checked]:text-slate-900 h-4 w-4 pointer-events-none"
+                    />
+                    <Label
+                      htmlFor="isDeadStock"
+                      className={`text-xs font-semibold cursor-pointer pointer-events-none ${editingBatch.isDeadStock ? "text-white font-bold" : "text-slate-800"}`}
+                    >
+                      DeadStock
                     </Label>
                   </div>
                 </div>

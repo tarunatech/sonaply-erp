@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS batches (
   hold_qty INTEGER DEFAULT 0,
   is_nil BOOLEAN DEFAULT FALSE,
   is_cancelled BOOLEAN DEFAULT FALSE,
+  is_dead_stock BOOLEAN DEFAULT FALSE,
   description TEXT
 );
 
@@ -67,8 +68,10 @@ CREATE TABLE IF NOT EXISTS sales (
   batch_no TEXT,
   stock_category TEXT DEFAULT 'Available',
   remarks TEXT,
-  status TEXT DEFAULT 'Pending' CHECK (status IN ('Pending', 'Partial', 'Delivered', 'Cancelled')),
+  status TEXT DEFAULT 'Pending' CHECK (status IN ('Pending', 'Confirmed', 'Partial', 'Delivered', 'Cancelled')),
   damage_qty INTEGER DEFAULT 0,
+  delivered_at TIMESTAMP,
+  estimated_delivery_date DATE,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -103,6 +106,7 @@ CREATE TABLE IF NOT EXISTS challans (
   cancelled_at TIMESTAMP,
   is_built BOOLEAN DEFAULT FALSE,
   restored_qty INTEGER,
+  is_challan_generated BOOLEAN DEFAULT FALSE,
   status TEXT DEFAULT 'Delivered'
 );
  

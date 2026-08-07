@@ -113,7 +113,6 @@ export default function DeliveredDeliveries() {
                   <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Date</TableHead>
                   <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Challan #</TableHead>
                   <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Client</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Order #</TableHead>
                   <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 w-2/5">Items / Quantities</TableHead>
                   <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Status</TableHead>
                 </TableRow>
@@ -121,12 +120,11 @@ export default function DeliveredDeliveries() {
               <TableBody>
                 {groupedChallans.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="border-2 border-slate-300 text-center text-muted-foreground py-8">
+                    <TableCell colSpan={5} className="border-2 border-slate-300 text-center text-muted-foreground py-8">
                       No delivered orders found.
                     </TableCell>
                   </TableRow>
                 ) : groupedChallans.map(group => {
-                  const parentSale = sales.find(s => s.id === group.salesId);
                   return (
                     <TableRow key={group.challanNo} className="hover:bg-slate-50/40">
                       <TableCell className="border-2 border-slate-300 px-4 py-3 text-sm text-slate-700 font-medium whitespace-nowrap">{formatLocalDate(group.createdAt)}</TableCell>
@@ -135,8 +133,7 @@ export default function DeliveredDeliveries() {
                         {renderCustomer(group.customer)}
                         <div className="text-[10px] text-muted-foreground mt-1">{group.clientPhone}</div>
                       </TableCell>
-                      <TableCell className="border-2 border-slate-300 px-4 py-3 font-mono text-xs text-slate-700">{parentSale?.orderNo || "—"}</TableCell>
-                                           <TableCell className="border-2 border-slate-300 px-4 py-3">
+                      <TableCell className="border-2 border-slate-300 px-4 py-3">
                         <div className="text-sm space-y-2">
                           {group.items.map((item: any, idx: number) => {
                             return (

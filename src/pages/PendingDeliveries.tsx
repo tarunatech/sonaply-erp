@@ -1,6 +1,8 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
-import { getSales, getChallans, exportCSV, addChallan, getBatches, confirmChallanGroup, deleteChallanGroup, Sale, StockBatch, Challan, formatLocalDate } from "@/lib/store";
+import { getSales, getChallans, exportCSV, addChallan, getBatches, confirmChallanGroup, deleteChallanGroup, updateSale, Sale, StockBatch, Challan, formatLocalDate, getLocalDateString } from "@/lib/store";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
 import { format } from "date-fns";
 import { printElement } from "@/lib/print";
 import { Card, CardContent } from "@/components/ui/card";
@@ -9,8 +11,14 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { Download, Printer, Search, FilePlus2, CheckCircle2, Trash2 } from "lucide-react";
+import { Download, Printer, Search, FilePlus2, CheckCircle2, Trash2, CalendarIcon, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+
+const parseLocalDate = (dateStr: string) => {
+  if (!dateStr) return new Date();
+  const [year, month, day] = dateStr.split('-').map(Number);
+  return new Date(year, month - 1, day);
+};
 
 const renderCustomer = (customerName: string) => {
   const match = customerName.match(/(.*?)\s*\(([^)]+)\)$/);
@@ -30,6 +38,7 @@ export default function PendingDeliveries() {
   const [challans, setChallans] = useState<Challan[]>([]);
   const [cancelledPChallans, setCancelledPChallans] = useState<Challan[]>([]);
   const [filter, setFilter] = useState("");
+  const [selectedEstDate, setSelectedEstDate] = useState<string | null>(null);
   const { toast } = useToast();
   const [showChallanDialog, setShowChallanDialog] = useState(false);
   const [currentSale, setCurrentSale] = useState<Sale | null>(null);
@@ -125,6 +134,27 @@ export default function PendingDeliveries() {
     }
   };
 
+  const handleUpdateEstimatedDate = async (group: any, newDateStr: string) => {
+    try {
+      await Promise.all(
+        group.salesItems.map((item: any) =>
+          updateSale(item.sale.id, { estimatedDeliveryDate: newDateStr })
+        )
+      );
+      toast({
+        title: "Estimated Delivery Date Saved",
+        description: `Set estimated delivery date to ${format(parseLocalDate(newDateStr), "dd-MM-yyyy")}`,
+      });
+      refresh();
+    } catch (err: any) {
+      toast({
+        title: "Update Failed",
+        description: err.message || "Could not save estimated delivery date.",
+        variant: "destructive",
+      });
+    }
+  };
+
   const handleCreateChallan = async () => {
     if (!currentSale) return;
     const maxQty = getUnhandledPendingQty(currentSale);
@@ -155,12 +185,18 @@ export default function PendingDeliveries() {
   };
 
   const filteredSales = useMemo(() => {
-    const base = filter
-      ? sales.filter(s => {
-          const f = filter.toLowerCase();
-          return s.customer.toLowerCase().includes(f) || s.product.toLowerCase().includes(f) || s.orderNo.toLowerCase().includes(f);
-        })
-      : sales;
+    let base = sales;
+    if (selectedEstDate) {
+      base = base.filter(s => s.estimatedDeliveryDate === selectedEstDate);
+    }
+    if (filter) {
+      const f = filter.toLowerCase();
+      base = base.filter(s =>
+        s.customer.toLowerCase().includes(f) ||
+        s.product.toLowerCase().includes(f) ||
+        s.orderNo.toLowerCase().includes(f)
+      );
+    }
     return base.sort((a, b) => {
       const dateA = a.updatedAt || a.createdAt || a.orderDate || "";
       const dateB = b.updatedAt || b.createdAt || b.orderDate || "";
@@ -168,7 +204,7 @@ export default function PendingDeliveries() {
       if (dateCompare !== 0) return dateCompare;
       return b.orderNo.localeCompare(a.orderNo, undefined, { numeric: true, sensitivity: "base" });
     });
-  }, [sales, filter]);
+  }, [sales, filter, selectedEstDate]);
 
   const currentProductBatches = useMemo(() => currentSale ? batches.filter(b => b.productName === currentSale.product) : [], [currentSale, batches]);
 
@@ -244,6 +280,65 @@ export default function PendingDeliveries() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input placeholder="Search customer, product or order..." value={filter} onChange={e => setFilter(e.target.value)} className="pl-9 h-9" />
           </div>
+
+          <div className="flex items-center gap-1">
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={`h-9 px-3 gap-1.5 transition-all ${
+                    selectedEstDate
+                      ? "border-blue-500 bg-blue-50 text-blue-950 font-semibold hover:bg-blue-100"
+                      : "text-slate-700 hover:bg-slate-100"
+                  }`}
+                >
+                  <CalendarIcon className="h-4 w-4 text-blue-600 shrink-0" />
+                  {selectedEstDate
+                    ? `Est: ${format(parseLocalDate(selectedEstDate), "dd-MM-yyyy")}`
+                    : "Filter by Est. Date"}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="start">
+                <Calendar
+                  mode="single"
+                  selected={selectedEstDate ? parseLocalDate(selectedEstDate) : undefined}
+                  onSelect={(date) => {
+                    if (date) {
+                      setSelectedEstDate(getLocalDateString(date));
+                    } else {
+                      setSelectedEstDate(null);
+                    }
+                  }}
+                  initialFocus
+                />
+                {selectedEstDate && (
+                  <div className="p-2 border-t border-slate-100 flex justify-end">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
+                      onClick={() => setSelectedEstDate(null)}
+                    >
+                      Clear Date Filter
+                    </Button>
+                  </div>
+                )}
+              </PopoverContent>
+            </Popover>
+            {selectedEstDate && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-9 px-2 text-xs text-slate-500 hover:text-slate-900"
+                onClick={() => setSelectedEstDate(null)}
+                title="Clear date filter"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+
           <Button variant="outline" size="sm" onClick={() => exportCSV(filteredSales as any, `pending-${new Date().toISOString().slice(0,10)}.csv`)}><Download className="mr-1 h-4 w-4" />Export</Button>
           <Button variant="outline" size="sm" onClick={() => printElement("pending-table")}><Printer className="mr-1 h-4 w-4" />Print</Button>
         </div>
@@ -255,32 +350,74 @@ export default function PendingDeliveries() {
             <Table className="border-collapse border-2 border-slate-300 w-full">
               <TableHeader className="bg-slate-50/75">
                 <TableRow className="hover:bg-transparent">
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Date</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Challan #</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Client</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Product</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right">Ordered</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right text-green-600">Delivered</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right text-red-600">Pending Qty</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Status</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right">Action</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 whitespace-nowrap">Date</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 whitespace-nowrap">Challan #</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 whitespace-nowrap">Client</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 whitespace-nowrap">Product</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right whitespace-nowrap">Ordered</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right text-green-600 whitespace-nowrap">Delivered</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right text-red-600 whitespace-nowrap">Pending Qty</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 whitespace-nowrap">Status</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right whitespace-nowrap">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {groupedPendingDeliveries.length === 0 ? (
-                  <TableRow><TableCell colSpan={9} className="border-2 border-slate-300 text-center text-muted-foreground py-8">No pending deliveries!</TableCell></TableRow>
+                  <TableRow>
+                    <TableCell colSpan={9} className="border-2 border-slate-300 text-center text-muted-foreground py-8">
+                      {selectedEstDate || filter
+                        ? `No pending deliveries found${selectedEstDate ? ` for estimated date ${format(parseLocalDate(selectedEstDate), "dd-MM-yyyy")}` : ""}${filter ? ` matching "${filter}"` : ""}.`
+                        : "No pending deliveries!"}
+                    </TableCell>
+                  </TableRow>
                 ) : groupedPendingDeliveries.map(group => {
+                  const estDate = group.salesItems.find(i => i.sale.estimatedDeliveryDate)?.sale.estimatedDeliveryDate || null;
+                  const isRawOrderNo = group.orderNo.startsWith("ORD-");
+                  const displayChallanNo = group.challanNo || (isRawOrderNo ? "P--" : group.orderNo);
+
                   return (
                     <TableRow key={group.groupKey} className="hover:bg-slate-50/40">
                       <TableCell className="border-2 border-slate-300 px-4 py-3 text-sm text-slate-700 font-medium whitespace-nowrap">
-                        {formatLocalDate(group.createdAt || group.orderDate)}
+                        <div className="font-semibold text-slate-900">{formatLocalDate(group.createdAt || group.orderDate)}</div>
+                        <div className="mt-1.5">
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className={`h-7 text-xs px-2 gap-1.5 border-dashed transition-all ${
+                                  estDate
+                                    ? "border-blue-500 bg-blue-50 text-blue-950 font-bold hover:bg-blue-100"
+                                    : "border-slate-300 bg-background text-slate-500 hover:text-slate-900 hover:border-slate-400"
+                                }`}
+                              >
+                                <CalendarIcon className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+                                {estDate
+                                  ? `Est: ${format(parseLocalDate(estDate), "dd-MM-yyyy")}`
+                                  : "Est. Delivery"}
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-auto p-0" align="start">
+                              <Calendar
+                                mode="single"
+                                selected={estDate ? parseLocalDate(estDate) : undefined}
+                                onSelect={(date) => {
+                                  if (date) {
+                                    handleUpdateEstimatedDate(group, getLocalDateString(date));
+                                  }
+                                }}
+                                initialFocus
+                              />
+                            </PopoverContent>
+                          </Popover>
+                        </div>
                       </TableCell>
-                      <TableCell className="border-2 border-slate-300 px-4 py-3 font-mono text-xs text-slate-700">
-                        <div className="font-semibold text-slate-900">{group.orderNo}</div>
-                        {group.challanNo && (
-                          <div className="text-[10px] font-bold text-orange-600 mt-1 bg-orange-50 border border-orange-200 px-1.5 py-0.5 rounded w-fit">
-                             {group.challanNo}
-                          </div>
+                      <TableCell className="border-2 border-slate-300 px-4 py-3 font-mono text-xs text-slate-700 whitespace-nowrap">
+                        <div className="text-base font-extrabold text-orange-600 bg-orange-50/90 border border-orange-200 px-2 py-1 rounded w-fit shadow-2xs whitespace-nowrap">
+                          {displayChallanNo}
+                        </div>
+                        {!isRawOrderNo && group.orderNo !== displayChallanNo && (
+                          <div className="text-[11px] text-slate-500 mt-1 font-medium whitespace-nowrap">{group.orderNo}</div>
                         )}
                       </TableCell>
                       <TableCell className="border-2 border-slate-300 px-4 py-3 text-sm min-w-[150px] max-w-[220px] break-words">
