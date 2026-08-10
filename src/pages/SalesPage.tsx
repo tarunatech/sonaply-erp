@@ -197,27 +197,18 @@ export default function SalesPage() {
 
   const getSuggestionsList = useCallback((query: string) => {
     const q = query.toLowerCase().trim();
-    const filtered = allBatches.filter(b =>
-      !q ||
-      b.productName.toLowerCase().includes(q) ||
-      (b.productCode && b.productCode.toLowerCase().includes(q))
-    );
+    const tokens = q.split(/\s+/).filter(Boolean);
+    const filtered = allBatches.filter(b => {
+      if (!tokens.length) return true;
+      const fullText = `${b.productName || ''} ${b.productCode || ''} ${b.category || ''} ${b.batchNumber || ''}`.toLowerCase();
+      return tokens.every(token => fullText.includes(token));
+    });
 
     const list: { batch: StockBatch; category: 'Available' | 'Display' | 'Damage'; label: string }[] = [];
     filtered.forEach(b => {
-      const hasAvailable = b.availableQty > 0;
-      const hasDisplay = (b.displayQty || 0) > 0;
-      const hasDamage = (b.damageQty || 0) > 0;
-
-      if (hasAvailable || (!hasDisplay && !hasDamage)) {
-        list.push({ batch: b, category: 'Available', label: 'Available' });
-      }
-      if (hasDisplay) {
-        list.push({ batch: b, category: 'Display', label: 'Display' });
-      }
-      if (hasDamage) {
-        list.push({ batch: b, category: 'Damage', label: 'Damage' });
-      }
+      list.push({ batch: b, category: 'Available', label: 'Available' });
+      list.push({ batch: b, category: 'Display', label: 'Display' });
+      list.push({ batch: b, category: 'Damage', label: 'Damage' });
     });
     return list;
   }, [allBatches]);
@@ -775,7 +766,6 @@ export default function SalesPage() {
                           onValueChange={v => {
                             updateItem(index, { stockCategory: v as any });
                           }}
-                          disabled
                         >
                           <SelectTrigger className="h-9 text-xs font-semibold">
                             <SelectValue />

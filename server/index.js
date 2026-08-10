@@ -441,10 +441,6 @@ app.put("/api/purchases/:id", async (req, res) => {
             oldPurchase.product_name,
           ],
         );
-        await db.query(
-          "DELETE FROM batches WHERE batch_number = $1 AND product_name = $2 AND quantity <= 0 AND available_qty <= 0 AND display_qty <= 0 AND damage_qty <= 0 AND hold_qty <= 0",
-          [oldPurchase.batch_number, oldPurchase.product_name],
-        );
       }
 
       // 2. Apply new stock addition
@@ -499,10 +495,6 @@ app.delete("/api/purchases/:id", async (req, res) => {
         await db.query(
           "UPDATE batches SET available_qty = available_qty - $1, quantity = quantity - $1 WHERE batch_number = $2 AND product_name = $3",
           [p.quantity, p.batch_number, p.product_name],
-        );
-        await db.query(
-          "DELETE FROM batches WHERE batch_number = $1 AND product_name = $2 AND quantity <= 0 AND available_qty <= 0 AND display_qty <= 0 AND damage_qty <= 0 AND hold_qty <= 0",
-          [p.batch_number, p.product_name],
         );
       }
       await db.query("DELETE FROM purchases WHERE id = $1", [id]);
@@ -726,11 +718,7 @@ async function resolveNegativeStock(productName) {
     }
   }
 
-  // Clean up 0-quantity orphan batches
-  await db.query(
-    `DELETE FROM batches WHERE LOWER(TRIM(product_name)) = LOWER(TRIM($1)) AND quantity = 0 AND available_qty = 0 AND COALESCE(display_qty, 0) = 0 AND COALESCE(damage_qty, 0) = 0 AND COALESCE(hold_qty, 0) = 0`,
-    [cleanProduct],
-  );
+  // Preserve 0-quantity batches in DB so zero-stock products can be searched and displayed
 }
 
 async function reconcileAllProductStocks(productName) {
@@ -774,10 +762,7 @@ async function reconcileAllProductStocks(productName) {
       ]);
     }
 
-    // Clean up 0-quantity orphan batches
-    await db.query(
-      `DELETE FROM batches WHERE quantity = 0 AND available_qty = 0 AND COALESCE(display_qty, 0) = 0 AND COALESCE(damage_qty, 0) = 0 AND COALESCE(hold_qty, 0) = 0`,
-    );
+    // Preserve 0-quantity batches in DB so zero-stock products can be searched and displayed
   } catch (err) {
     console.error("Error in reconcileAllProductStocks:", err.message);
   }
@@ -3028,6 +3013,39 @@ app.post("/api/clients", async (req, res) => {
     );
     res.json(result.rows[0]);
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/clients/bulk", async (req, res) => {
+  const clients = req.body;
+  if (!Array.isArray(clients) || clients.length === 0) {
+    return res.status(400).json({ error: "No client data provided" });
+  }
+  try {
+    await db.query("BEGIN");
+    const inserted = [];
+    for (const c of clients) {
+      if (!c.name || !String(c.name).trim()) continue;
+      const result = await db.query(
+        `INSERT INTO clients (name, phone, price_category)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (name) DO UPDATE SET
+           phone = EXCLUDED.phone,
+           price_category = EXCLUDED.price_category
+         RETURNING *`,
+        [
+          String(c.name).trim(),
+          c.phone ? String(c.phone).trim() : "",
+          c.price_category ? String(c.price_category).trim() : "Regular",
+        ]
+      );
+      inserted.push(result.rows[0]);
+    }
+    await db.query("COMMIT");
+    res.json({ success: true, count: inserted.length, clients: inserted });
+  } catch (err) {
+    await db.query("ROLLBACK");
     res.status(500).json({ error: err.message });
   }
 });

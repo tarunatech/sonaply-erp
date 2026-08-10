@@ -116,13 +116,12 @@ export default function StockList() {
       );
     }
     if (search) {
-      const s = search.toLowerCase();
-      b = b.filter(
-        (i) =>
-          (i.productName || "").toLowerCase().includes(s) ||
-          (i.batchNumber || "").toLowerCase().includes(s) ||
-          (i.category || "").toLowerCase().includes(s),
-      );
+      const s = search.toLowerCase().trim();
+      const tokens = s.split(/\s+/).filter(Boolean);
+      b = b.filter((i) => {
+        const fullString = `${i.productName || ""} ${i.productCode || ""} ${i.batchNumber || ""} ${i.category || ""} ${i.supplier || ""} ${i.description || ""}`.toLowerCase();
+        return tokens.every((token) => fullString.includes(token));
+      });
     }
     return [...b].sort((a, b) => {
       const nameCompare = (a.productName || "").localeCompare(

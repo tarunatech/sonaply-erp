@@ -1,3 +1,5 @@
+import * as XLSX from "xlsx";
+
 export interface Product {
   id: string;
   name: string;
@@ -604,6 +606,39 @@ export const updateClient = (id: string, c: Partial<Client>) =>
   }).then(mapClient);
 export const deleteClient = (id: string) =>
   request(`/clients/${id}`, { method: "DELETE" });
+
+export const addClientBulk = (
+  clients: Array<{ name: string; phone?: string; priceCategory?: string }>
+) =>
+  request<{ success: boolean; count: number; clients: any[] }>("/clients/bulk", {
+    method: "POST",
+    body: JSON.stringify(
+      clients.map((c) => ({
+        name: c.name,
+        phone: c.phone || "",
+        price_category: c.priceCategory || "Regular",
+      }))
+    ),
+  });
+
+export const downloadClientTemplate = () => {
+  const sampleData = [
+    {
+      "Name": "Sample Client Ltd",
+      "Phone": "9876543210",
+      "Price Category": "Regular",
+    },
+    {
+      "Name": "Quality Timber Co.",
+      "Phone": "9123456789",
+      "Price Category": "Premium",
+    },
+  ];
+  const worksheet = XLSX.utils.json_to_sheet(sampleData);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Clients Template");
+  XLSX.writeFile(workbook, "client_import_template.xlsx");
+};
 
 // Auth
 export const login = async (

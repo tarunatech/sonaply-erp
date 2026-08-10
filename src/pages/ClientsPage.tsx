@@ -1,15 +1,16 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { getClients, addClient, updateClient, deleteClient, exportCSV, Client } from "@/lib/store";
+import { getClients, addClient, updateClient, deleteClient, exportCSV, addClientBulk, downloadClientTemplate, Client } from "@/lib/store";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Download, Pencil, Trash2, UserCircle, UserPlus } from "lucide-react";
+import { Download, Pencil, Trash2, UserCircle, UserPlus, FileSpreadsheet, Upload, FileDown } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { format } from "date-fns";
+import * as XLSX from "xlsx";
 
 const PRICE_CATEGORIES = ['Regular', 'Premium', 'Only Cash'];
 
@@ -21,6 +22,10 @@ export default function ClientsPage() {
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showNameSuggestions, setShowNameSuggestions] = useState(false);
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(-1);
+  const [showImportDialog, setShowImportDialog] = useState(false);
+  const [importedClients, setImportedClients] = useState<Array<{ name: string; phone: string; priceCategory: string }>>([]);
+  const [isImporting, setIsImporting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const nameContainerRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
@@ -84,6 +89,87 @@ export default function ClientsPage() {
     setSelectedSuggestionIndex(-1);
   };
 
+  const handleFileImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'array' });
+        const wsName = wb.SheetNames[0];
+        const ws = wb.Sheets[wsName];
+        const rawData = XLSX.utils.sheet_to_json<Record<string, any>>(ws);
+
+        if (!rawData || rawData.length === 0) {
+          toast({ title: "No data found in the Excel file", variant: "destructive" });
+          return;
+        }
+
+        const parsed: Array<{ name: string; phone: string; priceCategory: string }> = [];
+
+        rawData.forEach((row) => {
+          let name = '';
+          let phone = '';
+          let priceCategory = 'Regular';
+
+          for (const key of Object.keys(row)) {
+            const k = key.trim().toLowerCase();
+            const val = String(row[key] ?? '').trim();
+            if (['name', 'client name', 'client_name', 'full name', 'fullname'].includes(k)) {
+              name = val;
+            } else if (['phone', 'phone number', 'phonenumber', 'mobile', 'contact', 'client_phone', 'phone no'].includes(k)) {
+              phone = val;
+            } else if (['price category', 'pricecategory', 'price_category', 'category'].includes(k)) {
+              if (val) priceCategory = val;
+            }
+          }
+
+          if (name) {
+            parsed.push({ name, phone, priceCategory });
+          }
+        });
+
+        if (parsed.length === 0) {
+          toast({ title: "No valid client rows with names found in Excel file", variant: "destructive" });
+          return;
+        }
+
+        setImportedClients(parsed);
+        setShowImportDialog(true);
+      } catch (err: any) {
+        toast({ title: "Failed to parse Excel file", description: err.message, variant: "destructive" });
+      } finally {
+        if (e.target) e.target.value = '';
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleConfirmImport = async () => {
+    if (importedClients.length === 0) return;
+    setIsImporting(true);
+    try {
+      const res = await addClientBulk(importedClients);
+      refresh();
+      setShowImportDialog(false);
+      setImportedClients([]);
+      toast({
+        title: "Import Successful",
+        description: `Successfully stored ${res.count || importedClients.length} clients in the database.`,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Import Failed",
+        description: err.message || "Failed to store client data in DB.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -100,7 +186,22 @@ export default function ClientsPage() {
               className="h-9"
             />
           </div>
-           <Button variant="outline" size="sm" onClick={() => exportCSV(filteredClients as any, `clients-${new Date().toISOString().slice(0,10)}.csv`)}>
+           <Button variant="outline" size="sm" onClick={downloadClientTemplate} title="Download Excel template for client import">
+            <FileDown className="mr-1 h-4 w-4 text-emerald-600" /> Template
+          </Button>
+
+          <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} title="Import clients from Excel / CSV file">
+            <Upload className="mr-1 h-4 w-4 text-blue-600" /> Import Excel
+          </Button>
+          <input
+            type="file"
+            ref={fileInputRef}
+            accept=".xlsx, .xls, .csv"
+            className="hidden"
+            onChange={handleFileImport}
+          />
+
+          <Button variant="outline" size="sm" onClick={() => exportCSV(filteredClients as any, `clients-${new Date().toISOString().slice(0,10)}.csv`)}>
             <Download className="mr-1 h-4 w-4" /> Export
           </Button>
           
@@ -311,6 +412,55 @@ export default function ClientsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Excel Import Dialog */}
+      <Dialog open={showImportDialog} onOpenChange={setShowImportDialog}>
+        <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-xl">
+              <FileSpreadsheet className="h-5 w-5 text-blue-600" />
+              Preview Excel Import ({importedClients.length} Clients)
+            </DialogTitle>
+          </DialogHeader>
+          <div className="text-sm text-muted-foreground">
+            Review the clients parsed from your file before saving to database. Duplicate names will be updated automatically.
+          </div>
+          <div className="overflow-y-auto max-h-[50vh] border rounded-md my-2">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>#</TableHead>
+                  <TableHead>Client Name</TableHead>
+                  <TableHead>Phone Number</TableHead>
+                  <TableHead>Price Category</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {importedClients.map((item, idx) => (
+                  <TableRow key={idx}>
+                    <TableCell className="text-xs text-muted-foreground">{idx + 1}</TableCell>
+                    <TableCell className="font-medium">{item.name}</TableCell>
+                    <TableCell>{item.phone || "-"}</TableCell>
+                    <TableCell>
+                      <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-xs font-medium border border-primary/20">
+                        {item.priceCategory}
+                      </span>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setShowImportDialog(false)} disabled={isImporting}>
+              Cancel
+            </Button>
+            <Button onClick={handleConfirmImport} disabled={isImporting || importedClients.length === 0} className="bg-blue-600 hover:bg-blue-700 text-white">
+              {isImporting ? "Saving to Database..." : `Save ${importedClients.length} Clients`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
