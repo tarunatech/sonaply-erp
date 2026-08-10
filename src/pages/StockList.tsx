@@ -495,9 +495,27 @@ export default function StockList() {
       }
     }
 
-    // Step 2: Retrieve latest batches and override/update to exact stock values from CSV
-    const latestBatches = await getBatches();
+    // Step 2: Aggregate stock by (productName, batchNumber) so combined stock totals (e.g. MA 845 = 3 + 1 = 4) are preserved
+    const aggregatedBatches = new Map<string, ParsedRow>();
     for (const row of parsedRows) {
+      const key = `${row.productName.trim().toLowerCase()}||${(row.batchNumber || "0").trim().toLowerCase()}`;
+      const existing = aggregatedBatches.get(key);
+      if (!existing) {
+        aggregatedBatches.set(key, { ...row });
+      } else {
+        existing.quantity += row.quantity;
+        existing.availableQty += row.availableQty;
+        existing.damageQty += row.damageQty;
+        existing.displayQty += row.displayQty;
+        if (row.isNil) existing.isNil = true;
+        if (row.isCancelled) existing.isCancelled = true;
+        if (!existing.description && row.description) existing.description = row.description;
+        if (!existing.supplier && row.supplier) existing.supplier = row.supplier;
+      }
+    }
+
+    const latestBatches = await getBatches();
+    for (const row of Array.from(aggregatedBatches.values())) {
       const match = latestBatches.find(
         (b) =>
           b.productName.trim().toLowerCase() ===
