@@ -549,11 +549,11 @@ export default function DailyExport() {
                         key={item.productName} 
                         className={`transition-colors ${
                           item.isDeadStock
-                            ? "bg-slate-200/90 text-slate-900 hover:bg-slate-300/90 border-slate-300"
+                            ? "bg-slate-400/90 text-slate-900 hover:bg-slate-500/90 border-slate-300"
                             : item.isCancelled 
-                            ? "bg-red-100/90 text-red-950 hover:bg-red-200/90 border-red-300" 
+                            ? "bg-red-200/90 text-red-950 hover:bg-red-300/90 border-red-300" 
                             : item.isNil 
-                            ? "bg-blue-100/90 text-blue-950 hover:bg-blue-200/90 border-blue-300" 
+                            ? "bg-blue-200/90 text-blue-950 hover:bg-blue-300/90 border-blue-300" 
                             : "hover:bg-slate-50/50"
                         }`}
                       >

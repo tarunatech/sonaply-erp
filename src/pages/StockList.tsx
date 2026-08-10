@@ -852,23 +852,16 @@ export default function StockList() {
                     key={b.id}
                     className={`transition-colors ${
                       b.isDeadStock
-                        ? "bg-slate-200/90 text-slate-900 hover:bg-slate-300/90 border-slate-300"
+                        ? "bg-slate-400/90 text-slate-900 hover:bg-slate-500/90 border-slate-300"
                         : b.isCancelled
-                        ? "bg-red-100/90 text-red-950 hover:bg-red-200/90 border-red-300"
+                        ? "bg-red-200/90 text-red-950 hover:bg-red-300/90 border-red-300"
                         : b.isNil
-                        ? "bg-blue-100/90 text-blue-950 hover:bg-blue-200/90 border-blue-300"
+                        ? "bg-blue-200/90 text-blue-950 hover:bg-blue-300/90 border-blue-300"
                         : "hover:bg-slate-50/50"
                     }`}
                   >
                     <TableCell className={`border-2 border-slate-300 px-4 py-3 align-middle font-bold ${b.isCancelled ? "text-red-950" : b.isNil ? "text-blue-950" : "text-slate-800"}`}>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span>{b.productName}</span>
-                        {b.isCancelled && !b.isDeadStock && (
-                          <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-red-200 text-red-950 border border-red-400 shadow-2xs">
-                            Cancelled
-                          </span>
-                        )}
-                      </div>
+                      {b.productName}
                     </TableCell>
                     <TableCell className="border-2 border-slate-300 px-4 py-3 align-middle font-medium text-slate-700">{b.category}</TableCell>
                     <TableCell className="border-2 border-slate-300 px-4 py-3 align-middle font-medium text-slate-700">{b.batchNumber}</TableCell>
