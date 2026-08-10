@@ -775,7 +775,7 @@ export default function StockList() {
           </Button>
         </div>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card className="bg-primary/5 border-primary/20">
           <CardContent className="pt-6">
             <div className="text-sm font-medium text-muted-foreground">
@@ -786,24 +786,52 @@ export default function StockList() {
                 .reduce(
                   (acc, b) =>
                     acc +
-                    (b.quantity -
-                      b.availableQty -
-                      (b.displayQty || 0) -
-                      (b.damageQty || 0)),
+                    Math.max(
+                      0,
+                      b.quantity -
+                        b.availableQty -
+                        (b.displayQty || 0) -
+                        (b.damageQty || 0) -
+                        (b.holdQty || 0),
+                    ),
                   0,
                 )
                 .toLocaleString()}
             </div>
           </CardContent>
         </Card>
-        <Card className="bg-success/5 border-success/20">
+        <Card className="bg-emerald-500/10 border-emerald-500/20">
           <CardContent className="pt-6">
             <div className="text-sm font-medium text-muted-foreground">
               Available Stock
             </div>
-            <div className="text-2xl font-bold text-success">
+            <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
               {allBatches
-                .reduce((acc, b) => acc + b.availableQty, 0)
+                .reduce((acc, b) => acc + (b.availableQty || 0), 0)
+                .toLocaleString()}
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="bg-purple-500/10 border-purple-500/20">
+          <CardContent className="pt-6">
+            <div className="text-sm font-medium text-muted-foreground">
+              Total Display Qty
+            </div>
+            <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">
+              {allBatches
+                .reduce((acc, b) => acc + (b.displayQty || 0), 0)
+                .toLocaleString()}
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="bg-rose-500/10 border-rose-500/20">
+          <CardContent className="pt-6">
+            <div className="text-sm font-medium text-muted-foreground">
+              Total Damage Qty
+            </div>
+            <div className="text-2xl font-bold text-rose-600 dark:text-rose-400">
+              {allBatches
+                .reduce((acc, b) => acc + (b.damageQty || 0), 0)
                 .toLocaleString()}
             </div>
           </CardContent>
