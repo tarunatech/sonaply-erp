@@ -560,11 +560,11 @@ export default function DailyExport() {
                         <TableCell className={`font-semibold ${item.isCancelled ? "text-red-950" : item.isNil ? "text-blue-950" : "text-slate-800"}`}>
                           <div className="flex items-center gap-2">
                             <span>{item.productName}</span>
-                            {item.isCancelled && !item.isDeadStock && (
+                            {/* {item.isCancelled && !item.isDeadStock && (
                               <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-red-200 text-red-950 border border-red-400 shadow-2xs">
                                 Cancelled
                               </span>
-                            )}
+                            )} */}
                           </div>
                         </TableCell>
                         <TableCell className="text-xs text-muted-foreground">{item.category}</TableCell>
