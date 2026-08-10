@@ -439,9 +439,7 @@ export default function StockList() {
 
       // Total = available + damage + display
       quantity = availableQty + damageQty + displayQty;
-
-      // Skip only if absolutely nothing to record
-      if (quantity <= 0) continue;
+      if (quantity < 0) quantity = 0;
 
       batchNumbers.forEach((bNum, idx) => {
         const qtyForBatch =
