@@ -370,16 +370,19 @@ export default function ChallanPage() {
             <div style="border-top: 2px solid #000; padding-top: 8px;">
               ${group.items.map((item: any) => {
                 const itemSale = sales.find((s: Sale) => s.id === item.salesId);
-                const itemBatch = batches.find((b: StockBatch) => b.productName === item.product);
-                const category = itemSale?.category || "";
+                const itemBatches = batches.filter((b: StockBatch) => b.productName === item.product);
+                const currentBatch = item.batchNo
+                  ? itemBatches.find((b: StockBatch) => b.batchNumber === item.batchNo)
+                  : itemBatches[0];
+                const productCategory = currentBatch?.category || itemBatches[0]?.category || "";
                 const batch = item.batchNo || itemSale?.batchNo || "";
                 const narration = item.notes || itemSale?.remarks || "";
-                const description = item.description || itemSale?.description || itemBatch?.description || "";
+                const description = item.description || itemSale?.description || currentBatch?.description || "";
                 return `
                   <div style="text-align: center; margin-bottom: 10px; font-weight: bold; border-bottom: 1px dashed #ccc; padding-bottom: 6px;">
                     <div style="font-size: 14px;">${item.product}</div>
                     ${description ? `<div style="font-size: 12px; font-weight: bold; color: #222; margin-top: 2px;">Description: ${description}</div>` : ""}
-                    ${category ? `<div style="font-size: 12px; font-weight: normal; margin-top: 1px;">Category: ${category}</div>` : ""}
+                    ${productCategory ? `<div style="font-size: 12px; font-weight: normal; margin-top: 1px;">Category: ${productCategory}</div>` : ""}
                     <div style="font-size: 13px; margin-top: 1px;">QTY: ${item.quantity} [${item.stockCategory || "Available"}]</div>
                     ${batch ? `<div style="font-size: 12px; font-weight: normal; margin-top: 1px;">Batch: ${batch}</div>` : ""}
                     ${narration ? `<div style="font-size: 12px; font-weight: normal; margin-top: 2px; font-style: italic;">Narration: ${narration}</div>` : ""}
