@@ -482,7 +482,72 @@ async function migrate() {
     await addColumnIfNotExist('clients', 'created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
 
     await db.query(`UPDATE clients SET price_category = 'Regular' WHERE price_category IS NULL OR TRIM(price_category) = ''`);
-    await db.query(`UPDATE clients SET name = TRIM(name) WHERE name IS NOT NULL AND name != TRIM(name)`);
+    // Fetch all clients to handle duplicates prior to trimming client names
+    const allClientsRes = await db.query(`SELECT id, name, phone, price_category, created_at FROM clients WHERE name IS NOT NULL`);
+    const clientGroups = new Map();
+    for (const row of allClientsRes.rows) {
+      const trimmedName = row.name.trim();
+      if (!trimmedName) continue;
+      const key = trimmedName.toLowerCase();
+      if (!clientGroups.has(key)) {
+        clientGroups.set(key, []);
+      }
+      clientGroups.get(key).push({ ...row, trimmedName });
+    }
+
+    for (const [key, group] of clientGroups.entries()) {
+      if (group.length > 1) {
+        console.log(`Found ${group.length} duplicate client records for "${group[0].trimmedName}". Merging...`);
+        // Sort group to select primary keeper:
+        // 1. Exact match (name === trimmedName)
+        // 2. Has non-empty phone
+        // 3. Earliest created_at / id
+        group.sort((a, b) => {
+          const aExact = a.name === a.trimmedName ? 1 : 0;
+          const bExact = b.name === b.trimmedName ? 1 : 0;
+          if (aExact !== bExact) return bExact - aExact;
+
+          const aPhone = a.phone && a.phone.trim() ? 1 : 0;
+          const bPhone = b.phone && b.phone.trim() ? 1 : 0;
+          if (aPhone !== bPhone) return bPhone - aPhone;
+
+          return (new Date(a.created_at || 0).getTime()) - (new Date(b.created_at || 0).getTime());
+        });
+
+        const keeper = group[0];
+        const duplicates = group.slice(1);
+
+        let mergedPhone = keeper.phone ? keeper.phone.trim() : null;
+        let mergedPriceCategory = keeper.price_category && keeper.price_category.trim() ? keeper.price_category.trim() : 'Regular';
+
+        for (const dup of duplicates) {
+          if (!mergedPhone && dup.phone && dup.phone.trim()) {
+            mergedPhone = dup.phone.trim();
+          }
+          if ((!mergedPriceCategory || mergedPriceCategory === 'Regular') && dup.price_category && dup.price_category.trim()) {
+            mergedPriceCategory = dup.price_category.trim();
+          }
+        }
+
+        await db.query(
+          `UPDATE clients SET name = $1, phone = $2, price_category = $3 WHERE id = $4`,
+          [keeper.trimmedName, mergedPhone, mergedPriceCategory, keeper.id]
+        );
+
+        const dupIds = duplicates.map(d => d.id);
+        await db.query(`DELETE FROM clients WHERE id = ANY($1::uuid[])`, [dupIds]);
+      } else {
+        const client = group[0];
+        const newPhone = client.phone ? client.phone.trim() || null : null;
+        if (client.name !== client.trimmedName || client.phone !== newPhone) {
+          await db.query(
+            `UPDATE clients SET name = $1, phone = $2 WHERE id = $3`,
+            [client.trimmedName, newPhone, client.id]
+          );
+        }
+      }
+    }
+
     await db.query(`UPDATE clients SET phone = TRIM(phone) WHERE phone IS NOT NULL AND phone != TRIM(phone)`);
     await db.query(`UPDATE clients SET phone = NULL WHERE phone IS NOT NULL AND TRIM(phone) = ''`);
 
