@@ -45,16 +45,16 @@ export default function DeliveredDeliveries() {
       const dateB = saleB?.updatedAt || b.createdAt || "";
       const dateCompare = dateB.localeCompare(dateA);
       if (dateCompare !== 0) return dateCompare;
-      return b.challanNo.localeCompare(a.challanNo, undefined, { numeric: true, sensitivity: "base" });
+      return (b.challanNo || '').localeCompare(a.challanNo || '', undefined, { numeric: true, sensitivity: "base" });
     });
     if (!filter) return sorted;
     const f = filter.toLowerCase();
     return sorted.filter(c => {
       const sale = sales.find(s => s.id === c.salesId);
       const orderNo = sale?.orderNo || "";
-      return c.customer.toLowerCase().includes(f) ||
-             c.product.toLowerCase().includes(f) ||
-             c.challanNo.toLowerCase().includes(f) ||
+      return (c.customer || '').toLowerCase().includes(f) ||
+             (c.product || '').toLowerCase().includes(f) ||
+             (c.challanNo || '').toLowerCase().includes(f) ||
              orderNo.toLowerCase().includes(f);
     });
   }, [challans, sales, filter]);

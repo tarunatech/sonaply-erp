@@ -107,9 +107,9 @@ export default function PurchasePage() {
   const filteredPurchases = useMemo(() => {
     return purchases.filter(p => {
       const f = purchaseFilter.toLowerCase();
-      return p.supplierName.toLowerCase().includes(f) ||
-             p.productName.toLowerCase().includes(f) ||
-             p.category.toLowerCase().includes(f);
+      return (p.supplierName || '').toLowerCase().includes(f) ||
+             (p.productName || '').toLowerCase().includes(f) ||
+             (p.category || '').toLowerCase().includes(f);
     }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [purchases, purchaseFilter]);
 

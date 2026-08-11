@@ -120,12 +120,12 @@ export default function SalesReturnPage() {
     if (!filter.trim()) return sorted;
     const q = filter.toLowerCase().trim();
     return sorted.filter((r) =>
-      r.clientName.toLowerCase().includes(q) ||
-      (r.clientPhone && r.clientPhone.toLowerCase().includes(q)) ||
-      r.productName.toLowerCase().includes(q) ||
-      (r.batchNo && r.batchNo.toLowerCase().includes(q)) ||
-      (r.priceCategory && r.priceCategory.toLowerCase().includes(q)) ||
-      (r.notes && r.notes.toLowerCase().includes(q))
+      (r.clientName || '').toLowerCase().includes(q) ||
+      (r.clientPhone || '').toLowerCase().includes(q) ||
+      (r.productName || '').toLowerCase().includes(q) ||
+      (r.batchNo || '').toLowerCase().includes(q) ||
+      (r.priceCategory || '').toLowerCase().includes(q) ||
+      (r.notes || '').toLowerCase().includes(q)
     );
   }, [returns, filter]);
 
@@ -138,8 +138,8 @@ export default function SalesReturnPage() {
     const q = clientName.toLowerCase().trim();
     if (!q) return clients.slice(0, 10);
     return clients.filter(c =>
-      c.name.toLowerCase().includes(q) ||
-      c.phone.toLowerCase().includes(q) ||
+      (c.name || '').toLowerCase().includes(q) ||
+      (c.phone || '').toLowerCase().includes(q) ||
       (c.priceCategory || '').toLowerCase().includes(q)
     ).slice(0, 10);
   }, [clients, clientName]);

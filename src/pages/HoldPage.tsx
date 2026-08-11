@@ -87,8 +87,8 @@ export default function HoldPage() {
 
   const filteredHolds = useMemo(() => {
     return groupedHolds.filter((g) =>
-      g.clientName.toLowerCase().includes(search.toLowerCase()) ||
-      g.items.some((item) => item.productName.toLowerCase().includes(search.toLowerCase()))
+      (g.clientName || '').toLowerCase().includes(search.toLowerCase()) ||
+      g.items.some((item) => (item.productName || '').toLowerCase().includes(search.toLowerCase()))
     );
   }, [groupedHolds, search]);
 

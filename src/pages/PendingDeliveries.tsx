@@ -192,9 +192,9 @@ export default function PendingDeliveries() {
     if (filter) {
       const f = filter.toLowerCase();
       base = base.filter(s =>
-        s.customer.toLowerCase().includes(f) ||
-        s.product.toLowerCase().includes(f) ||
-        s.orderNo.toLowerCase().includes(f)
+        (s.customer || '').toLowerCase().includes(f) ||
+        (s.product || '').toLowerCase().includes(f) ||
+        (s.orderNo || '').toLowerCase().includes(f)
       );
     }
     return base.sort((a, b) => {
@@ -202,7 +202,7 @@ export default function PendingDeliveries() {
       const dateB = b.updatedAt || b.createdAt || b.orderDate || "";
       const dateCompare = dateB.localeCompare(dateA);
       if (dateCompare !== 0) return dateCompare;
-      return b.orderNo.localeCompare(a.orderNo, undefined, { numeric: true, sensitivity: "base" });
+      return (b.orderNo || '').localeCompare(a.orderNo || '', undefined, { numeric: true, sensitivity: "base" });
     });
   }, [sales, filter, selectedEstDate]);
 

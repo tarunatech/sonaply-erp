@@ -36,15 +36,15 @@ export default function ClientsPage() {
     const q = newClient.name.toLowerCase().trim();
     if (!q) return clients.slice(0, 10);
     return clients.filter(c =>
-      c.name.toLowerCase().includes(q) ||
-      c.phone.toLowerCase().includes(q) ||
+      (c.name || '').toLowerCase().includes(q) ||
+      (c.phone || '').toLowerCase().includes(q) ||
       (c.priceCategory || '').toLowerCase().includes(q)
     ).slice(0, 10);
   }, [clients, newClient.name]);
 
   const filteredClients = clients.filter(c => 
-    c.name.toLowerCase().includes(filter.toLowerCase()) ||
-    c.phone.includes(filter)
+    (c.name || '').toLowerCase().includes(filter.toLowerCase()) ||
+    (c.phone || '').toLowerCase().includes(filter.toLowerCase())
   );
 
   const analyzedImportedClients = useMemo(() => {

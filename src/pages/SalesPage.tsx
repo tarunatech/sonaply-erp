@@ -107,15 +107,15 @@ export default function SalesPage() {
   }, [refreshSales, refreshBatches, refreshClients]);
 
   const uniqueClients = useMemo(() => {
-    return allClients.sort((a, b) => a.name.localeCompare(b.name));
+    return allClients.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   }, [allClients]);
 
   const filteredClients = useMemo(() => {
     const q = clientName.toLowerCase().trim();
     if (!q) return uniqueClients;
     return uniqueClients.filter(c =>
-      c.name.toLowerCase().includes(q) ||
-      c.phone.toLowerCase().includes(q) ||
+      (c.name || '').toLowerCase().includes(q) ||
+      (c.phone || '').toLowerCase().includes(q) ||
       (c.priceCategory || '').toLowerCase().includes(q)
     );
   }, [uniqueClients, clientName]);
@@ -125,8 +125,8 @@ export default function SalesPage() {
       const f = productFilter.toLowerCase();
       const productBatch = allBatches.find(b => b.productName === s.product);
       const productCategoryMatch = productBatch ? (productBatch.category || '').toLowerCase().includes(f) : false;
-      return s.customer.toLowerCase().includes(f) || 
-             s.product.toLowerCase().includes(f) ||
+      return (s.customer || '').toLowerCase().includes(f) || 
+             (s.product || '').toLowerCase().includes(f) ||
              (s.category || '').toLowerCase().includes(f) ||
              (s.orderNo || '').toLowerCase().includes(f) ||
              productCategoryMatch;

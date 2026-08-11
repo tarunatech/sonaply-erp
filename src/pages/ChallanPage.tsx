@@ -179,10 +179,10 @@ export default function ChallanPage() {
     const f = filter.toLowerCase();
     return groupedChallans.filter(g => {
       const orderNo = sales.find(s => s.id === g.salesId)?.orderNo || "";
-      return g.challanNo.toLowerCase().includes(f) ||
-             g.customer.toLowerCase().includes(f) ||
+      return (g.challanNo || '').toLowerCase().includes(f) ||
+             (g.customer || '').toLowerCase().includes(f) ||
              orderNo.toLowerCase().includes(f) ||
-             g.items.some(item => item.product.toLowerCase().includes(f));
+             g.items.some(item => (item.product || '').toLowerCase().includes(f));
     });
   }, [groupedChallans, filter, sales]);
 
@@ -192,9 +192,9 @@ export default function ChallanPage() {
     return challans.filter(c => {
       const sale = sales.find(s => s.id === c.salesId);
       const orderNo = sale?.orderNo || "";
-      return c.customer.toLowerCase().includes(f) ||
-             c.product.toLowerCase().includes(f) ||
-             c.challanNo.toLowerCase().includes(f) ||
+      return (c.customer || '').toLowerCase().includes(f) ||
+             (c.product || '').toLowerCase().includes(f) ||
+             (c.challanNo || '').toLowerCase().includes(f) ||
              orderNo.toLowerCase().includes(f);
     });
   }, [challans, sales, filter]);
