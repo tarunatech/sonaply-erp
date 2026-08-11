@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Download, Pencil, Trash2, UserCircle, UserPlus, FileSpreadsheet, Upload, FileDown } from "lucide-react";
+import { Download, Pencil, Trash2, UserCircle, UserPlus, FileSpreadsheet, Upload, FileDown, CheckCircle2, AlertTriangle } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -47,6 +47,66 @@ export default function ClientsPage() {
     c.phone.includes(filter)
   );
 
+  const analyzedImportedClients = useMemo(() => {
+    const existingNames = new Map<string, string>();
+    const existingPhones = new Map<string, string>();
+
+    clients.forEach(c => {
+      if (c.name) existingNames.set(c.name.trim().toLowerCase(), c.name);
+      if (c.phone && c.phone.trim()) existingPhones.set(c.phone.trim(), c.name);
+    });
+
+    const batchNames = new Set<string>();
+    const batchPhones = new Set<string>();
+
+    return importedClients.map((item) => {
+      const nameTrimmed = item.name.trim();
+      const nameLower = nameTrimmed.toLowerCase();
+      const phoneTrimmed = item.phone ? item.phone.trim() : "";
+
+      const dbNameOwner = existingNames.get(nameLower);
+      const dbPhoneOwner = phoneTrimmed ? existingPhones.get(phoneTrimmed) : null;
+      const isBatchNameDup = batchNames.has(nameLower);
+      const isBatchPhoneDup = phoneTrimmed ? batchPhones.has(phoneTrimmed) : false;
+
+      const nameExists = Boolean(dbNameOwner || isBatchNameDup);
+      const phoneExists = Boolean(dbPhoneOwner || isBatchPhoneDup);
+
+      let status: "valid" | "duplicate" = "valid";
+      let reason = "";
+
+      if (nameExists && phoneExists) {
+        status = "duplicate";
+        if (dbPhoneOwner && dbPhoneOwner.toLowerCase() !== nameLower) {
+          reason = `Name & Phone exist (Phone used by "${dbPhoneOwner}")`;
+        } else {
+          reason = "Name & Phone already in DB";
+        }
+      } else if (nameExists) {
+        status = "duplicate";
+        reason = isBatchNameDup ? "Duplicate name in file" : "Name already in DB";
+      } else if (phoneExists) {
+        status = "duplicate";
+        reason = isBatchPhoneDup
+          ? "Duplicate phone in file"
+          : `Phone used by "${dbPhoneOwner}"`;
+      } else {
+        batchNames.add(nameLower);
+        if (phoneTrimmed) batchPhones.add(phoneTrimmed);
+      }
+
+      return {
+        ...item,
+        status,
+        reason,
+      };
+    });
+  }, [importedClients, clients]);
+
+  const validImportCount = useMemo(() => {
+    return analyzedImportedClients.filter((c) => c.status === "valid").length;
+  }, [analyzedImportedClients]);
+
   const handleDelete = async (id: string) => {
     const password = window.prompt("Please enter admin password to delete:");
     if (password !== 'admin') {
@@ -62,21 +122,29 @@ export default function ClientsPage() {
 
   const handleEditSave = async () => {
     if (!editingClient) return;
-    await updateClient(editingClient.id, editingClient);
-    refresh();
-    setEditingClient(null);
-    toast({ title: "Client profile updated" });
+    try {
+      await updateClient(editingClient.id, editingClient);
+      refresh();
+      setEditingClient(null);
+      toast({ title: "Client profile updated" });
+    } catch (err: any) {
+      toast({ title: "Failed to update profile", description: err.message, variant: "destructive" });
+    }
   };
   const handleAddClient = async () => {
     if (!newClient.name) {
       toast({ title: "Please enter client name", variant: "destructive" });
       return;
     }
-    await addClient(newClient);
-    refresh();
-    setShowAddDialog(false);
-    setNewClient({ name: '', phone: '', priceCategory: 'Regular' });
-    toast({ title: "New client profile created" });
+    try {
+      await addClient(newClient);
+      refresh();
+      setShowAddDialog(false);
+      setNewClient({ name: '', phone: '', priceCategory: 'Regular' });
+      toast({ title: "New client profile created" });
+    } catch (err: any) {
+      toast({ title: "Failed to create profile", description: err.message, variant: "destructive" });
+    }
   };
 
   const pickClientSuggestion = (client: Client) => {
@@ -148,16 +216,33 @@ export default function ClientsPage() {
   };
 
   const handleConfirmImport = async () => {
-    if (importedClients.length === 0) return;
+    const validClients = analyzedImportedClients.filter(c => c.status === 'valid');
+    if (validClients.length === 0) {
+      toast({
+        title: "No new valid clients to import",
+        description: "All client rows in this file already exist in the database or are duplicates.",
+        variant: "destructive"
+      });
+      return;
+    }
     setIsImporting(true);
     try {
-      const res = await addClientBulk(importedClients);
+      const res = await addClientBulk(validClients);
       refresh();
       setShowImportDialog(false);
       setImportedClients([]);
+
+      const storedCount = res.count ?? validClients.length;
+      const skippedInFile = importedClients.length - storedCount;
+
+      let desc = `Successfully stored ${storedCount} new client${storedCount === 1 ? '' : 's'} in the database.`;
+      if (skippedInFile > 0) {
+        desc += ` ${skippedInFile} client${skippedInFile === 1 ? '' : 's'} skipped (duplicate name or phone number).`;
+      }
+
       toast({
-        title: "Import Successful",
-        description: `Successfully stored ${res.count || importedClients.length} clients in the database.`,
+        title: "Import Complete",
+        description: desc,
       });
     } catch (err: any) {
       toast({
@@ -415,16 +500,24 @@ export default function ClientsPage() {
 
       {/* Excel Import Dialog */}
       <Dialog open={showImportDialog} onOpenChange={setShowImportDialog}>
-        <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
+        <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-xl">
               <FileSpreadsheet className="h-5 w-5 text-blue-600" />
-              Preview Excel Import ({importedClients.length} Clients)
+              Preview Excel Import ({importedClients.length} Total Clients)
             </DialogTitle>
           </DialogHeader>
           <div className="text-sm text-muted-foreground">
-            Review the clients parsed from your file before saving to database. Duplicate names will be updated automatically.
+            Review parsed clients below. Clients with a name or non-empty phone number that already exists in the database (or repeated in this file) will be <strong>skipped automatically</strong>.
           </div>
+          {analyzedImportedClients.length - validImportCount > 0 && (
+            <div className="text-xs bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 p-2.5 rounded-md flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
+              <span>
+                <strong>{analyzedImportedClients.length - validImportCount} client(s)</strong> will be skipped because their name or phone number already exists.
+              </span>
+            </div>
+          )}
           <div className="overflow-y-auto max-h-[50vh] border rounded-md my-2">
             <Table>
               <TableHeader>
@@ -433,11 +526,12 @@ export default function ClientsPage() {
                   <TableHead>Client Name</TableHead>
                   <TableHead>Phone Number</TableHead>
                   <TableHead>Price Category</TableHead>
+                  <TableHead className="text-right">Import Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {importedClients.map((item, idx) => (
-                  <TableRow key={idx}>
+                {analyzedImportedClients.map((item, idx) => (
+                  <TableRow key={idx} className={item.status !== 'valid' ? 'bg-muted/40 opacity-75' : ''}>
                     <TableCell className="text-xs text-muted-foreground">{idx + 1}</TableCell>
                     <TableCell className="font-medium">{item.name}</TableCell>
                     <TableCell>{item.phone || "-"}</TableCell>
@@ -445,6 +539,17 @@ export default function ClientsPage() {
                       <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-xs font-medium border border-primary/20">
                         {item.priceCategory}
                       </span>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {item.status === 'valid' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-xs font-medium border border-emerald-500/20">
+                          <CheckCircle2 className="h-3 w-3" /> Ready
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-400 text-xs font-medium border border-amber-500/20" title={item.reason}>
+                          <AlertTriangle className="h-3 w-3" /> Skip ({item.reason})
+                        </span>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -455,8 +560,8 @@ export default function ClientsPage() {
             <Button variant="outline" onClick={() => setShowImportDialog(false)} disabled={isImporting}>
               Cancel
             </Button>
-            <Button onClick={handleConfirmImport} disabled={isImporting || importedClients.length === 0} className="bg-blue-600 hover:bg-blue-700 text-white">
-              {isImporting ? "Saving to Database..." : `Save ${importedClients.length} Clients`}
+            <Button onClick={handleConfirmImport} disabled={isImporting || validImportCount === 0} className="bg-blue-600 hover:bg-blue-700 text-white">
+              {isImporting ? "Saving to Database..." : `Save ${validImportCount} New Client${validImportCount === 1 ? '' : 's'}`}
             </Button>
           </DialogFooter>
         </DialogContent>

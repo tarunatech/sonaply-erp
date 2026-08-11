@@ -610,7 +610,7 @@ export const deleteClient = (id: string) =>
 export const addClientBulk = (
   clients: Array<{ name: string; phone?: string; priceCategory?: string }>
 ) =>
-  request<{ success: boolean; count: number; clients: any[] }>("/clients/bulk", {
+  request<{ success: boolean; count: number; skippedCount: number; clients: any[]; skipped: any[] }>("/clients/bulk", {
     method: "POST",
     body: JSON.stringify(
       clients.map((c) => ({

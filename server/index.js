@@ -3006,10 +3006,39 @@ app.get("/api/clients", async (req, res) => {
 
 app.post("/api/clients", async (req, res) => {
   const { name, phone, price_category } = req.body;
+  const nameTrimmed = name ? String(name).trim() : "";
+  const phoneTrimmed = phone ? String(phone).trim() : "";
+
+  if (!nameTrimmed) {
+    return res.status(400).json({ error: "Client name is required" });
+  }
+
   try {
+    // Check duplicate name
+    const existingName = await db.query(
+      "SELECT id, name FROM clients WHERE LOWER(TRIM(name)) = LOWER($1)",
+      [nameTrimmed]
+    );
+    if (existingName.rows.length > 0) {
+      return res.status(400).json({ error: `Client "${nameTrimmed}" already exists in DB` });
+    }
+
+    // Check duplicate phone
+    if (phoneTrimmed) {
+      const existingPhone = await db.query(
+        "SELECT id, name FROM clients WHERE TRIM(phone) = $1",
+        [phoneTrimmed]
+      );
+      if (existingPhone.rows.length > 0) {
+        return res.status(400).json({
+          error: `Phone number "${phoneTrimmed}" is already registered to "${existingPhone.rows[0].name}"`,
+        });
+      }
+    }
+
     const result = await db.query(
-      "INSERT INTO clients (name, phone, price_category) VALUES ($1, $2, $3) ON CONFLICT (name) DO UPDATE SET phone = EXCLUDED.phone, price_category = EXCLUDED.price_category RETURNING *",
-      [name, phone, price_category],
+      "INSERT INTO clients (name, phone, price_category) VALUES ($1, $2, $3) RETURNING *",
+      [nameTrimmed, phoneTrimmed, price_category || "Regular"],
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -3024,26 +3053,82 @@ app.post("/api/clients/bulk", async (req, res) => {
   }
   try {
     await db.query("BEGIN");
+
+    // Fetch existing clients to check for duplicate names and phone numbers
+    const existingDbClients = await db.query(
+      "SELECT id, name, phone FROM clients"
+    );
+
+    const existingNames = new Map(); // nameLower -> row
+    const existingPhones = new Map(); // phoneTrimmed -> row
+
+    for (const row of existingDbClients.rows) {
+      if (row.name) existingNames.set(row.name.trim().toLowerCase(), row);
+      if (row.phone && row.phone.trim()) existingPhones.set(row.phone.trim(), row);
+    }
+
     const inserted = [];
+    const skipped = [];
+
     for (const c of clients) {
-      if (!c.name || !String(c.name).trim()) continue;
+      const nameTrimmed = c.name ? String(c.name).trim() : "";
+      const phoneTrimmed = c.phone ? String(c.phone).trim() : "";
+      const nameLower = nameTrimmed.toLowerCase();
+
+      if (!nameTrimmed) {
+        skipped.push({ ...c, reason: "Missing client name" });
+        continue;
+      }
+
+      const nameMatch = existingNames.get(nameLower);
+      const phoneMatch = phoneTrimmed ? existingPhones.get(phoneTrimmed) : null;
+
+      if (nameMatch && phoneMatch) {
+        const phoneOwner = phoneMatch.name;
+        const reason = phoneOwner.toLowerCase() !== nameLower
+          ? `Name & Phone exist (Phone used by "${phoneOwner}")`
+          : `Client "${nameTrimmed}" already exists in DB`;
+        skipped.push({ ...c, reason });
+        continue;
+      }
+
+      if (nameMatch) {
+        skipped.push({ ...c, reason: `Client name "${nameTrimmed}" already exists in DB` });
+        continue;
+      }
+
+      if (phoneMatch) {
+        skipped.push({ ...c, reason: `Phone number "${phoneTrimmed}" already belongs to "${phoneMatch.name}"` });
+        continue;
+      }
+
       const result = await db.query(
         `INSERT INTO clients (name, phone, price_category)
          VALUES ($1, $2, $3)
-         ON CONFLICT (name) DO UPDATE SET
-           phone = EXCLUDED.phone,
-           price_category = EXCLUDED.price_category
          RETURNING *`,
         [
-          String(c.name).trim(),
-          c.phone ? String(c.phone).trim() : "",
+          nameTrimmed,
+          phoneTrimmed,
           c.price_category ? String(c.price_category).trim() : "Regular",
         ]
       );
-      inserted.push(result.rows[0]);
+
+      const newRow = result.rows[0];
+      inserted.push(newRow);
+      existingNames.set(nameLower, newRow);
+      if (phoneTrimmed) {
+        existingPhones.set(phoneTrimmed, newRow);
+      }
     }
+
     await db.query("COMMIT");
-    res.json({ success: true, count: inserted.length, clients: inserted });
+    res.json({
+      success: true,
+      count: inserted.length,
+      skippedCount: skipped.length,
+      clients: inserted,
+      skipped,
+    });
   } catch (err) {
     await db.query("ROLLBACK");
     res.status(500).json({ error: err.message });
@@ -3053,10 +3138,35 @@ app.post("/api/clients/bulk", async (req, res) => {
 app.put("/api/clients/:id", async (req, res) => {
   const { id } = req.params;
   const { name, phone, price_category } = req.body;
+  const nameTrimmed = name ? String(name).trim() : "";
+  const phoneTrimmed = phone ? String(phone).trim() : "";
+
   try {
+    if (nameTrimmed) {
+      const existingName = await db.query(
+        "SELECT id, name FROM clients WHERE LOWER(TRIM(name)) = LOWER($1) AND id != $2",
+        [nameTrimmed, id]
+      );
+      if (existingName.rows.length > 0) {
+        return res.status(400).json({ error: `Another client named "${nameTrimmed}" already exists` });
+      }
+    }
+
+    if (phoneTrimmed) {
+      const existingPhone = await db.query(
+        "SELECT id, name FROM clients WHERE TRIM(phone) = $1 AND id != $2",
+        [phoneTrimmed, id]
+      );
+      if (existingPhone.rows.length > 0) {
+        return res.status(400).json({
+          error: `Phone number "${phoneTrimmed}" is already registered to "${existingPhone.rows[0].name}"`,
+        });
+      }
+    }
+
     const result = await db.query(
       "UPDATE clients SET name = $1, phone = $2, price_category = $3 WHERE id = $4 RETURNING *",
-      [name, phone, price_category, id],
+      [nameTrimmed, phoneTrimmed, price_category, id],
     );
     res.json(result.rows[0]);
   } catch (err) {

@@ -475,6 +475,32 @@ async function migrate() {
       await db.query('ALTER TABLE challans DROP COLUMN IF EXISTS order_number');
     }
 
+    // 11. Clients data normalization and column checks
+    console.log('Step 11: Normalizing clients data and ensuring columns...');
+    await addColumnIfNotExist('clients', 'phone TEXT');
+    await addColumnIfNotExist('clients', 'price_category TEXT DEFAULT \'Regular\'');
+    await addColumnIfNotExist('clients', 'created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
+
+    await db.query(`UPDATE clients SET price_category = 'Regular' WHERE price_category IS NULL OR TRIM(price_category) = ''`);
+    await db.query(`UPDATE clients SET name = TRIM(name) WHERE name IS NOT NULL AND name != TRIM(name)`);
+    await db.query(`UPDATE clients SET phone = TRIM(phone) WHERE phone IS NOT NULL AND phone != TRIM(phone)`);
+    await db.query(`UPDATE clients SET phone = NULL WHERE phone IS NOT NULL AND TRIM(phone) = ''`);
+
+    // 12. Migrate nil_qty to display_qty if legacy column exists
+    console.log('Step 12: Checking legacy nil_qty column on batches...');
+    if (await columnExists('batches', 'nil_qty')) {
+      await db.query(`UPDATE batches SET display_qty = nil_qty WHERE display_qty = 0 AND nil_qty > 0`);
+    }
+
+    // 13. Ensuring indexes exist for query performance
+    console.log('Step 13: Creating database indexes...');
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_sales_order_no ON sales(order_no)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_sales_customer ON sales(customer)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_challans_sales_id ON challans(sales_id)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_batches_product_name ON batches(product_name)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_clients_name_lower ON clients(LOWER(TRIM(name)))`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_clients_phone ON clients(TRIM(phone)) WHERE phone IS NOT NULL`);
+
     console.log('✅ All migrations applied successfully!');
   } catch (err) {
     console.error('❌ Database migration failed:', err);
