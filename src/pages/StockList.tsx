@@ -205,17 +205,18 @@ export default function StockList() {
 
   const downloadExcelTemplate = () => {
     const headers = [
-      "productName",
-      "category",
-      "batchNum",
-      "supplier",
-      "date",
-      "availableQty",
-      "damageQty",
-      "displayQty",
-      "description",
-      "isNil",
-      "isCancelled",
+      "Product Name",
+      "Category",
+      "Batch Number",
+      "Supplier",
+      "Date",
+      "Available Qty",
+      "Damage Qty",
+      "Display Qty",
+      "Description",
+      "Is Not next Folder",
+      "Is Dead Stock",
+      "Is Nil",
     ];
     const today = getLocalDateString();
     // Format as dd-mm-yyyy for the template (matches user CSV format)
@@ -230,8 +231,9 @@ export default function StockList() {
       "0",
       "0",
       "Optional note",
-      "false",
-      "false",
+      "No",
+      "No",
+      "No",
     ];
     const csv = [
       headers.join(","),
@@ -298,29 +300,77 @@ export default function StockList() {
     };
 
     const mapKeys = {
-      productName: findHeader(["productName", "product_name", "product"]),
-      category: findHeader(["category"]),
+      productName: findHeader([
+        "Product Name",
+        "productName",
+        "product_name",
+        "product",
+      ]),
+      category: findHeader(["Category", "category"]),
       batchNumber: findHeader([
+        "Batch Number",
+        "Batch No",
         "batchNum",
         "batchNumber",
         "batchNo",
         "batch_number",
       ]),
-      supplier: findHeader(["supplier", "supplierName", "supplier_name"]),
-      quantity: findHeader(["quantity", "qty"]),
-      date: findHeader(["date"]),
-      availableQty: findHeader(["availableQty", "available_qty", "available"]),
-      damageQty: findHeader(["damageQty", "damage_qty", "damage"]),
+      supplier: findHeader([
+        "Supplier",
+        "Supplier Name",
+        "supplier",
+        "supplierName",
+        "supplier_name",
+      ]),
+      quantity: findHeader(["Quantity", "quantity", "Qty", "qty"]),
+      date: findHeader(["Date", "date"]),
+      availableQty: findHeader([
+        "Available Qty",
+        "availableQty",
+        "available_qty",
+        "available",
+      ]),
+      damageQty: findHeader([
+        "Damage Qty",
+        "damageQty",
+        "damage_qty",
+        "damage",
+      ]),
       displayQty: findHeader([
+        "Display Qty",
         "displayQty",
         "display_qty",
         "display",
         "nilQty",
         "nil_qty",
       ]),
-      description: findHeader(["description", "desc", "notes", "narration"]),
-      isNil: findHeader(["isNil", "is_nil", "nil"]),
-      isCancelled: findHeader(["isCancelled", "is_cancelled", "cancelled"]),
+      description: findHeader([
+        "Description",
+        "description",
+        "desc",
+        "notes",
+        "narration",
+      ]),
+      isNil: findHeader([
+        "Is Not next Folder",
+        "isNotNextFolder",
+        "isNil",
+        "is_nil",
+        "not next folder",
+      ]),
+      isCancelled: findHeader([
+        "Is Dead Stock",
+        "isCancelled",
+        "is_cancelled",
+        "dead stock",
+        "deadstock",
+      ]),
+      isDeadStock: findHeader([
+        "Is Nil",
+        "isDeadStock",
+        "is_dead_stock",
+        "nil",
+      ]),
     };
 
     if (
@@ -331,7 +381,7 @@ export default function StockList() {
       toast({
         title: "Invalid template",
         description:
-          "Template must include columns for productName, category, and availableQty (or quantity).",
+          "Template must include columns for Product Name, Category, and Available Qty (or Quantity).",
         variant: "destructive",
       });
       return;
@@ -360,9 +410,15 @@ export default function StockList() {
       description: string;
       isNil: boolean;
       isCancelled: boolean;
+      isDeadStock: boolean;
     }
 
     const parsedRows: ParsedRow[] = [];
+
+    const parseBoolValue = (val: any) => {
+      const s = String(val || "").trim().toLowerCase();
+      return s === "true" || s === "yes" || s === "1";
+    };
 
     for (const line of lines.slice(1)) {
       const values = parseCsvLine(line);
@@ -415,11 +471,12 @@ export default function StockList() {
       const description = mapKeys.description
         ? row[mapKeys.description]?.trim() || ""
         : "";
-      const isNil = mapKeys.isNil
-        ? String(row[mapKeys.isNil] || "").toLowerCase() === "true"
-        : false;
+      const isNil = mapKeys.isNil ? parseBoolValue(row[mapKeys.isNil]) : false;
       const isCancelled = mapKeys.isCancelled
-        ? String(row[mapKeys.isCancelled] || "").toLowerCase() === "true"
+        ? parseBoolValue(row[mapKeys.isCancelled])
+        : false;
+      const isDeadStock = mapKeys.isDeadStock
+        ? parseBoolValue(row[mapKeys.isDeadStock])
         : false;
 
       // CSV columns are separate counts: availableQty, damageQty, displayQty
@@ -464,6 +521,7 @@ export default function StockList() {
           description,
           isNil,
           isCancelled,
+          isDeadStock,
         });
       });
     }
@@ -508,6 +566,7 @@ export default function StockList() {
         existing.displayQty += row.displayQty;
         if (row.isNil) existing.isNil = true;
         if (row.isCancelled) existing.isCancelled = true;
+        if (row.isDeadStock) existing.isDeadStock = true;
         if (!existing.description && row.description) existing.description = row.description;
         if (!existing.supplier && row.supplier) existing.supplier = row.supplier;
       }
@@ -534,6 +593,7 @@ export default function StockList() {
           description: row.description,
           isNil: row.isNil,
           isCancelled: row.isCancelled,
+          isDeadStock: row.isDeadStock,
         });
       }
     }
