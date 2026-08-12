@@ -562,7 +562,12 @@ async function migrate() {
     await db.query(`CREATE INDEX IF NOT EXISTS idx_sales_order_no ON sales(order_no)`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_sales_customer ON sales(customer)`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_challans_sales_id ON challans(sales_id)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_challans_customer ON challans(customer)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_challans_product ON challans(product)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_challans_cancelled ON challans(is_cancelled)`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_batches_product_name ON batches(product_name)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_sales_returns_product_name ON sales_returns(LOWER(TRIM(product_name)))`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_sales_returns_client_name ON sales_returns(LOWER(TRIM(client_name)))`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_clients_name_lower ON clients(LOWER(TRIM(name)))`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_clients_phone ON clients(TRIM(phone)) WHERE phone IS NOT NULL`);
 

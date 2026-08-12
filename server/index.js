@@ -207,7 +207,6 @@ app.post("/api/products", async (req, res) => {
 // --- Batches ---
 app.get("/api/batches", async (req, res) => {
   try {
-    await reconcileAllProductStocks();
     const result = await db.query(
       "SELECT * FROM batches ORDER BY date DESC, id DESC",
     );
@@ -750,11 +749,25 @@ async function reconcileAllProductStocks(productName) {
       const totalDeducted = Number(
         activeChallansRes.rows[0].total_deducted || 0,
       );
+
+      // Sum all sales return quantities for this product & batch
+      const activeReturnsRes = await db.query(
+        `SELECT COALESCE(SUM(quantity), 0) AS total_returned
+         FROM sales_returns
+         WHERE LOWER(TRIM(product_name)) = LOWER(TRIM($1))
+           AND (LOWER(TRIM(batch_no)) = LOWER(TRIM($2)) OR $2 = '0' OR $2 = '' OR batch_no IS NULL OR TRIM(batch_no) = '0')`,
+        [prod, bNo],
+      );
+
+      const totalReturned = Number(
+        activeReturnsRes.rows[0].total_returned || 0,
+      );
+
       const dispQty = Number(b.display_qty || 0);
       const dmgQty = Number(b.damage_qty || 0);
       const hldQty = Number(b.hold_qty || 0);
 
-      const newAvail = initialQty - totalDeducted - dispQty - dmgQty - hldQty;
+      const newAvail = initialQty - totalDeducted + totalReturned - dispQty - dmgQty - hldQty;
 
       await db.query("UPDATE batches SET available_qty = $1 WHERE id = $2", [
         newAvail,
@@ -1798,7 +1811,8 @@ app.post("/api/sales-returns", async (req, res) => {
       );
     }
 
-    // Resolve any negative stock across batches of this product
+    // Reconcile stock for this product so available_qty incorporates the sales return
+    await reconcileAllProductStocks(product_name);
     await resolveNegativeStock(product_name);
 
     await db.query("COMMIT");
@@ -1926,7 +1940,10 @@ app.put("/api/sales-returns/:id", async (req, res) => {
       ],
     );
 
-    // Resolve any negative stock across batches of this product
+    await reconcileAllProductStocks(finalProduct);
+    if (oldProduct && oldProduct !== finalProduct) {
+      await reconcileAllProductStocks(oldProduct);
+    }
     await resolveNegativeStock(finalProduct);
 
     await db.query("COMMIT");
@@ -1974,6 +1991,7 @@ app.delete("/api/sales-returns/:id", async (req, res) => {
     }
 
     await db.query("DELETE FROM sales_returns WHERE id = $1", [id]);
+    await reconcileAllProductStocks(oldProduct);
     await db.query("COMMIT");
     res.json({ success: true });
   } catch (err) {

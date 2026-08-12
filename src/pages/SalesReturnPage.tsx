@@ -41,23 +41,36 @@ export default function SalesReturnPage() {
   const [clientPhone, setClientPhone] = useState("");
   const [priceCategory, setPriceCategory] = useState("Regular");
   const [receiveDate, setReceiveDate] = useState(getLocalDateString());
-  const [productName, setProductName] = useState("");
-  const [batchNo, setBatchNo] = useState("");
-  const [quantity, setQuantity] = useState<number>(0);
-  const [notes, setNotes] = useState("");
+
+  interface ReturnItemRow {
+    productName: string;
+    batchNo: string;
+    quantity: number;
+    notes: string;
+  }
+
+  const [items, setItems] = useState<ReturnItemRow[]>([
+    { productName: "", batchNo: "", quantity: 0, notes: "" }
+  ]);
+
   const [returns, setReturns] = useState<SaleReturn[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [batches, setBatches] = useState<StockBatch[]>([]);
+
   const [showClientSuggestions, setShowClientSuggestions] = useState(false);
   const [selectedClientIndex, setSelectedClientIndex] = useState(-1);
-  const [showProductSuggestions, setShowProductSuggestions] = useState(false);
+
+  const [activeProductIndex, setActiveProductIndex] = useState<number | null>(null);
   const [selectedProductIndex, setSelectedProductIndex] = useState(-1);
+
   const clientContainerRef = useRef<HTMLDivElement>(null);
   const productContainerRef = useRef<HTMLDivElement>(null);
-  const { toast } = useToast();
   const receiveDateInputRef = useRef<HTMLButtonElement>(null);
-  const productNameInputRef = useRef<HTMLInputElement>(null);
-  const qtyInputRef = useRef<HTMLInputElement>(null);
+  const productInputsRef = useRef<(HTMLInputElement | null)[]>([]);
+  const qtyInputsRef = useRef<(HTMLInputElement | null)[]>([]);
+  const addBtnRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  const { toast } = useToast();
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
   const [editingReturn, setEditingReturn] = useState<SaleReturn | null>(null);
   const [filter, setFilter] = useState("");
@@ -109,18 +122,18 @@ export default function SalesReturnPage() {
     refresh();
   }, []);
 
-  const filteredProductSuggestions = useMemo(() => {
+  const getFilteredProductSuggestions = (query: string) => {
     const list = new Set<string>();
     batches.forEach(b => {
       if (b.productName && b.productName.trim()) {
         list.add(b.productName.trim());
       }
     });
-    const q = productName.toLowerCase().trim();
+    const q = query.toLowerCase().trim();
     const sorted = Array.from(list).sort();
     if (!q) return sorted.slice(0, 10);
     return sorted.filter(p => p.toLowerCase().includes(q)).slice(0, 10);
-  }, [batches, productName]);
+  };
 
   const filteredReturns = useMemo(() => {
     const sorted = [...returns].sort((a, b) => new Date(b.receiveDate).getTime() - new Date(a.receiveDate).getTime());
@@ -135,11 +148,6 @@ export default function SalesReturnPage() {
       (r.notes || '').toLowerCase().includes(q)
     );
   }, [returns, filter]);
-
-  const currentProductBatches = useMemo(() => {
-    if (!productName) return [];
-    return batches.filter(b => (b.productName || '').trim().toLowerCase() === productName.trim().toLowerCase());
-  }, [productName, batches]);
 
   const filteredClients = useMemo(() => {
     const q = clientName.toLowerCase().trim();
@@ -176,48 +184,86 @@ export default function SalesReturnPage() {
     }, 0);
   };
 
-  const pickProduct = (name: string) => {
-    setProductName(name);
+  const updateItem = (index: number, fields: Partial<ReturnItemRow>) => {
+    setItems(prev => {
+      const updated = [...prev];
+      updated[index] = { ...updated[index], ...fields };
+      return updated;
+    });
+  };
+
+  const pickProduct = (index: number, name: string) => {
     const matchedBatches = batches.filter(b => (b.productName || '').trim().toLowerCase() === name.trim().toLowerCase());
-    if (matchedBatches.length > 0) {
-      setBatchNo(matchedBatches[0].batchNumber || "0");
-    } else {
-      setBatchNo("");
-    }
-    setShowProductSuggestions(false);
+    const batchNo = matchedBatches.length > 0 ? (matchedBatches[0].batchNumber || "0") : "";
+    updateItem(index, { productName: name, batchNo });
+    setActiveProductIndex(null);
     setSelectedProductIndex(-1);
     setTimeout(() => {
-      qtyInputRef.current?.focus();
+      qtyInputsRef.current[index]?.focus();
     }, 50);
   };
 
+  const addItemRow = () => {
+    const newIdx = items.length;
+    setItems(prev => [...prev, { productName: "", batchNo: "", quantity: 0, notes: "" }]);
+    setTimeout(() => {
+      productInputsRef.current[newIdx]?.focus();
+    }, 50);
+  };
+
+  const removeItemRow = (index: number) => {
+    if (items.length <= 1) return;
+    setItems(prev => prev.filter((_, i) => i !== index));
+  };
+
   const handleSubmit = async () => {
-    if (!clientName || !productName || quantity <= 0) {
-      toast({ title: "Please fill client, product and quantity", variant: "destructive" });
+    if (!clientName.trim()) {
+      toast({ title: "Please select or enter a client name", variant: "destructive" });
       return;
     }
 
-    await addSalesReturn({
-      clientName,
-      clientPhone,
-      priceCategory,
-      receiveDate,
-      productName,
-      quantity,
-      batchNo: batchNo || undefined,
-      notes: notes || undefined,
-    });
-    await refresh();
-    window.dispatchEvent(new CustomEvent("erp-stock-updated"));
-    setClientName("");
-    setClientPhone("");
-    setPriceCategory("Regular");
-    setReceiveDate(getLocalDateString());
-    setProductName("");
-    setBatchNo("");
-    setQuantity(0);
-    setNotes("");
-    toast({ title: "Sales return saved", description: "Stock has been restored based on the return quantity." });
+    const validItems = items.filter(i => i.productName.trim() && i.quantity > 0);
+    if (validItems.length === 0) {
+      toast({ title: "Please add at least one product with quantity greater than 0", variant: "destructive" });
+      return;
+    }
+
+    try {
+      await Promise.all(
+        validItems.map(item =>
+          addSalesReturn({
+            clientName: clientName.trim(),
+            clientPhone: clientPhone || undefined,
+            priceCategory: priceCategory || "Regular",
+            receiveDate,
+            productName: item.productName.trim(),
+            quantity: item.quantity,
+            batchNo: item.batchNo || undefined,
+            notes: item.notes || undefined,
+          })
+        )
+      );
+
+      await refresh();
+      window.dispatchEvent(new CustomEvent("erp-stock-updated"));
+
+      setClientName("");
+      setClientPhone("");
+      setPriceCategory("Regular");
+      setReceiveDate(getLocalDateString());
+      setItems([{ productName: "", batchNo: "", quantity: 0, notes: "" }]);
+
+      toast({
+        title: "Sales return saved",
+        description: `Saved sales return for ${validItems.length} product(s). Stock list updated.`,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Save Failed",
+        description: err.message || "Failed to save sales return",
+        variant: "destructive",
+      });
+    }
   };
 
   return (
@@ -342,7 +388,7 @@ export default function SalesReturnPage() {
                         className={`w-full justify-start text-left font-normal h-9 text-xs bg-background border-input ${!receiveDate ? 'text-slate-400' : 'text-slate-900 font-medium'}`}
                         onKeyDown={e => {
                           if (e.key === 'Tab' && !e.shiftKey) {
-                            const nextInput = productNameInputRef.current;
+                            const nextInput = productInputsRef.current[0];
                             if (nextInput) {
                               e.preventDefault();
                               nextInput.focus();
@@ -372,109 +418,189 @@ export default function SalesReturnPage() {
                     </PopoverContent>
                   </Popover>
                 </div>
-                <div className="sm:col-span-2">
-                  <Label>Product Name *</Label>
-                  <div className="relative">
-                    <Input
-                      ref={productNameInputRef}
-                      value={productName}
-                      onChange={e => {
-                        const val = e.target.value;
-                        setProductName(val);
-                        setShowProductSuggestions(true);
-                        setSelectedProductIndex(-1);
-                        const matched = batches.filter(b => (b.productName || '').trim().toLowerCase() === val.trim().toLowerCase());
-                        if (matched.length > 0) {
-                          setBatchNo(matched[0].batchNumber || "0");
-                        } else {
-                          setBatchNo("");
-                        }
-                      }}
-                      onFocus={() => {
-                        setShowProductSuggestions(true);
-                        setSelectedProductIndex(-1);
-                      }}
-                      onBlur={() => setTimeout(() => {
-                        setShowProductSuggestions(false);
-                        setSelectedProductIndex(-1);
-                      }, 200)}
-                      onKeyDown={e => {
-                        if (!showProductSuggestions || filteredProductSuggestions.length === 0) return;
-                        if (e.key === 'ArrowDown') {
-                          e.preventDefault();
-                          setSelectedProductIndex(prev => (prev < filteredProductSuggestions.length - 1 ? prev + 1 : prev));
-                        } else if (e.key === 'ArrowUp') {
-                          e.preventDefault();
-                          setSelectedProductIndex(prev => (prev > 0 ? prev - 1 : prev));
-                        } else if (e.key === 'Enter' && selectedProductIndex >= 0) {
-                          e.preventDefault();
-                          pickProduct(filteredProductSuggestions[selectedProductIndex]);
-                        } else if (e.key === 'Tab' && selectedProductIndex >= 0) {
-                          e.preventDefault();
-                          pickProduct(filteredProductSuggestions[selectedProductIndex]);
-                        } else if (e.key === 'Escape') {
-                          setShowProductSuggestions(false);
-                          setSelectedProductIndex(-1);
-                        }
-                      }}
-                      placeholder="Search product from stock"
-                      autoComplete="off"
-                    />
-                    {showProductSuggestions && filteredProductSuggestions.length > 0 && (
-                      <div ref={productContainerRef} className="absolute z-[110] w-full mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-y-auto">
-                        {filteredProductSuggestions.map((p, i) => (
-                          <div
-                            key={p}
-                            className={`px-3 py-2 cursor-pointer text-sm text-popover-foreground border-b last:border-0 ${selectedProductIndex === i ? 'bg-accent' : 'hover:bg-accent'}`}
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              pickProduct(p);
-                            }}
-                          >
-                            <div className="font-medium">{p}</div>
-                            <div className="text-xs text-muted-foreground">
-                              {batches.filter(b => (b.productName || '').trim().toLowerCase() === p.trim().toLowerCase()).reduce((sum, b) => sum + (b.availableQty || 0), 0)} available in stock
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+              </div>
+
+              <div className="border-t pt-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label className="text-base font-semibold text-slate-900">Return Products *</Label>
+                </div>
+
+                <div className="border rounded-md divide-y bg-background overflow-visible shadow-sm">
+                  <div className="grid grid-cols-12 gap-3 px-3 py-2.5 bg-slate-100/70 font-semibold text-xs text-slate-700 border-b">
+                    <div className="col-span-12 sm:col-span-4">Product Name *</div>
+                    <div className="col-span-6 sm:col-span-2">Batch No</div>
+                    <div className="col-span-6 sm:col-span-2">Return Qty *</div>
+                    <div className="col-span-10 sm:col-span-3">Notes</div>
+                    <div className="col-span-2 sm:col-span-1 text-center">Action</div>
                   </div>
-                </div>
-                <div>
-                  <Label>Batch No</Label>
-                  {productName ? (
-                    <Select value={batchNo} onValueChange={setBatchNo} disabled={currentProductBatches.length <= 1}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select Batch" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {currentProductBatches.map(b => {
-                          const batchVal = b.batchNumber || "0";
-                          return (
-                            <SelectItem key={b.id} value={batchVal}>
-                              {batchVal} (Avail: {b.availableQty})
-                            </SelectItem>
-                          );
-                        })}
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <Input disabled placeholder="Select product first" />
-                  )}
-                </div>
-                <div>
-                  <Label>Return Quantity *</Label>
-                  <Input ref={qtyInputRef} type="number" value={quantity || ""} onChange={e => setQuantity(Number(e.target.value))} min={1} />
-                </div>
-                <div className="sm:col-span-4">
-                  <Label>Notes</Label>
-                  <Input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Reason for return, condition, etc." />
+
+                  {items.map((item, index) => {
+                    const currentProductBatches = item.productName
+                      ? batches.filter(b => (b.productName || '').trim().toLowerCase() === item.productName.trim().toLowerCase())
+                      : [];
+                    const suggestions = getFilteredProductSuggestions(item.productName);
+
+                    return (
+                      <div key={index} className="grid grid-cols-12 gap-3 items-center px-3 py-3 relative border-b last:border-0 hover:bg-slate-50/50">
+                        {/* Product Name with suggestions */}
+                        <div className="col-span-12 sm:col-span-4 relative">
+                          <Input
+                            ref={el => { productInputsRef.current[index] = el; }}
+                            value={item.productName}
+                            onChange={e => {
+                              const val = e.target.value;
+                              const matched = batches.filter(b => (b.productName || '').trim().toLowerCase() === val.trim().toLowerCase());
+                              const defaultBatch = matched.length > 0 ? (matched[0].batchNumber || "0") : "";
+                              updateItem(index, { productName: val, batchNo: defaultBatch });
+                              setActiveProductIndex(index);
+                              setSelectedProductIndex(-1);
+                            }}
+                            onFocus={() => {
+                              setActiveProductIndex(index);
+                              setSelectedProductIndex(-1);
+                            }}
+                            onBlur={() => setTimeout(() => {
+                              if (activeProductIndex === index) {
+                                setActiveProductIndex(null);
+                                setSelectedProductIndex(-1);
+                              }
+                            }, 200)}
+                            onKeyDown={e => {
+                              if (activeProductIndex === index && suggestions.length > 0) {
+                                if (e.key === 'ArrowDown') {
+                                  e.preventDefault();
+                                  setSelectedProductIndex(prev => (prev < suggestions.length - 1 ? prev + 1 : prev));
+                                } else if (e.key === 'ArrowUp') {
+                                  e.preventDefault();
+                                  setSelectedProductIndex(prev => (prev > 0 ? prev - 1 : prev));
+                                } else if (e.key === 'Enter') {
+                                  if (selectedProductIndex >= 0 && selectedProductIndex < suggestions.length) {
+                                    e.preventDefault();
+                                    pickProduct(index, suggestions[selectedProductIndex]);
+                                  } else {
+                                    e.preventDefault();
+                                    qtyInputsRef.current[index]?.focus();
+                                  }
+                                } else if (e.key === 'Tab') {
+                                  if (selectedProductIndex >= 0 && selectedProductIndex < suggestions.length) {
+                                    pickProduct(index, suggestions[selectedProductIndex]);
+                                  }
+                                } else if (e.key === 'Escape') {
+                                  setActiveProductIndex(null);
+                                  setSelectedProductIndex(-1);
+                                }
+                              } else if (e.key === 'Enter') {
+                                e.preventDefault();
+                                qtyInputsRef.current[index]?.focus();
+                              }
+                            }}
+                            placeholder="Search product from stock"
+                            autoComplete="off"
+                            className="h-9 text-xs"
+                          />
+                          {activeProductIndex === index && suggestions.length > 0 && (
+                            <div ref={productContainerRef} className="absolute z-[110] w-full mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-y-auto left-0">
+                              {suggestions.map((p, i) => (
+                                <div
+                                  key={p}
+                                  className={`px-3 py-2 cursor-pointer text-xs text-popover-foreground border-b last:border-0 ${selectedProductIndex === i ? 'bg-accent font-medium' : 'hover:bg-accent'}`}
+                                  onMouseDown={e => {
+                                    e.preventDefault();
+                                    pickProduct(index, p);
+                                  }}
+                                >
+                                  <div className="font-medium">{p}</div>
+                                  <div className="text-[11px] text-muted-foreground">
+                                    {batches.filter(b => (b.productName || '').trim().toLowerCase() === p.trim().toLowerCase()).reduce((sum, b) => sum + (b.availableQty || 0), 0)} available in stock
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Batch No Select */}
+                        <div className="col-span-6 sm:col-span-2">
+                          {item.productName ? (
+                            <Select value={item.batchNo} onValueChange={val => updateItem(index, { batchNo: val })} disabled={currentProductBatches.length <= 1}>
+                              <SelectTrigger className="h-9 text-xs">
+                                <SelectValue placeholder="Select Batch" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {currentProductBatches.map(b => {
+                                  const batchVal = b.batchNumber || "0";
+                                  return (
+                                    <SelectItem key={b.id} value={batchVal} className="text-xs">
+                                      {batchVal} (Avail: {b.availableQty})
+                                    </SelectItem>
+                                  );
+                                })}
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <Input disabled placeholder="Select product first" className="h-9 text-xs" />
+                          )}
+                        </div>
+
+                        {/* Return Quantity Input */}
+                        <div className="col-span-6 sm:col-span-2">
+                          <Input
+                            ref={el => { qtyInputsRef.current[index] = el; }}
+                            type="number"
+                            value={item.quantity || ""}
+                            onChange={e => updateItem(index, { quantity: Number(e.target.value) })}
+                            min={1}
+                            placeholder="Return qty"
+                            className="h-9 text-xs font-semibold"
+                          />
+                        </div>
+
+                        {/* Notes */}
+                        <div className="col-span-10 sm:col-span-3">
+                          <Input
+                            value={item.notes}
+                            onChange={e => updateItem(index, { notes: e.target.value })}
+                            placeholder="Reason for return, condition, etc."
+                            className="h-9 text-xs"
+                          />
+                        </div>
+
+                        {/* Action Buttons (+ Add and Trash) */}
+                        <div className="col-span-2 sm:col-span-1 flex items-center justify-center gap-1">
+                          <Button
+                            ref={el => { addBtnRefs.current[index] = el; }}
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="h-8 w-8 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 border-emerald-300"
+                            onClick={addItemRow}
+                            title="Add another product row"
+                          >
+                            <Plus className="h-4 w-4" />
+                          </Button>
+
+                          {items.length > 1 && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-destructive hover:bg-destructive/10"
+                              onClick={() => removeItemRow(index)}
+                              title="Remove this product row"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
-              <div className="flex justify-end">
-                <Button onClick={handleSubmit}>
-                  <Plus className="mr-2 h-4 w-4" /> Save Return
+
+              <div className="flex justify-end pt-2">
+                <Button onClick={handleSubmit} size="lg" className="px-6">
+                  <Plus className="mr-2 h-4 w-4" /> Save Return ({items.filter(i => i.productName.trim() && i.quantity > 0).length} items)
                 </Button>
               </div>
             </CardContent>
