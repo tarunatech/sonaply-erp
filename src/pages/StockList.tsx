@@ -1150,7 +1150,7 @@ export default function StockList() {
                       htmlFor="isNil"
                       className={`text-xs font-semibold cursor-pointer pointer-events-none ${editingBatch.isNil ? "text-blue-900 font-bold" : "text-blue-600"}`}
                     >
-                      Nil
+                      Not next Folder
                     </Label>
                   </div>
                   <div
@@ -1181,7 +1181,7 @@ export default function StockList() {
                       htmlFor="isCancelled"
                       className={`text-xs font-semibold cursor-pointer pointer-events-none ${editingBatch.isCancelled ? "text-red-900 font-bold" : "text-destructive"}`}
                     >
-                      Cancelled
+                      Dead Stock
                     </Label>
                   </div>
                   <div
@@ -1212,7 +1212,7 @@ export default function StockList() {
                       htmlFor="isDeadStock"
                       className={`text-xs font-semibold cursor-pointer pointer-events-none ${editingBatch.isDeadStock ? "text-white font-bold" : "text-slate-800"}`}
                     >
-                      DeadStock
+                      Nil
                     </Label>
                   </div>
                 </div>

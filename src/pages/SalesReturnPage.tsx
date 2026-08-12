@@ -109,11 +109,18 @@ export default function SalesReturnPage() {
     refresh();
   }, []);
 
-  const productSuggestions = useMemo(() => {
+  const filteredProductSuggestions = useMemo(() => {
     const list = new Set<string>();
-    batches.forEach(b => list.add(b.productName));
-    return Array.from(list).sort();
-  }, [batches]);
+    batches.forEach(b => {
+      if (b.productName && b.productName.trim()) {
+        list.add(b.productName.trim());
+      }
+    });
+    const q = productName.toLowerCase().trim();
+    const sorted = Array.from(list).sort();
+    if (!q) return sorted.slice(0, 10);
+    return sorted.filter(p => p.toLowerCase().includes(q)).slice(0, 10);
+  }, [batches, productName]);
 
   const filteredReturns = useMemo(() => {
     const sorted = [...returns].sort((a, b) => new Date(b.receiveDate).getTime() - new Date(a.receiveDate).getTime());
@@ -131,7 +138,7 @@ export default function SalesReturnPage() {
 
   const currentProductBatches = useMemo(() => {
     if (!productName) return [];
-    return batches.filter(b => b.productName === productName);
+    return batches.filter(b => (b.productName || '').trim().toLowerCase() === productName.trim().toLowerCase());
   }, [productName, batches]);
 
   const filteredClients = useMemo(() => {
@@ -171,9 +178,11 @@ export default function SalesReturnPage() {
 
   const pickProduct = (name: string) => {
     setProductName(name);
-    const matchedBatch = batches.find(b => b.productName === name);
-    if (matchedBatch && !batchNo) {
-      setBatchNo(matchedBatch.batchNumber);
+    const matchedBatches = batches.filter(b => (b.productName || '').trim().toLowerCase() === name.trim().toLowerCase());
+    if (matchedBatches.length > 0) {
+      setBatchNo(matchedBatches[0].batchNumber || "0");
+    } else {
+      setBatchNo("");
     }
     setShowProductSuggestions(false);
     setSelectedProductIndex(-1);
@@ -370,9 +379,16 @@ export default function SalesReturnPage() {
                       ref={productNameInputRef}
                       value={productName}
                       onChange={e => {
-                        setProductName(e.target.value);
+                        const val = e.target.value;
+                        setProductName(val);
                         setShowProductSuggestions(true);
-                        setBatchNo('');
+                        setSelectedProductIndex(-1);
+                        const matched = batches.filter(b => (b.productName || '').trim().toLowerCase() === val.trim().toLowerCase());
+                        if (matched.length > 0) {
+                          setBatchNo(matched[0].batchNumber || "0");
+                        } else {
+                          setBatchNo("");
+                        }
                       }}
                       onFocus={() => {
                         setShowProductSuggestions(true);
@@ -383,19 +399,19 @@ export default function SalesReturnPage() {
                         setSelectedProductIndex(-1);
                       }, 200)}
                       onKeyDown={e => {
-                        if (!showProductSuggestions || productSuggestions.length === 0) return;
+                        if (!showProductSuggestions || filteredProductSuggestions.length === 0) return;
                         if (e.key === 'ArrowDown') {
                           e.preventDefault();
-                          setSelectedProductIndex(prev => (prev < productSuggestions.length - 1 ? prev + 1 : prev));
+                          setSelectedProductIndex(prev => (prev < filteredProductSuggestions.length - 1 ? prev + 1 : prev));
                         } else if (e.key === 'ArrowUp') {
                           e.preventDefault();
                           setSelectedProductIndex(prev => (prev > 0 ? prev - 1 : prev));
                         } else if (e.key === 'Enter' && selectedProductIndex >= 0) {
                           e.preventDefault();
-                          pickProduct(productSuggestions[selectedProductIndex]);
+                          pickProduct(filteredProductSuggestions[selectedProductIndex]);
                         } else if (e.key === 'Tab' && selectedProductIndex >= 0) {
                           e.preventDefault();
-                          pickProduct(productSuggestions[selectedProductIndex]);
+                          pickProduct(filteredProductSuggestions[selectedProductIndex]);
                         } else if (e.key === 'Escape') {
                           setShowProductSuggestions(false);
                           setSelectedProductIndex(-1);
@@ -404,9 +420,9 @@ export default function SalesReturnPage() {
                       placeholder="Search product from stock"
                       autoComplete="off"
                     />
-                    {showProductSuggestions && productSuggestions.length > 0 && (
+                    {showProductSuggestions && filteredProductSuggestions.length > 0 && (
                       <div ref={productContainerRef} className="absolute z-[110] w-full mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-y-auto">
-                        {productSuggestions.map((p, i) => (
+                        {filteredProductSuggestions.map((p, i) => (
                           <div
                             key={p}
                             className={`px-3 py-2 cursor-pointer text-sm text-popover-foreground border-b last:border-0 ${selectedProductIndex === i ? 'bg-accent' : 'hover:bg-accent'}`}
@@ -417,7 +433,7 @@ export default function SalesReturnPage() {
                           >
                             <div className="font-medium">{p}</div>
                             <div className="text-xs text-muted-foreground">
-                              {batches.filter(b => b.productName === p).reduce((sum, b) => sum + (b.availableQty || 0), 0)} available in stock
+                              {batches.filter(b => (b.productName || '').trim().toLowerCase() === p.trim().toLowerCase()).reduce((sum, b) => sum + (b.availableQty || 0), 0)} available in stock
                             </div>
                           </div>
                         ))}
@@ -428,7 +444,7 @@ export default function SalesReturnPage() {
                 <div>
                   <Label>Batch No</Label>
                   {productName ? (
-                    <Select value={batchNo} onValueChange={setBatchNo} disabled>
+                    <Select value={batchNo} onValueChange={setBatchNo} disabled={currentProductBatches.length <= 1}>
                       <SelectTrigger>
                         <SelectValue placeholder="Select Batch" />
                       </SelectTrigger>

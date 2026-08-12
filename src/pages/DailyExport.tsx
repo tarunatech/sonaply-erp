@@ -22,6 +22,7 @@ interface LedgerTransaction {
   source: 'purchase' | 'batch' | 'sale' | 'sales_return' | 'challan_cancel' | 'delivered_challan';
   isNil?: boolean;
   isCancelled?: boolean;
+  isDeadStock?: boolean;
 }
 
 export default function DailyExport() {
@@ -107,7 +108,8 @@ export default function DailyExport() {
           const description = s.description || s.remarks || matchingBatch?.description || "";
           const isCancelled = s.status === 'Cancelled' || matchingBatch?.isCancelled || false;
           const isNil = !isCancelled && (s.orderedQty === 0 || matchingBatch?.isNil || false);
-          const status = isCancelled ? 'Cancelled' : isNil ? 'Nil' : s.status;
+          const isDeadStock = matchingBatch?.isDeadStock || false;
+          const status = isCancelled ? 'Dead Stock' : isNil ? 'Not next Folder' : isDeadStock ? 'Nil' : s.status;
           return {
             "Order No": s.orderNo,
             "Customer": s.customer,
@@ -122,8 +124,9 @@ export default function DailyExport() {
             "GST (%)": s.GST || 0,
             "Total Price": s.totalPrice || 0,
             "Stock Category": s.stockCategory || "Available",
-            "Is Nil": isNil ? "Yes" : "No",
-            "Is Cancelled": isCancelled ? "Yes" : "No",
+            "Is Not next Folder": isNil ? "Yes" : "No",
+            "Is Dead Stock": isCancelled ? "Yes" : "No",
+            "Is Nil": isDeadStock ? "Yes" : "No",
             "Status": status,
             "Order Date": s.orderDate
           };
@@ -137,7 +140,8 @@ export default function DailyExport() {
           const description = p.description || matchingBatch?.description || "";
           const isCancelled = matchingBatch?.isCancelled || false;
           const isNil = p.quantity === 0 || matchingBatch?.isNil || false;
-          const status = isCancelled ? 'Cancelled' : isNil ? 'Nil' : 'Active';
+          const isDeadStock = matchingBatch?.isDeadStock || false;
+          const status = isCancelled ? 'Dead Stock' : isNil ? 'Not next Folder' : isDeadStock ? 'Nil' : 'Active';
           return {
             "Date": p.date,
             "Supplier Name": p.supplierName,
@@ -149,8 +153,9 @@ export default function DailyExport() {
             "Rate": p.rate || 0,
             "Total Amount": p.totalAmount || 0,
             "Description": description,
-            "Is Nil": isNil ? "Yes" : "No",
-            "Is Cancelled": isCancelled ? "Yes" : "No",
+            "Is Not next Folder": isNil ? "Yes" : "No",
+            "Is Dead Stock": isCancelled ? "Yes" : "No",
+            "Is Nil": isDeadStock ? "Yes" : "No",
             "Status": status
           };
         });
@@ -161,7 +166,8 @@ export default function DailyExport() {
         data = rawBatches.map(b => {
           const isCancelled = b.isCancelled || false;
           const isNil = b.isNil || b.availableQty === 0 || false;
-          const status = isCancelled ? 'Cancelled' : isNil ? 'Nil' : 'Active';
+          const isDeadStock = b.isDeadStock || false;
+          const status = isCancelled ? 'Dead Stock' : isNil ? 'Not next Folder' : isDeadStock ? 'Nil' : 'Active';
           return {
             "Date": b.date,
             "Product Name": b.productName,
@@ -173,8 +179,9 @@ export default function DailyExport() {
             "Display Qty": b.displayQty || 0,
             "Damage Qty": b.damageQty || 0,
             "Description": b.description || "",
-            "Is Nil": isNil ? "Yes" : "No",
-            "Is Cancelled": isCancelled ? "Yes" : "No",
+            "Is Not next Folder": isNil ? "Yes" : "No",
+            "Is Dead Stock": isCancelled ? "Yes" : "No",
+            "Is Nil": isDeadStock ? "Yes" : "No",
             "Status": status
           };
         });
@@ -217,7 +224,8 @@ export default function DailyExport() {
           const desc = p.description || matchingBatch?.description || "";
           const isNil = p.quantity === 0 || matchingBatch?.isNil || false;
           const isCancelled = matchingBatch?.isCancelled || false;
-          const statusStr = isCancelled ? " [Cancelled]" : isNil ? " [Nil]" : "";
+          const isDeadStock = matchingBatch?.isDeadStock || false;
+          const statusStr = isCancelled ? " [Dead Stock]" : isNil ? " [Not next Folder]" : isDeadStock ? " [Nil]" : "";
           transactions.push({
             id: p.id,
             date: p.date,
@@ -226,7 +234,8 @@ export default function DailyExport() {
             description: `Purchase (Supplier: ${p.supplierName}, Batch: ${p.batchNumber}${statusStr}${desc ? `, Desc: ${desc}` : ''})`,
             source: 'purchase',
             isNil,
-            isCancelled
+            isCancelled,
+            isDeadStock
           });
         }
       });
@@ -240,7 +249,8 @@ export default function DailyExport() {
             const desc = b.description || "";
             const isNil = b.isNil || b.availableQty === 0 || false;
             const isCancelled = b.isCancelled || false;
-            const statusStr = isCancelled ? " [Cancelled]" : isNil ? " [Nil]" : "";
+            const isDeadStock = b.isDeadStock || false;
+            const statusStr = isCancelled ? " [Dead Stock]" : isNil ? " [Not next Folder]" : isDeadStock ? " [Nil]" : "";
             transactions.push({
               id: b.id,
               date: b.date,
@@ -249,7 +259,8 @@ export default function DailyExport() {
               description: `Initial Stock / Manual Entry (Batch: ${b.batchNumber}, Supplier: ${b.supplier}${statusStr}${desc ? `, Desc: ${desc}` : ''})`,
               source: 'batch',
               isNil,
-              isCancelled
+              isCancelled,
+              isDeadStock
             });
           }
         }
@@ -262,7 +273,8 @@ export default function DailyExport() {
           const desc = s.description || s.remarks || matchingBatch?.description || "";
           const isCancelled = s.status === 'Cancelled' || matchingBatch?.isCancelled || false;
           const isNil = !isCancelled && (s.orderedQty === 0 || matchingBatch?.isNil || false);
-          const orderStatus = isCancelled ? 'Cancelled' : isNil ? 'Nil' : s.status;
+          const isDeadStock = matchingBatch?.isDeadStock || false;
+          const orderStatus = isCancelled ? 'Dead Stock' : isNil ? 'Not next Folder' : isDeadStock ? 'Nil' : s.status;
 
           // 1. Record the sale subtraction
           if (s.orderDate >= appliedFromDate && s.orderDate <= appliedToDate) {
@@ -274,7 +286,8 @@ export default function DailyExport() {
               description: `Sale Recorded (Order: ${s.orderNo}, Customer: ${s.customer}, Batch: ${s.batchNo || '0'}, Status: ${orderStatus}${desc ? `, Desc: ${desc}` : ''})`,
               source: 'sale',
               isNil,
-              isCancelled
+              isCancelled,
+              isDeadStock
             });
           }
           // 2. If cancelled, record the cancellation addition
@@ -379,9 +392,10 @@ export default function DailyExport() {
     const formatted = filteredLedger.map(item => ({
       "Product Name": item.productName,
       "Category": item.category,
-      "Is Nil": item.isNil ? "Yes" : "No",
-      "Is Cancelled": item.isCancelled ? "Yes" : "No",
-      "Status": item.isCancelled ? "Cancelled" : item.isNil ? "Nil" : "Active",
+      "Is Not next Folder": item.isNil ? "Yes" : "No",
+      "Is Dead Stock": item.isCancelled ? "Yes" : "No",
+      "Is Nil": item.isDeadStock ? "Yes" : "No",
+      "Status": item.isDeadStock ? "Nil" : item.isCancelled ? "Dead Stock" : item.isNil ? "Not next Folder" : "Active",
       "Current Available Stock": item.currentAvailable,
       "Total Additions (+)": item.totalAdditions,
       "Total Subtractions (-)": item.totalSubtractions,
@@ -643,8 +657,9 @@ export default function DailyExport() {
                     </TableRow>
                   ) : (
                     selectedProductLedger.transactions.map((t) => {
-                      const isCanc = t.isCancelled || t.description.includes("[Cancelled]") || t.description.includes("Status: Cancelled");
-                      const isNilItem = t.isNil || t.description.includes("[Nil]") || t.description.includes("Status: Nil");
+                      const isCanc = t.isCancelled || t.description.includes("[Dead Stock]") || t.description.includes("Status: Dead Stock");
+                      const isNilItem = t.isNil || t.description.includes("[Not next Folder]") || t.description.includes("Status: Not next Folder");
+                      const isDeadItem = t.isDeadStock || t.description.includes("[Nil]") || t.description.includes("Status: Nil");
                       return (
                         <TableRow 
                           key={t.id} 
@@ -653,6 +668,8 @@ export default function DailyExport() {
                               ? "bg-red-50/80 hover:bg-red-100/80" 
                               : isNilItem 
                               ? "bg-blue-50/80 hover:bg-blue-100/80" 
+                              : isDeadItem
+                              ? "bg-slate-100/80 hover:bg-slate-200/80"
                               : "hover:bg-muted/10"
                           }`}
                         >
@@ -666,15 +683,20 @@ export default function DailyExport() {
                             <div className="flex items-center gap-1.5 flex-wrap">
                               {isCanc && (
                                 <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-red-100 text-red-800 border border-red-200">
-                                  Cancelled
+                                  Dead Stock
                                 </span>
                               )}
                               {isNilItem && !isCanc && (
                                 <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-blue-100 text-blue-800 border border-blue-200">
+                                  Not next Folder
+                                </span>
+                              )}
+                              {isDeadItem && !isCanc && !isNilItem && (
+                                <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-slate-200 text-slate-800 border border-slate-300">
                                   Nil
                                 </span>
                               )}
-                              <span className={isCanc ? "text-red-950 font-medium" : isNilItem ? "text-blue-950 font-medium" : "text-slate-700"}>
+                              <span className={isCanc ? "text-red-950 font-medium" : isNilItem ? "text-blue-950 font-medium" : isDeadItem ? "text-slate-900 font-medium" : "text-slate-700"}>
                                 {t.description}
                               </span>
                             </div>
