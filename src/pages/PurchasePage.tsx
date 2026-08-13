@@ -101,8 +101,11 @@ export default function PurchasePage() {
   }, [purchases]);
 
   const uniqueProducts = useMemo(() => {
-    return Array.from(new Set(purchases.map(p => p.productName).filter(Boolean))).sort();
-  }, [purchases]);
+    const list = new Set<string>();
+    purchases.forEach(p => { if (p.productName) list.add(p.productName); });
+    allBatches.forEach(b => { if (b.productName) list.add(b.productName); });
+    return Array.from(list).sort();
+  }, [purchases, allBatches]);
 
   const filteredPurchases = useMemo(() => {
     return purchases.filter(p => {
@@ -178,6 +181,17 @@ export default function PurchasePage() {
   const updateItem = (index: number, key: keyof PurchaseItem, value: string | number) => {
     const newItems = [...items];
     newItems[index] = { ...newItems[index], [key]: value };
+    if (key === 'productName' && typeof value === 'string' && value.trim()) {
+      const match = allBatches.find(b => b.productName.toLowerCase().trim() === value.toLowerCase().trim());
+      if (match) {
+        if (!newItems[index].category && match.category) {
+          newItems[index].category = match.category;
+        }
+        if ((!newItems[index].batchNumber || newItems[index].batchNumber === '0') && match.batchNumber) {
+          newItems[index].batchNumber = match.batchNumber;
+        }
+      }
+    }
     setItems(newItems);
   };
 

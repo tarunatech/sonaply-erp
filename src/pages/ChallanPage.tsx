@@ -3,6 +3,7 @@ import {
   getChallans,
   getSales,
   getBatches,
+  getClients,
   updateChallan,
   updateChallanGroup,
   deleteChallan,
@@ -14,6 +15,7 @@ import {
   Challan,
   Sale,
   StockBatch,
+  Client,
 } from "@/lib/store";
 import { printElement } from "@/lib/print";
 import { Card, CardContent } from "@/components/ui/card";
@@ -40,6 +42,7 @@ import {
   FileSpreadsheet,
   Search,
   Plus,
+  User,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -78,6 +81,9 @@ export default function ChallanPage() {
   const [challans, setChallans] = useState<Challan[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [batches, setBatches] = useState<StockBatch[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [showClientSearch, setShowClientSearch] = useState(false);
+  const [selectedClientIndexForEdit, setSelectedClientIndexForEdit] = useState<number>(-1);
   const [editingGroup, setEditingGroup] = useState<any>(null);
   const [filter, setFilter] = useState("");
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState<number | null>(null);
@@ -124,12 +130,22 @@ export default function ChallanPage() {
   }, [selectedSuggestionIndex]);
 
   const refresh = useCallback(() => {
-    Promise.all([getChallans(), getSales(), getBatches()]).then(([c, s, b]) => {
+    Promise.all([getChallans(), getSales(), getBatches(), getClients()]).then(([c, s, b, cl]) => {
       setChallans(c);
       setSales(s);
       setBatches(b);
+      setClients(cl);
     });
   }, []);
+
+  const filteredClientsForEdit = useMemo(() => {
+    const q = (editingGroup?.clientName || "").toLowerCase().trim();
+    if (!q) return clients;
+    return clients.filter(c =>
+      (c.name || "").toLowerCase().includes(q) ||
+      (c.phone || "").toLowerCase().includes(q)
+    );
+  }, [clients, editingGroup?.clientName]);
 
   useEffect(() => {
     refresh();
@@ -665,30 +681,100 @@ export default function ChallanPage() {
                                      </DialogDescription>
                                    </DialogHeader>
                                    <div className="grid gap-4 py-4">
-                                     <div className="grid gap-2">
-                                       <Label>Customer Name</Label>
-                                       <Input
-                                         value={editingGroup?.clientName || ""}
-                                         onChange={(e) =>
-                                           setEditingGroup({
-                                             ...editingGroup,
-                                             clientName: e.target.value,
-                                           })
-                                         }
-                                       />
-                                     </div>
-                                     <div className="grid gap-2">
-                                       <Label>Client Phone</Label>
-                                       <Input
-                                         value={editingGroup?.clientPhone || ""}
-                                         onChange={(e) =>
-                                           setEditingGroup({
-                                             ...editingGroup,
-                                             clientPhone: e.target.value,
-                                           })
-                                         }
-                                       />
-                                     </div>
+                                      {/* Customer Name with Auto-Search */}
+                                       <div className="grid gap-2">
+                                         <Label>Customer Name</Label>
+                                         <div className="relative">
+                                           <div className="relative">
+                                             <Input
+                                               className="pr-8"
+                                               value={editingGroup?.clientName || ""}
+                                               onChange={(e) => {
+                                                 const val = e.target.value;
+                                                 setEditingGroup((prev: any) => ({ ...prev, clientName: val }));
+                                                 setShowClientSearch(true);
+                                                 setSelectedClientIndexForEdit(-1);
+                                               }}
+                                               onFocus={() => {
+                                                 setShowClientSearch(true);
+                                                 setSelectedClientIndexForEdit(-1);
+                                               }}
+                                               onBlur={() => setTimeout(() => {
+                                                 setShowClientSearch(false);
+                                                 setSelectedClientIndexForEdit(-1);
+                                               }, 200)}
+                                               onKeyDown={(e) => {
+                                                 if (!showClientSearch || filteredClientsForEdit.length === 0) return;
+                                                 if (e.key === 'ArrowDown') {
+                                                   e.preventDefault();
+                                                   setSelectedClientIndexForEdit(prev => (prev < filteredClientsForEdit.length - 1 ? prev + 1 : 0));
+                                                 } else if (e.key === 'ArrowUp') {
+                                                   e.preventDefault();
+                                                   setSelectedClientIndexForEdit(prev => (prev > 0 ? prev - 1 : filteredClientsForEdit.length - 1));
+                                                 } else if (e.key === 'Enter' || e.key === 'Tab') {
+                                                   e.preventDefault();
+                                                   const idxToPick = selectedClientIndexForEdit >= 0 ? selectedClientIndexForEdit : 0;
+                                                   const c = filteredClientsForEdit[idxToPick];
+                                                   if (c) {
+                                                     setEditingGroup((prev: any) => ({
+                                                       ...prev,
+                                                       clientName: c.name,
+                                                       clientPhone: c.phone || prev?.clientPhone || "",
+                                                     }));
+                                                     setShowClientSearch(false);
+                                                     setSelectedClientIndexForEdit(-1);
+                                                   }
+                                                 } else if (e.key === 'Escape') {
+                                                   setShowClientSearch(false);
+                                                   setSelectedClientIndexForEdit(-1);
+                                                 }
+                                               }}
+                                               placeholder="Search client by name or phone..."
+                                               autoComplete="off"
+                                             />
+                                             <User className="absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
+                                           </div>
+
+                                           {showClientSearch && filteredClientsForEdit.length > 0 && (
+                                             <div className="absolute z-[120] left-0 right-0 mt-1 bg-popover border border-slate-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
+                                               {filteredClientsForEdit.map((c, i) => (
+                                                 <div
+                                                   key={c.id}
+                                                   className={`px-3 py-2 cursor-pointer text-xs flex items-center justify-between border-b border-slate-100 last:border-0 ${selectedClientIndexForEdit === i ? 'bg-blue-50 text-blue-900 font-semibold' : 'hover:bg-slate-100'}`}
+                                                   onMouseDown={(e) => {
+                                                     e.preventDefault();
+                                                     setEditingGroup((prev: any) => ({
+                                                       ...prev,
+                                                       clientName: c.name,
+                                                       clientPhone: c.phone || prev?.clientPhone || "",
+                                                     }));
+                                                     setShowClientSearch(false);
+                                                     setSelectedClientIndexForEdit(-1);
+                                                   }}
+                                                 >
+                                                   <span className="font-semibold text-slate-900">{c.name}</span>
+                                                   <span className="text-[11px] text-slate-500 font-mono">{c.phone || "No phone"}</span>
+                                                 </div>
+                                               ))}
+                                             </div>
+                                           )}
+                                         </div>
+                                       </div>
+
+                                      {/* Client Phone */}
+                                      <div className="grid gap-2">
+                                        <Label>Client Phone</Label>
+                                        <Input
+                                          value={editingGroup?.clientPhone || ""}
+                                          onChange={(e) =>
+                                            setEditingGroup({
+                                              ...editingGroup,
+                                              clientPhone: e.target.value,
+                                            })
+                                          }
+                                          placeholder="Client phone number"
+                                        />
+                                      </div>
                                      <div className="grid gap-2">
                                        <Label>Challan Date</Label>
                                        <Input
@@ -713,7 +799,6 @@ export default function ChallanPage() {
                                              setEditingGroup({
                                                ...editingGroup,
                                                items: [
-                                                 ...editingGroup.items,
                                                  {
                                                    productName: "",
                                                    quantity: 1,
@@ -723,6 +808,7 @@ export default function ChallanPage() {
                                                    notes: "",
                                                    isProductSelected: false,
                                                  },
+                                                 ...editingGroup.items,
                                                ],
                                              });
                                            }}
@@ -786,44 +872,18 @@ export default function ChallanPage() {
                                                      if (e.key === "ArrowDown") {
                                                        e.preventDefault();
                                                        setSelectedSuggestionIndex((prev) =>
-                                                         prev < sugList.length - 1 ? prev + 1 : prev
+                                                         prev < sugList.length - 1 ? prev + 1 : 0
                                                        );
                                                      } else if (e.key === "ArrowUp") {
                                                        e.preventDefault();
                                                        setSelectedSuggestionIndex((prev) =>
-                                                         prev > 0 ? prev - 1 : prev
+                                                         prev > 0 ? prev - 1 : sugList.length - 1
                                                        );
-                                                     } else if (e.key === "Enter") {
-                                                       if (
-                                                         selectedSuggestionIndex >= 0 &&
-                                                         selectedSuggestionIndex < sugList.length
-                                                       ) {
+                                                     } else if (e.key === "Enter" || e.key === "Tab") {
+                                                       if (activeSuggestionIndex === idx && sugList.length > 0) {
                                                          e.preventDefault();
-                                                         const sug = sugList[selectedSuggestionIndex];
-                                                         const next = [...editingGroup.items];
-                                                         next[idx] = {
-                                                           ...next[idx],
-                                                           productName: sug.batch.productName,
-                                                           batchNo: sug.batch.batchNumber,
-                                                           stockCategory: sug.category,
-                                                           isProductSelected: true,
-                                                         };
-                                                         setEditingGroup({
-                                                           ...editingGroup,
-                                                           items: next,
-                                                         });
-                                                         setActiveSuggestionIndex(null);
-                                                         setSelectedSuggestionIndex(-1);
-                                                       } else {
-                                                         e.currentTarget.blur();
-                                                       }
-                                                     } else if (e.key === "Tab") {
-                                                       if (
-                                                         activeSuggestionIndex === idx &&
-                                                         selectedSuggestionIndex >= 0 &&
-                                                         selectedSuggestionIndex < sugList.length
-                                                       ) {
-                                                         const sug = sugList[selectedSuggestionIndex];
+                                                         const pickIdx = selectedSuggestionIndex >= 0 && selectedSuggestionIndex < sugList.length ? selectedSuggestionIndex : 0;
+                                                         const sug = sugList[pickIdx];
                                                          const next = [...editingGroup.items];
                                                          next[idx] = {
                                                            ...next[idx],

@@ -104,6 +104,15 @@ export default function SalesPage() {
     refreshSales();
     refreshBatches();
     refreshClients();
+
+    const handleStockUpdate = () => {
+      refreshSales();
+      refreshBatches();
+      refreshClients();
+    };
+
+    window.addEventListener("erp-stock-updated", handleStockUpdate);
+    return () => window.removeEventListener("erp-stock-updated", handleStockUpdate);
   }, [refreshSales, refreshBatches, refreshClients]);
 
   const uniqueClients = useMemo(() => {
@@ -243,6 +252,7 @@ export default function SalesPage() {
         });
       }));
       refreshSales();
+      window.dispatchEvent(new CustomEvent('erp-stock-updated'));
       setEditingSale(null);
       toast({ title: "Order updated successfully" });
     } catch (err: any) {
@@ -411,37 +421,26 @@ export default function SalesPage() {
                     const filtered = filteredClients;
                     if (e.key === 'ArrowDown') {
                       e.preventDefault();
-                      setSelectedClientIndex(prev => (prev < filtered.length - 1 ? prev + 1 : prev));
+                      setSelectedClientIndex(prev => (prev < filtered.length - 1 ? prev + 1 : 0));
                     } else if (e.key === 'ArrowUp') {
                       e.preventDefault();
-                      setSelectedClientIndex(prev => (prev > 0 ? prev - 1 : prev));
-                    } else if (e.key === 'Enter') {
-                      if (selectedClientIndex >= 0 && selectedClientIndex < filtered.length) {
+                      setSelectedClientIndex(prev => (prev > 0 ? prev - 1 : filtered.length - 1));
+                    } else if (e.key === 'Enter' || e.key === 'Tab') {
+                      if (showClientSuggestions && filtered.length > 0) {
                         e.preventDefault();
-                        const c = filtered[selectedClientIndex];
-                        setClientName(c.name);
-                        setClientPhone(c.phone);
-                        if (c.priceCategory) setPriceCategory(c.priceCategory);
-                        setSelectedClientId(c.id);
-                        setShowClientSuggestions(false);
-                        setSelectedClientIndex(-1);
-                        setTimeout(() => {
-                          orderDateRef.current?.focus();
-                        }, 50);
-                      }
-                    } else if (e.key === 'Tab') {
-                      if (showClientSuggestions && selectedClientIndex >= 0 && selectedClientIndex < filtered.length) {
-                        e.preventDefault();
-                        const c = filtered[selectedClientIndex];
-                        setClientName(c.name);
-                        setClientPhone(c.phone);
-                        if (c.priceCategory) setPriceCategory(c.priceCategory);
-                        setSelectedClientId(c.id);
-                        setShowClientSuggestions(false);
-                        setSelectedClientIndex(-1);
-                        setTimeout(() => {
-                          orderDateRef.current?.focus();
-                        }, 50);
+                        const pickIdx = selectedClientIndex >= 0 && selectedClientIndex < filtered.length ? selectedClientIndex : 0;
+                        const c = filtered[pickIdx];
+                        if (c) {
+                          setClientName(c.name);
+                          setClientPhone(c.phone);
+                          if (c.priceCategory) setPriceCategory(c.priceCategory);
+                          setSelectedClientId(c.id);
+                          setShowClientSuggestions(false);
+                          setSelectedClientIndex(-1);
+                          setTimeout(() => {
+                            orderDateRef.current?.focus();
+                          }, 50);
+                        }
                       }
                     } else if (e.key === 'Escape') {
                       setShowClientSuggestions(false);
@@ -566,18 +565,18 @@ export default function SalesPage() {
                             setSelectedSuggestionIndex(-1);
                           }, 200)}
                           onKeyDown={e => {
+                            const sugList = getSuggestionsList(item.productName);
                             if (e.key === 'ArrowDown') {
                               e.preventDefault();
-                              const sugList = getSuggestionsList(item.productName);
-                              setSelectedSuggestionIndex(prev => (prev < sugList.length - 1 ? prev + 1 : prev));
+                              setSelectedSuggestionIndex(prev => (prev < sugList.length - 1 ? prev + 1 : 0));
                             } else if (e.key === 'ArrowUp') {
                               e.preventDefault();
-                              setSelectedSuggestionIndex(prev => (prev > 0 ? prev - 1 : prev));
-                            } else if (e.key === 'Enter') {
-                              const sugList = getSuggestionsList(item.productName);
-                              if (selectedSuggestionIndex >= 0 && selectedSuggestionIndex < sugList.length) {
+                              setSelectedSuggestionIndex(prev => (prev > 0 ? prev - 1 : sugList.length - 1));
+                            } else if (e.key === 'Enter' || e.key === 'Tab') {
+                              if (activeSuggestionIndex === index && sugList.length > 0) {
                                 e.preventDefault();
-                                const sug = sugList[selectedSuggestionIndex];
+                                const pickIdx = selectedSuggestionIndex >= 0 && selectedSuggestionIndex < sugList.length ? selectedSuggestionIndex : 0;
+                                const sug = sugList[pickIdx];
                                 updateItem(index, { 
                                   productName: sug.batch.productName, 
                                   batchNo: sug.batch.batchNumber,
@@ -586,27 +585,12 @@ export default function SalesPage() {
                                 });
                                 setActiveSuggestionIndex(null);
                                 setSelectedSuggestionIndex(-1);
-                              } else {
-                                e.currentTarget.blur();
-                              }
-                              setTimeout(() => {
-                                const qtyInput = document.getElementById(`quantity-input-${index}`);
-                                if (qtyInput) {
-                                  qtyInput.focus();
-                                }
-                              }, 50);
-                            } else if (e.key === 'Tab') {
-                              const sugList = getSuggestionsList(item.productName);
-                              if (activeSuggestionIndex === index && selectedSuggestionIndex >= 0 && selectedSuggestionIndex < sugList.length) {
-                                const sug = sugList[selectedSuggestionIndex];
-                                updateItem(index, { 
-                                  productName: sug.batch.productName, 
-                                  batchNo: sug.batch.batchNumber,
-                                  stockCategory: sug.category,
-                                  isProductSelected: true
-                                });
-                                setActiveSuggestionIndex(null);
-                                setSelectedSuggestionIndex(-1);
+                                setTimeout(() => {
+                                  const qtyInput = document.getElementById(`quantity-input-${index}`);
+                                  if (qtyInput) {
+                                    qtyInput.focus();
+                                  }
+                                }, 50);
                               }
                             } else if (e.key === 'Escape') {
                               setActiveSuggestionIndex(null);

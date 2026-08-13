@@ -561,15 +561,31 @@ async function migrate() {
     console.log('Step 13: Creating database indexes...');
     await db.query(`CREATE INDEX IF NOT EXISTS idx_sales_order_no ON sales(order_no)`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_sales_customer ON sales(customer)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_sales_estimated_delivery ON sales(estimated_delivery_date)`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_challans_sales_id ON challans(sales_id)`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_challans_customer ON challans(customer)`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_challans_product ON challans(product)`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_challans_cancelled ON challans(is_cancelled)`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_batches_product_name ON batches(product_name)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_products_name_lower ON products(LOWER(TRIM(name)))`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_sales_returns_product_name ON sales_returns(LOWER(TRIM(product_name)))`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_sales_returns_client_name ON sales_returns(LOWER(TRIM(client_name)))`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_clients_name_lower ON clients(LOWER(TRIM(name)))`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_clients_phone ON clients(TRIM(phone)) WHERE phone IS NOT NULL`);
+
+    // 14. Sync products table from existing batches
+    console.log('Step 14: Syncing products table from batches...');
+    await db.query(`
+      INSERT INTO products (name, category)
+      SELECT DISTINCT TRIM(b.product_name), COALESCE(MAX(b.category), 'Standard')
+      FROM batches b
+      WHERE b.product_name IS NOT NULL 
+        AND TRIM(b.product_name) != ''
+        AND NOT EXISTS (
+          SELECT 1 FROM products p WHERE LOWER(TRIM(p.name)) = LOWER(TRIM(b.product_name))
+        )
+      GROUP BY TRIM(b.product_name)
+    `);
 
     console.log('✅ All migrations applied successfully!');
   } catch (err) {
@@ -577,7 +593,7 @@ async function migrate() {
     process.exit(1);
   } finally {
     if (db.pool) {
-      await db.pool.end();
+      await db.pool.end();  
       console.log('Disconnected from database.');
     }
     process.exit(0);

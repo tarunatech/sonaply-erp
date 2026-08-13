@@ -136,10 +136,10 @@ export default function DailyExport() {
       case 'purchases': {
         const rawPurchases = (await getPurchases()).filter(p => p.date === d);
         data = rawPurchases.map(p => {
-          const matchingBatch = batches.find(b => (b.productName === p.productName && b.batchNumber === p.batchNumber) || b.batchNumber === p.batchNumber);
+          const matchingBatch = batches.find(b => (b.productName?.toLowerCase().trim() === p.productName?.toLowerCase().trim() && b.batchNumber === p.batchNumber) || b.batchNumber === p.batchNumber);
           const description = p.description || matchingBatch?.description || "";
           const isCancelled = matchingBatch?.isCancelled || false;
-          const isNil = p.quantity === 0 || matchingBatch?.isNil || false;
+          const isNil = matchingBatch?.isNil || false;
           const isDeadStock = matchingBatch?.isDeadStock || false;
           const status = isCancelled ? 'Dead Stock' : isNil ? 'Not next Folder' : isDeadStock ? 'Nil' : 'Active';
           return {
@@ -165,7 +165,7 @@ export default function DailyExport() {
         const rawBatches = batches.filter(b => b.date === d);
         data = rawBatches.map(b => {
           const isCancelled = b.isCancelled || false;
-          const isNil = b.isNil || b.availableQty === 0 || false;
+          const isNil = b.isNil || false;
           const isDeadStock = b.isDeadStock || false;
           const status = isCancelled ? 'Dead Stock' : isNil ? 'Not next Folder' : isDeadStock ? 'Nil' : 'Active';
           return {
@@ -195,16 +195,17 @@ export default function DailyExport() {
   // Compile transactions and ledger dynamically based on appliedFromDate & appliedToDate
   const ledgerData = useMemo(() => {
     const productNames = new Set<string>();
-    allBatches.forEach(b => { if (b.productName) productNames.add(b.productName); });
-    allSales.forEach(s => { if (s.product) productNames.add(s.product); });
-    allPurchases.forEach(p => { if (p.productName) productNames.add(p.productName); });
+    allBatches.forEach(b => { if (b.productName && b.productName.trim()) productNames.add(b.productName.trim()); });
+    allSales.forEach(s => { if (s.product && s.product.trim()) productNames.add(s.product.trim()); });
+    allPurchases.forEach(p => { if (p.productName && p.productName.trim()) productNames.add(p.productName.trim()); });
 
     const getProductCategory = (name: string): string => {
-      const b = allBatches.find(x => x.productName === name);
+      const norm = name.toLowerCase().trim();
+      const b = allBatches.find(x => x.productName && x.productName.toLowerCase().trim() === norm);
       if (b) return b.category;
-      const p = allPurchases.find(x => x.productName === name);
+      const p = allPurchases.find(x => x.productName && x.productName.toLowerCase().trim() === norm);
       if (p) return p.category;
-      const s = allSales.find(x => x.product === name);
+      const s = allSales.find(x => x.product && x.product.toLowerCase().trim() === norm);
       if (s) return s.category;
       return "Other";
     };
@@ -212,17 +213,18 @@ export default function DailyExport() {
     return Array.from(productNames).map(productName => {
       const category = getProductCategory(productName);
       const transactions: LedgerTransaction[] = [];
-      const productBatches = allBatches.filter(b => b.productName === productName);
+      const normName = productName.toLowerCase().trim();
+      const productBatches = allBatches.filter(b => b.productName && b.productName.toLowerCase().trim() === normName);
       const isProductDeadStock = productBatches.some(b => b.isDeadStock);
       const isProductCancelled = !isProductDeadStock && productBatches.some(b => b.isCancelled);
       const isProductNil = !isProductDeadStock && !isProductCancelled && productBatches.some(b => b.isNil);
 
       // A. Purchases (Stock Addition)
       allPurchases.forEach(p => {
-        if (p.productName === productName && p.date >= appliedFromDate && p.date <= appliedToDate) {
-          const matchingBatch = allBatches.find(b => b.productName === p.productName && b.batchNumber === p.batchNumber);
+        if (p.productName && p.productName.toLowerCase().trim() === normName && p.date >= appliedFromDate && p.date <= appliedToDate) {
+          const matchingBatch = allBatches.find(b => b.productName?.toLowerCase().trim() === normName && b.batchNumber === p.batchNumber);
           const desc = p.description || matchingBatch?.description || "";
-          const isNil = p.quantity === 0 || matchingBatch?.isNil || false;
+          const isNil = matchingBatch?.isNil || false;
           const isCancelled = matchingBatch?.isCancelled || false;
           const isDeadStock = matchingBatch?.isDeadStock || false;
           const statusStr = isCancelled ? " [Dead Stock]" : isNil ? " [Not next Folder]" : isDeadStock ? " [Nil]" : "";
@@ -242,12 +244,12 @@ export default function DailyExport() {
 
       // B. Manual Batches / Initial Stock (Stock Addition)
       allBatches.forEach(b => {
-        if (b.productName === productName && b.date >= appliedFromDate && b.date <= appliedToDate) {
+        if (b.productName && b.productName.toLowerCase().trim() === normName && b.date >= appliedFromDate && b.date <= appliedToDate) {
           // Avoid double counting if this batch was created from a purchase
-          const hasPurchase = allPurchases.some(p => p.productName === b.productName && p.batchNumber === b.batchNumber);
+          const hasPurchase = allPurchases.some(p => p.productName?.toLowerCase().trim() === normName && p.batchNumber === b.batchNumber);
           if (!hasPurchase) {
             const desc = b.description || "";
-            const isNil = b.isNil || b.availableQty === 0 || false;
+            const isNil = b.isNil || false;
             const isCancelled = b.isCancelled || false;
             const isDeadStock = b.isDeadStock || false;
             const statusStr = isCancelled ? " [Dead Stock]" : isNil ? " [Not next Folder]" : isDeadStock ? " [Nil]" : "";
@@ -268,11 +270,11 @@ export default function DailyExport() {
 
       // C. Sales Recorded (Stock Subtraction) & Cancellations (Stock Addition)
       allSales.forEach(s => {
-        if (s.product === productName) {
-          const matchingBatch = allBatches.find(b => b.productName === s.product || (s.batchNo && b.batchNumber === s.batchNo));
+        if (s.product && s.product.toLowerCase().trim() === normName) {
+          const matchingBatch = allBatches.find(b => b.productName?.toLowerCase().trim() === normName || (s.batchNo && b.batchNumber === s.batchNo));
           const desc = s.description || s.remarks || matchingBatch?.description || "";
           const isCancelled = s.status === 'Cancelled' || matchingBatch?.isCancelled || false;
-          const isNil = !isCancelled && (s.orderedQty === 0 || matchingBatch?.isNil || false);
+          const isNil = !isCancelled && (matchingBatch?.isNil || false);
           const isDeadStock = matchingBatch?.isDeadStock || false;
           const orderStatus = isCancelled ? 'Dead Stock' : isNil ? 'Not next Folder' : isDeadStock ? 'Nil' : s.status;
 
@@ -310,7 +312,7 @@ export default function DailyExport() {
 
       // D. Sales Returns (Stock Addition)
       allSalesReturns.forEach(r => {
-        if (r.productName === productName && r.receiveDate >= appliedFromDate && r.receiveDate <= appliedToDate) {
+        if (r.productName && r.productName.toLowerCase().trim() === normName && r.receiveDate >= appliedFromDate && r.receiveDate <= appliedToDate) {
           transactions.push({
             id: r.id,
             date: r.receiveDate,
@@ -344,7 +346,7 @@ export default function DailyExport() {
 
       // Current total physical stock (Available + Display + Damage)
       const currentAvailable = allBatches
-        .filter(b => b.productName === productName)
+        .filter(b => b.productName && b.productName.toLowerCase().trim() === normName)
         .reduce((sum, b) => sum + (b.availableQty || 0) + (b.displayQty || 0) + (b.damageQty || 0), 0);
 
       const details = transactions

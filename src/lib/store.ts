@@ -112,8 +112,9 @@ export interface Challan {
 }
 
 export interface ChallanGroupItem {
-  id?: string;
-  productName: string;
+  id?: string | number;
+  salesId?: string | number;
+  productName?: string;
   product?: string;
   quantity: number;
   batchNo?: string;
@@ -123,9 +124,11 @@ export interface ChallanGroupItem {
 }
 
 export interface ChallanGroupUpdate {
-  clientName: string;
+  clientName?: string;
+  customer?: string;
   clientPhone?: string;
-  date: string;
+  client_phone?: string;
+  date?: string;
   items: ChallanGroupItem[];
 }
 export interface User {
@@ -537,11 +540,12 @@ export const updateChallanGroup = (
   request<any>(`/challans/group/${encodeURIComponent(challanNumber)}`, {
     method: "PUT",
     body: JSON.stringify({
-      customer: payload.clientName,
-      client_phone: payload.clientPhone,
+      customer: payload.customer || payload.clientName,
+      client_phone: payload.client_phone || payload.clientPhone,
       date: payload.date,
       items: payload.items.map((item) => ({
         id: item.id,
+        salesId: item.salesId,
         product: item.productName || item.product,
         quantity: item.quantity,
         batch_no: item.batchNo,

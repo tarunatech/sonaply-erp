@@ -103,8 +103,8 @@ export default function StockEntry() {
   useEffect(() => scrollToSelected(batchContainerRef, selectedBatchIndex), [selectedBatchIndex]);
 
   const handleSubmit = async () => {
-    if (!form.productName || form.quantity <= 0) {
-      toast({ title: "Please fill all required fields", variant: "destructive" }); return;
+    if (!form.productName || form.quantity < 0) {
+      toast({ title: "Please fill product name and valid quantity", variant: "destructive" }); return;
     }
 
     const batchNum = form.batchNumber?.trim() || '0';
@@ -124,7 +124,7 @@ export default function StockEntry() {
       toast({ title: "Stock updated (Merged with existing batch)" });
     } else {
       await addBatch({ ...form, batchNumber: batchNum, rate: 0, productId: null as any, availableQty: form.quantity, damageQty: 0, displayQty: 0 });
-      toast({ title: "Stock batch added successfully!" });
+      toast({ title: form.quantity === 0 ? "New product/batch added with 0 stock!" : "Stock batch added successfully!" });
     }
 
     setForm(defaultForm);
@@ -163,7 +163,7 @@ export default function StockEntry() {
                   } else if (e.key === 'ArrowUp') {
                     e.preventDefault();
                     setSelectedNameIndex(prev => (prev > 0 ? prev - 1 : prev));
-                  } else if (e.key === 'Enter') {
+                  } else if (e.key === 'Enter' || e.key === 'Tab') {
                     if (selectedNameIndex >= 0 && selectedNameIndex < filtered.length) {
                       e.preventDefault();
                       handleSelectProductName(filtered[selectedNameIndex]);
@@ -222,7 +222,7 @@ export default function StockEntry() {
                   } else if (e.key === 'ArrowUp') {
                     e.preventDefault();
                     setSelectedCategoryIndex(prev => (prev > 0 ? prev - 1 : prev));
-                  } else if (e.key === 'Enter') {
+                  } else if (e.key === 'Enter' || e.key === 'Tab') {
                     if (selectedCategoryIndex >= 0 && selectedCategoryIndex < filtered.length) {
                       e.preventDefault();
                       u('category', filtered[selectedCategoryIndex]);
@@ -285,7 +285,7 @@ export default function StockEntry() {
                   } else if (e.key === 'ArrowUp') {
                     e.preventDefault();
                     setSelectedBatchIndex(prev => (prev > 0 ? prev - 1 : prev));
-                  } else if (e.key === 'Enter') {
+                  } else if (e.key === 'Enter' || e.key === 'Tab') {
                     if (selectedBatchIndex >= 0 && selectedBatchIndex < filtered.length) {
                       e.preventDefault();
                       u('batchNumber', filtered[selectedBatchIndex]);
@@ -347,7 +347,7 @@ export default function StockEntry() {
                   } else if (e.key === 'ArrowUp') {
                     e.preventDefault();
                     setSelectedSupplierIndex(prev => (prev > 0 ? prev - 1 : prev));
-                  } else if (e.key === 'Enter') {
+                  } else if (e.key === 'Enter' || e.key === 'Tab') {
                     if (selectedSupplierIndex >= 0 && selectedSupplierIndex < filtered.length) {
                       e.preventDefault();
                       u('supplier', filtered[selectedSupplierIndex]);
@@ -385,7 +385,13 @@ export default function StockEntry() {
                 </div>
               )}
             </div>
-            <div><Label>Quantity *</Label><Input type="number" value={form.quantity || ''} onChange={e => u('quantity', +e.target.value)} /></div>
+            <div>
+              <div className="flex items-center justify-between">
+                <Label>Quantity</Label>
+                <span className="text-[11px] text-muted-foreground ml-1">(Can be 0 for new product)</span>
+              </div>
+              <Input type="number" min={0} value={form.quantity === 0 ? '0' : (form.quantity || '')} onChange={e => u('quantity', Math.max(0, +e.target.value))} placeholder="0" />
+            </div>
             <div><Label>Date</Label><Input type="date" value={form.date} readOnly className="bg-muted text-muted-foreground" /></div>
             <div className="sm:col-span-2">
               <Label>Description / Note</Label>

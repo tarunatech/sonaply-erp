@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
-import { getSales, getChallans, exportCSV, addChallan, getBatches, confirmChallanGroup, deleteChallanGroup, updateSale, Sale, StockBatch, Challan, formatLocalDate, getLocalDateString } from "@/lib/store";
+import { getSales, getChallans, exportCSV, addChallan, getBatches, getProducts, getClients, confirmChallanGroup, deleteChallanGroup, updateChallanGroup, updateSale, Sale, StockBatch, Challan, Product, Client, formatLocalDate, getLocalDateString } from "@/lib/store";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { Download, Printer, Search, FilePlus2, CheckCircle2, Trash2, CalendarIcon, X } from "lucide-react";
+import { Download, Printer, Search, FilePlus2, CheckCircle2, Trash2, CalendarIcon, X, Pencil, User, Package, Plus } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 const parseLocalDate = (dateStr: string) => {
@@ -37,6 +37,8 @@ export default function PendingDeliveries() {
   const [sales, setSales] = useState<Sale[]>([]);
   const [challans, setChallans] = useState<Challan[]>([]);
   const [cancelledPChallans, setCancelledPChallans] = useState<Challan[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
   const [filter, setFilter] = useState("");
   const [selectedEstDate, setSelectedEstDate] = useState<string | null>(null);
   const { toast } = useToast();
@@ -45,17 +47,56 @@ export default function PendingDeliveries() {
   const [challanForm, setChallanForm] = useState({ quantity: 0, batchNo: "", notes: "", stockCategory: "Available" });
   const [batches, setBatches] = useState<StockBatch[]>([]);
 
+  // Edit dialog state
+  interface EditItemForm {
+    id?: number;          // challan id
+    salesId?: number;     // sale id
+    product: string;
+    orderedQty: number;
+    deliveredQty: number;
+    batchNo: string;
+    stockCategory: "Available" | "Display" | "Damage";
+    remarks: string;
+  }
+
+  const [showEditDialog, setShowEditDialog] = useState(false);
+  const [editingGroup, setEditingGroup] = useState<any>(null);
+  const [showClientSearch, setShowClientSearch] = useState(false);
+  const [selectedClientIndexForEdit, setSelectedClientIndexForEdit] = useState<number>(-1);
+  const [activeProductSearchIndex, setActiveProductSearchIndex] = useState<number | null>(null);
+  const [selectedProductIndexForEdit, setSelectedProductIndexForEdit] = useState<number>(-1);
+  const [editForm, setEditForm] = useState<{
+    challanNo: string | null;
+    orderNo: string;
+    customer: string;
+    clientPhone: string;
+    estimatedDeliveryDate: string;
+    items: EditItemForm[];
+  }>({
+    challanNo: null,
+    orderNo: "",
+    customer: "",
+    clientPhone: "",
+    estimatedDeliveryDate: "",
+    items: [],
+  });
+
   const refresh = useCallback(async () => {
-    const [s, b, c] = await Promise.all([getSales(), getBatches(), getChallans()]);
+    const [s, b, c, prod, cl] = await Promise.all([getSales(), getBatches(), getChallans(), getProducts(), getClients()]);
     setBatches(b);
     setChallans(c);
+    setProducts(prod);
+    setClients(cl);
 
     // Filter sales to ONLY show those with unhandled pending quantities or pending P-xxxx draft challans
     const pendingSales = s.filter(sale => {
-      if (sale.status === "Delivered" || sale.status === "Cancelled" || !sale.pendingQty || sale.pendingQty <= 0) return false;
+      if (sale.status === "Cancelled") return false;
+
+      const salePendingQty = Math.max(0, (sale.orderedQty || 0) - (sale.deliveredQty || 0));
+      if (salePendingQty <= 0 && (!sale.pendingQty || sale.pendingQty <= 0)) return false;
 
       const saleChallans = c.filter(ch => ch.salesId === sale.id && !ch.isCancelled);
-      
+
       // Check if there is a P-xxxx challan waiting in Pending state
       const hasPendingPChallan = saleChallans.some(
         ch => ch.challanNo.startsWith("P-") && ch.status === "Pending"
@@ -72,7 +113,7 @@ export default function PendingDeliveries() {
         return sum;
       }, 0);
 
-      const unhandledPendingQty = (sale.pendingQty || 0) - coveredQty;
+      const unhandledPendingQty = Math.max(0, (sale.pendingQty || salePendingQty) - coveredQty);
       return unhandledPendingQty > 0;
     });
 
@@ -184,6 +225,118 @@ export default function PendingDeliveries() {
     }
   };
 
+  const handleOpenEditGroupModal = async (group: any) => {
+    await refresh();
+    setEditingGroup(group);
+    setEditForm({
+      challanNo: group.challanNo,
+      orderNo: group.orderNo,
+      customer: group.customer || "",
+      clientPhone: group.clientPhone || "",
+      estimatedDeliveryDate: group.salesItems[0]?.sale.estimatedDeliveryDate || "",
+      items: group.salesItems.map((si: any) => ({
+        id: si.pendingChallan ? si.pendingChallan.id : undefined,
+        salesId: si.sale.id,
+        product: si.sale.product || "",
+        orderedQty: si.sale.orderedQty || 1,
+        deliveredQty: si.sale.deliveredQty || 0,
+        batchNo: si.sale.batchNo || "0",
+        stockCategory: si.sale.stockCategory || "Available",
+        remarks: si.pendingChallan?.notes || si.sale.remarks || "",
+      })),
+    });
+    setShowEditDialog(true);
+  };
+
+  const handleAddProductItem = () => {
+    setEditForm(prev => ({
+      ...prev,
+      items: [
+        {
+          product: "",
+          orderedQty: 1,
+          deliveredQty: 0,
+          batchNo: "0",
+          stockCategory: "Available",
+          remarks: "",
+        },
+        ...prev.items,
+      ],
+    }));
+  };
+
+  const handleRemoveProductItem = (index: number) => {
+    setEditForm(prev => ({
+      ...prev,
+      items: prev.items.filter((_, i) => i !== index),
+    }));
+  };
+
+  const handleUpdateItemRow = (index: number, field: string, value: any) => {
+    setEditForm(prev => {
+      const nextItems = [...prev.items];
+      nextItems[index] = { ...nextItems[index], [field]: value };
+      return { ...prev, items: nextItems };
+    });
+  };
+
+  const handleSaveGroupEdit = async () => {
+    if (!editingGroup) return;
+    if (!editForm.customer.trim()) {
+      toast({ title: "Validation Error", description: "Customer name is required.", variant: "destructive" });
+      return;
+    }
+    if (editForm.items.length === 0) {
+      toast({ title: "Validation Error", description: "At least one product item is required.", variant: "destructive" });
+      return;
+    }
+    for (let i = 0; i < editForm.items.length; i++) {
+      const item = editForm.items[i];
+      if (!item.product.trim()) {
+        toast({ title: "Validation Error", description: `Product name is required for item #${i + 1}.`, variant: "destructive" });
+        return;
+      }
+      if (item.orderedQty <= 0) {
+        toast({ title: "Validation Error", description: `Ordered quantity must be greater than 0 for item #${i + 1}.`, variant: "destructive" });
+        return;
+      }
+    }
+
+    try {
+      const groupKey = editForm.challanNo || editForm.orderNo;
+      await updateChallanGroup(groupKey, {
+        customer: editForm.customer,
+        client_phone: editForm.clientPhone,
+        date: editForm.estimatedDeliveryDate || undefined,
+        items: editForm.items.map(item => ({
+          id: item.id,
+          salesId: item.salesId,
+          productName: item.product,
+          quantity: item.orderedQty,
+          batchNo: item.batchNo || "0",
+          stockCategory: item.stockCategory || "Available",
+          notes: item.remarks || "",
+        })),
+      });
+
+      toast({
+        title: "Pending Delivery Order Updated",
+        description: `Updated order details with ${editForm.items.length} product(s).`,
+      });
+
+      setShowEditDialog(false);
+      setEditingGroup(null);
+      window.dispatchEvent(new CustomEvent("erp-stock-updated"));
+      refresh();
+    } catch (err: any) {
+      toast({
+        title: "Update Failed",
+        description: err.message || "Could not update pending delivery order.",
+        variant: "destructive",
+      });
+    }
+  };
+
   const filteredSales = useMemo(() => {
     let base = sales;
     if (selectedEstDate) {
@@ -215,6 +368,35 @@ export default function PendingDeliveries() {
     return Array.from(list);
   }, [currentSale, currentProductBatches]);
 
+  const filteredClientsForEdit = useMemo(() => {
+    const q = editForm.customer.toLowerCase().trim();
+    if (!q) return clients;
+    return clients.filter(c =>
+      (c.name || '').toLowerCase().includes(q) ||
+      (c.phone || '').toLowerCase().includes(q)
+    );
+  }, [clients, editForm.customer]);
+
+  const allProductNames = useMemo(() => {
+    const set = new Set<string>();
+    products.forEach(p => {
+      if (p.name && p.name.trim()) set.add(p.name.trim());
+    });
+    batches.forEach(b => {
+      if (b.productName && b.productName.trim()) set.add(b.productName.trim());
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  }, [products, batches]);
+
+  const filteredProductsForEdit = useMemo(() => {
+    const activeItem = activeProductSearchIndex !== null ? editForm.items[activeProductSearchIndex] : null;
+    const q = (activeItem?.product || "").toLowerCase().trim();
+    if (!q) return allProductNames;
+    return allProductNames.filter(name =>
+      name.toLowerCase().includes(q)
+    );
+  }, [allProductNames, editForm.items, activeProductSearchIndex]);
+
   const groupedPendingDeliveries = useMemo(() => {
     const groups: Record<string, {
       groupKey: string;
@@ -235,10 +417,10 @@ export default function PendingDeliveries() {
 
     filteredSales.forEach(s => {
       const pendingChallan = getPendingChallanForSale(s.id);
-      const groupKey = pendingChallan ? pendingChallan.challanNo : s.orderNo;
-      
+      const orderKey = s.orderNo || `ORDER-${s.id}`;
+
       const displayPendingQty = getUnhandledPendingQty(s);
-      
+
       const totalStock = batches
         .filter(b => b.productName.trim().toLowerCase() === s.product.trim().toLowerCase())
         .reduce((acc, curr) => {
@@ -246,9 +428,9 @@ export default function PendingDeliveries() {
           return acc + Number(col || 0);
         }, 0);
 
-      if (!groups[groupKey]) {
-        groups[groupKey] = {
-          groupKey,
+      if (!groups[orderKey]) {
+        groups[orderKey] = {
+          groupKey: pendingChallan ? pendingChallan.challanNo : orderKey,
           orderNo: s.orderNo,
           challanNo: pendingChallan ? pendingChallan.challanNo : null,
           customer: s.customer,
@@ -259,8 +441,14 @@ export default function PendingDeliveries() {
           salesItems: []
         };
       }
-      
-      groups[groupKey].salesItems.push({
+
+      if (pendingChallan && (!groups[orderKey].challanNo || !groups[orderKey].challanNo.startsWith("P-"))) {
+        groups[orderKey].challanNo = pendingChallan.challanNo;
+        groups[orderKey].groupKey = pendingChallan.challanNo;
+        groups[orderKey].createdAt = pendingChallan.createdAt || groups[orderKey].createdAt;
+      }
+
+      groups[orderKey].salesItems.push({
         sale: s,
         pendingChallan,
         displayPendingQty,
@@ -287,11 +475,10 @@ export default function PendingDeliveries() {
                 <Button
                   variant="outline"
                   size="sm"
-                  className={`h-9 px-3 gap-1.5 transition-all ${
-                    selectedEstDate
-                      ? "border-blue-500 bg-blue-50 text-blue-950 font-semibold hover:bg-blue-100"
-                      : "text-slate-700 hover:bg-slate-100"
-                  }`}
+                  className={`h-9 px-3 gap-1.5 transition-all ${selectedEstDate
+                    ? "border-blue-500 bg-blue-50 text-blue-950 font-semibold hover:bg-blue-100"
+                    : "text-slate-700 hover:bg-slate-100"
+                    }`}
                 >
                   <CalendarIcon className="h-4 w-4 text-blue-600 shrink-0" />
                   {selectedEstDate
@@ -339,7 +526,7 @@ export default function PendingDeliveries() {
             )}
           </div>
 
-          <Button variant="outline" size="sm" onClick={() => exportCSV(filteredSales as any, `pending-${new Date().toISOString().slice(0,10)}.csv`)}><Download className="mr-1 h-4 w-4" />Export</Button>
+          <Button variant="outline" size="sm" onClick={() => exportCSV(filteredSales as any, `pending-${new Date().toISOString().slice(0, 10)}.csv`)}><Download className="mr-1 h-4 w-4" />Export</Button>
           <Button variant="outline" size="sm" onClick={() => printElement("pending-table")}><Printer className="mr-1 h-4 w-4" />Print</Button>
         </div>
       </div>
@@ -385,11 +572,10 @@ export default function PendingDeliveries() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                className={`h-7 text-xs px-2 gap-1.5 border-dashed transition-all ${
-                                  estDate
-                                    ? "border-blue-500 bg-blue-50 text-blue-950 font-bold hover:bg-blue-100"
-                                    : "border-slate-300 bg-background text-slate-500 hover:text-slate-900 hover:border-slate-400"
-                                }`}
+                                className={`h-7 text-xs px-2 gap-1.5 border-dashed transition-all ${estDate
+                                  ? "border-blue-500 bg-blue-50 text-blue-950 font-bold hover:bg-blue-100"
+                                  : "border-slate-300 bg-background text-slate-500 hover:text-slate-900 hover:border-slate-400"
+                                  }`}
                               >
                                 <CalendarIcon className="h-3.5 w-3.5 shrink-0 text-blue-600" />
                                 {estDate
@@ -430,6 +616,14 @@ export default function PendingDeliveries() {
                             <div key={idx} className="py-1.5 border-b border-slate-100 last:border-0 flex flex-col justify-center min-h-[50px]">
                               <div className="font-semibold text-slate-900">{item.sale.product}</div>
                               <div className="flex flex-wrap gap-1 items-center mt-1">
+                                {(() => {
+                                  const prodCat = products.find(p => p.name.trim().toLowerCase() === item.sale.product.trim().toLowerCase())?.category || batches.find(b => b.productName.trim().toLowerCase() === item.sale.product.trim().toLowerCase())?.category || item.sale.category || "";
+                                  return prodCat && prodCat !== "Regular" ? (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                                      Cat: {prodCat}
+                                    </span>
+                                  ) : null;
+                                })()}
                                 {item.sale.batchNo && (
                                   <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-slate-100 text-slate-600 border border-slate-200">
                                     Batch: {item.sale.batchNo}
@@ -490,23 +684,22 @@ export default function PendingDeliveries() {
                         </div>
                       </TableCell>
                       <TableCell className="border-2 border-slate-300 px-4 py-3 align-middle">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
-                          group.status === "Confirmed" ? "bg-blue-100 text-blue-800" :
-                          group.status === "Partial"   ? "bg-amber-100 text-amber-800" :
-                                                         "bg-red-100 text-red-800"
-                        }`}>{group.status}</span>
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${group.status === "Confirmed" ? "bg-blue-100 text-blue-800" :
+                          group.status === "Partial" ? "bg-amber-100 text-amber-800" :
+                            "bg-red-100 text-red-800"
+                          }`}>{group.status}</span>
                       </TableCell>
                       <TableCell className="border-2 border-slate-300 px-4 py-1 text-right align-middle">
-                        {group.challanNo ? (
-                          <div className="flex justify-end items-center min-h-[50px]">
-                            <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-xs" onClick={() => handleConfirmChallan(group.salesItems[0].pendingChallan!)}>
-                              <CheckCircle2 className="mr-1 h-3.5 w-3.5" /> Confirm {group.challanNo}
-                            </Button>
-                          </div>
-                        ) : (
-                          <div className="space-y-0">
-                            {group.salesItems.map((item, idx) => (
-                              <div key={idx} className="py-1.5 border-b border-slate-100 last:border-0 flex items-center justify-end min-h-[50px]">
+                        <div className="space-y-0">
+                          {group.salesItems.map((item, idx) => (
+                            <div key={idx} className="py-1.5 border-b border-slate-100 last:border-0 flex items-center justify-end gap-1.5 min-h-[50px]">
+                              {group.challanNo ? (
+                                idx === 0 && (
+                                  <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-xs" onClick={() => handleConfirmChallan(group.salesItems[0].pendingChallan!)}>
+                                    <CheckCircle2 className="mr-1 h-3.5 w-3.5" /> Confirm {group.challanNo}
+                                  </Button>
+                                )
+                              ) : (
                                 <Button size="sm" className="bg-green-600 hover:bg-green-700 text-[10px] h-7 px-2" onClick={() => {
                                   setCurrentSale(item.sale);
                                   setChallanForm({ quantity: item.displayPendingQty, batchNo: item.sale.batchNo || "0", notes: "", stockCategory: item.sale.stockCategory || "Available" });
@@ -514,10 +707,21 @@ export default function PendingDeliveries() {
                                 }}>
                                   <FilePlus2 className="mr-1 h-3 w-3" /> Generate
                                 </Button>
-                              </div>
-                            ))}
-                          </div>
-                        )}
+                              )}
+                              {idx === 0 && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 px-2 text-xs border-slate-300 text-slate-700 hover:bg-slate-100 hover:text-slate-900"
+                                  onClick={() => handleOpenEditGroupModal(group)}
+                                  title="Edit Order / Pending Delivery Details"
+                                >
+                                  <Pencil className="h-3.5 w-3.5 mr-1 text-slate-600" /> Edit Order
+                                </Button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
                       </TableCell>
                     </TableRow>
                   );
@@ -632,6 +836,361 @@ export default function PendingDeliveries() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowChallanDialog(false)}>Cancel</Button>
             <Button onClick={handleCreateChallan} className="bg-green-600 hover:bg-green-700">Create Pending Challan</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Pending Delivery Dialog */}
+      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit Pending Delivery Details {editForm.challanNo ? `(${editForm.challanNo})` : editForm.orderNo ? `(${editForm.orderNo})` : ""}</DialogTitle>
+            <DialogDescription>
+              Modify customer details, delivery date, products, quantities, batches, or add new products to this pending order.
+            </DialogDescription>
+          </DialogHeader>
+
+          {editingGroup && (
+            <div className="space-y-4 py-2 text-sm">
+              {/* Order Header Fields */}
+              <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3 rounded-lg border border-slate-200">
+                {/* Client Name with Auto-Search */}
+                <div className="space-y-1">
+                  <Label className="text-xs font-bold text-slate-700">Client Name</Label>
+                  <div className="relative">
+                    <Input
+                      className="h-9 pr-8 bg-white"
+                      value={editForm.customer}
+                      onChange={e => {
+                        const val = e.target.value;
+                        setEditForm(prev => ({ ...prev, customer: val }));
+                        setShowClientSearch(true);
+                        setSelectedClientIndexForEdit(-1);
+                      }}
+                      onFocus={() => {
+                        setShowClientSearch(true);
+                        setSelectedClientIndexForEdit(-1);
+                      }}
+                      onBlur={() => setTimeout(() => {
+                        setShowClientSearch(false);
+                        setSelectedClientIndexForEdit(-1);
+                      }, 200)}
+                      onKeyDown={e => {
+                        if (!showClientSearch || filteredClientsForEdit.length === 0) return;
+                        if (e.key === 'ArrowDown') {
+                          e.preventDefault();
+                          setSelectedClientIndexForEdit(prev => (prev < filteredClientsForEdit.length - 1 ? prev + 1 : 0));
+                        } else if (e.key === 'ArrowUp') {
+                          e.preventDefault();
+                          setSelectedClientIndexForEdit(prev => (prev > 0 ? prev - 1 : filteredClientsForEdit.length - 1));
+                        } else if (e.key === 'Enter' || e.key === 'Tab') {
+                          e.preventDefault();
+                          const idxToPick = selectedClientIndexForEdit >= 0 ? selectedClientIndexForEdit : 0;
+                          const c = filteredClientsForEdit[idxToPick];
+                          if (c) {
+                            setEditForm(prev => ({
+                              ...prev,
+                              customer: c.name,
+                              clientPhone: c.phone || prev.clientPhone,
+                            }));
+                            setShowClientSearch(false);
+                            setSelectedClientIndexForEdit(-1);
+                          }
+                        } else if (e.key === 'Escape') {
+                          setShowClientSearch(false);
+                          setSelectedClientIndexForEdit(-1);
+                        }
+                      }}
+                      placeholder="Search client..."
+                      autoComplete="off"
+                    />
+                    <User className="absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
+
+                    {showClientSearch && filteredClientsForEdit.length > 0 && (
+                      <div className="absolute z-[120] left-0 right-0 mt-1 bg-popover border border-slate-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
+                        {filteredClientsForEdit.map((c, i) => (
+                          <div
+                            key={c.id}
+                            className={`px-3 py-2 cursor-pointer text-xs flex items-center justify-between border-b border-slate-100 last:border-0 ${selectedClientIndexForEdit === i ? 'bg-blue-50 text-blue-900 font-semibold' : 'hover:bg-slate-100'}`}
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              setEditForm(prev => ({
+                                ...prev,
+                                customer: c.name,
+                                clientPhone: c.phone || prev.clientPhone,
+                              }));
+                              setShowClientSearch(false);
+                              setSelectedClientIndexForEdit(-1);
+                            }}
+                          >
+                            <span className="font-semibold text-slate-900">{c.name}</span>
+                            <span className="text-[11px] text-slate-500 font-mono">{c.phone || "No phone"}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Phone Number */}
+                <div className="space-y-1">
+                  <Label className="text-xs font-bold text-slate-700">Phone Number</Label>
+                  <Input
+                    className="h-9 bg-white"
+                    value={editForm.clientPhone}
+                    onChange={e => setEditForm({ ...editForm, clientPhone: e.target.value })}
+                    placeholder="Phone number"
+                  />
+                </div>
+
+                {/* Estimated Delivery Date */}
+                <div className="space-y-1 col-span-2 sm:col-span-1">
+                  <Label className="text-xs font-bold text-slate-700">Est. Delivery Date</Label>
+                  <Input
+                    type="date"
+                    className="h-9 bg-white"
+                    value={editForm.estimatedDeliveryDate}
+                    onChange={e => setEditForm({ ...editForm, estimatedDeliveryDate: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              {/* Products Section */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between border-b pb-2">
+                  <h3 className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
+                    <Package className="h-4 w-4 text-blue-600" /> Products & Order Items
+                  </h3>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-8 text-xs border-blue-200 text-blue-700 hover:bg-blue-50"
+                    onClick={handleAddProductItem}
+                  >
+                    <Plus className="h-3.5 w-3.5 mr-1" /> Add Product
+                  </Button>
+                </div>
+
+                {editForm.items.map((item, idx) => {
+                  const itemBatches = batches.filter(b => b.productName.trim().toLowerCase() === item.product.trim().toLowerCase());
+                  const itemTotalStock = itemBatches.reduce((acc, curr) => {
+                    const col = item.stockCategory === "Display" ? curr.displayQty : item.stockCategory === "Damage" ? curr.damageQty : curr.availableQty;
+                    return acc + Number(col || 0);
+                  }, 0);
+
+                  const prodCategory = products.find(p => p.name.trim().toLowerCase() === item.product.trim().toLowerCase())?.category || batches.find(b => b.productName.trim().toLowerCase() === item.product.trim().toLowerCase())?.category || "";
+
+                  const batchOptionsSet = new Set<string>();
+                  if (item.batchNo) batchOptionsSet.add(item.batchNo);
+                  batchOptionsSet.add("0");
+                  itemBatches.forEach(b => { if (b.batchNumber) batchOptionsSet.add(b.batchNumber); });
+                  const batchOptionsList = Array.from(batchOptionsSet);
+
+                  return (
+                    <div key={idx} className="p-3 border border-slate-200 rounded-lg bg-white shadow-sm space-y-3 relative">
+                      <div className="flex items-center justify-between text-xs font-bold text-slate-700 border-b pb-1">
+                        <div className="flex items-center gap-2">
+                          <span>Item #{idx + 1}</span>
+                          {prodCategory && (
+                            <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded">
+                              Category: {prodCategory}
+                            </span>
+                          )}
+                        </div>
+                        {editForm.items.length > 1 && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 text-red-500 hover:text-red-700 hover:bg-red-50"
+                            onClick={() => handleRemoveProductItem(idx)}
+                            title="Remove product item"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        {/* Product Search */}
+                        <div className="space-y-1 relative sm:col-span-2">
+                          <Label className="text-[11px] font-semibold text-slate-600">Product Name</Label>
+                          <div className="relative">
+                            <Input
+                              className="h-8 text-xs pr-7"
+                              value={item.product}
+                              onChange={e => {
+                                handleUpdateItemRow(idx, "product", e.target.value);
+                                handleUpdateItemRow(idx, "batchNo", "0");
+                                setActiveProductSearchIndex(idx);
+                                setSelectedProductIndexForEdit(-1);
+                              }}
+                              onFocus={() => {
+                                setActiveProductSearchIndex(idx);
+                                setSelectedProductIndexForEdit(-1);
+                              }}
+                              onBlur={() => setTimeout(() => {
+                                if (activeProductSearchIndex === idx) {
+                                  setActiveProductSearchIndex(null);
+                                  setSelectedProductIndexForEdit(-1);
+                                }
+                              }, 200)}
+                              onKeyDown={e => {
+                                if (activeProductSearchIndex !== idx || filteredProductsForEdit.length === 0) return;
+                                if (e.key === 'ArrowDown') {
+                                  e.preventDefault();
+                                  setSelectedProductIndexForEdit(prev => (prev < filteredProductsForEdit.length - 1 ? prev + 1 : 0));
+                                } else if (e.key === 'ArrowUp') {
+                                  e.preventDefault();
+                                  setSelectedProductIndexForEdit(prev => (prev > 0 ? prev - 1 : filteredProductsForEdit.length - 1));
+                                } else if (e.key === 'Enter' || e.key === 'Tab') {
+                                  e.preventDefault();
+                                  const idxToPick = selectedProductIndexForEdit >= 0 ? selectedProductIndexForEdit : 0;
+                                  const name = filteredProductsForEdit[idxToPick];
+                                  if (name) {
+                                    handleUpdateItemRow(idx, "product", name);
+                                    handleUpdateItemRow(idx, "batchNo", "0");
+                                    setActiveProductSearchIndex(null);
+                                    setSelectedProductIndexForEdit(-1);
+                                  }
+                                } else if (e.key === 'Escape') {
+                                  setActiveProductSearchIndex(null);
+                                  setSelectedProductIndexForEdit(-1);
+                                }
+                              }}
+                              placeholder="Search product..."
+                              autoComplete="off"
+                            />
+                            <Package className="absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
+                          </div>
+
+                          {activeProductSearchIndex === idx && filteredProductsForEdit.length > 0 && (
+                            <div className="absolute z-[120] left-0 right-0 mt-1 bg-popover border border-slate-200 rounded-md shadow-lg max-h-40 overflow-y-auto">
+                              {filteredProductsForEdit.map((name, i) => {
+                                const prodObj = products.find(p => p.name.trim().toLowerCase() === name.toLowerCase());
+                                const category = prodObj?.category || batches.find(b => b.productName.trim().toLowerCase() === name.toLowerCase())?.category || "";
+                                return (
+                                  <div
+                                    key={name}
+                                    className={`px-3 py-1.5 cursor-pointer text-xs flex items-center justify-between border-b border-slate-100 last:border-0 ${selectedProductIndexForEdit === i ? 'bg-blue-50 text-blue-900 font-semibold' : 'hover:bg-slate-100'}`}
+                                    onMouseDown={(e) => {
+                                      e.preventDefault();
+                                      handleUpdateItemRow(idx, "product", name);
+                                      handleUpdateItemRow(idx, "batchNo", "0");
+                                      setActiveProductSearchIndex(null);
+                                      setSelectedProductIndexForEdit(-1);
+                                    }}
+                                  >
+                                    <span className="font-semibold text-slate-900">{name}</span>
+                                    {category && (
+                                      <span className="text-[10px] text-slate-500 px-1 py-0.5 bg-slate-100 rounded">{category}</span>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Stock Category */}
+                        <div className="space-y-1">
+                          <Label className="text-[11px] font-semibold text-slate-600">Stock Category</Label>
+                          <Select value={item.stockCategory} onValueChange={v => handleUpdateItemRow(idx, "stockCategory", v)}>
+                            <SelectTrigger className="h-8 text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="Available">Available</SelectItem>
+                              <SelectItem value="Display">Display</SelectItem>
+                              <SelectItem value="Damage">Damage</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        {/* Batch */}
+                        <div className="space-y-1">
+                          <Label className="text-[11px] font-semibold text-slate-600">Batch</Label>
+                          <Select value={item.batchNo} onValueChange={v => handleUpdateItemRow(idx, "batchNo", v)}>
+                            <SelectTrigger className="h-8 text-xs">
+                              <SelectValue placeholder="Select Batch" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {batchOptionsList.map(bNo => {
+                                const bv = bNo || "0";
+                                const mb = itemBatches.find(b => (b.batchNumber || "0") === bv);
+                                const avail = mb ? (item.stockCategory === "Display" ? mb.displayQty : item.stockCategory === "Damage" ? mb.damageQty : mb.availableQty) : 0;
+                                return (
+                                  <SelectItem key={bv} value={bv}>
+                                    {bv} {mb ? `(Stock: ${avail})` : "(Default)"}
+                                  </SelectItem>
+                                );
+                              })}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        {/* Ordered Qty */}
+                        <div className="space-y-1">
+                          <Label className="text-[11px] font-semibold text-slate-600">Ordered Qty</Label>
+                          <Input
+                            type="number"
+                            min={1}
+                            className="h-8 text-xs font-semibold"
+                            value={item.orderedQty}
+                            onChange={e => handleUpdateItemRow(idx, "orderedQty", Number(e.target.value))}
+                          />
+                          {item.deliveredQty > 0 && (
+                            <div className="text-[10px] text-slate-500">
+                              Delivered: <span className="text-green-600 font-bold">{item.deliveredQty}</span> | Pending: <span className="text-red-600 font-bold">{Math.max(0, item.orderedQty - item.deliveredQty)}</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Stock Status Badge */}
+                        <div className="space-y-1 flex flex-col justify-end">
+                          {item.product && (
+                            <div className="text-[11px] font-medium pb-1">
+                              {itemTotalStock >= 0 ? (
+                                <span className="text-green-700 bg-green-50 px-2 py-1 rounded border border-green-200 inline-block text-[11px]">
+                                  Stock Ready ({itemTotalStock} extra)
+                                </span>
+                              ) : (
+                                <span className="text-red-700 bg-red-50 px-2 py-1 rounded border border-red-200 inline-block text-[11px]">
+                                  Stock Shortage (Need {Math.abs(itemTotalStock)})
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Remarks */}
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-semibold text-slate-600">Narration / Notes</Label>
+                        <Input
+                          className="h-8 text-xs"
+                          value={item.remarks}
+                          onChange={e => handleUpdateItemRow(idx, "remarks", e.target.value)}
+                          placeholder="Narration / notes..."
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowEditDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveGroupEdit} className="bg-blue-600 hover:bg-blue-700">
+              Save Changes
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
