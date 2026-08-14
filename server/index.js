@@ -2658,11 +2658,16 @@ app.put("/api/challans/group/:challanNumber", async (req, res) => {
 
       // Sync secondary P-xxx draft challan for this item/sale ONLY IF NOT a P-group itself
       if (salesId && !isPGroup) {
-        const existingItemId = existingItem ? existingItem.id : 0;
-        const pRes = await db.query(
-          "SELECT * FROM challans WHERE sales_id = $1 AND challan_no LIKE 'P-%' AND status = 'Pending' AND is_cancelled = FALSE AND id != $2 ORDER BY created_at ASC LIMIT 1",
-          [salesId, existingItemId],
-        );
+        const existingItemId = existingItem ? existingItem.id : null;
+        const pRes = existingItemId
+          ? await db.query(
+              "SELECT * FROM challans WHERE sales_id = $1 AND challan_no LIKE 'P-%' AND status = 'Pending' AND is_cancelled = FALSE AND id != $2 ORDER BY created_at ASC LIMIT 1",
+              [salesId, existingItemId],
+            )
+          : await db.query(
+              "SELECT * FROM challans WHERE sales_id = $1 AND challan_no LIKE 'P-%' AND status = 'Pending' AND is_cancelled = FALSE ORDER BY created_at ASC LIMIT 1",
+              [salesId],
+            );
 
         if (pDraftQty > 0) {
           if (pRes.rows.length > 0) {
