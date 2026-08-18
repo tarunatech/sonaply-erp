@@ -129,18 +129,44 @@ export default function SalesPage() {
     );
   }, [uniqueClients, clientName]);
 
+  const productCategoryMap = useMemo(() => {
+    const map = new Map<string, string>();
+    allBatches.forEach(b => {
+      if (b.productName && b.category) {
+        map.set(b.productName.toLowerCase(), b.category);
+      }
+    });
+    return map;
+  }, [allBatches]);
+
+  const batchesByProductMap = useMemo(() => {
+    const map = new Map<string, StockBatch[]>();
+    allBatches.forEach(b => {
+      const key = (b.productName || '').trim();
+      if (!map.has(key)) {
+        map.set(key, []);
+      }
+      map.get(key)!.push(b);
+    });
+    return map;
+  }, [allBatches]);
+
   const filteredSales = useMemo(() => {
+    const f = productFilter.toLowerCase().trim();
+    if (!f) {
+      return [...sales].sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
+    }
     return sales.filter(s => {
-      const f = productFilter.toLowerCase();
-      const productBatch = allBatches.find(b => b.productName === s.product);
-      const productCategoryMatch = productBatch ? (productBatch.category || '').toLowerCase().includes(f) : false;
-      return (s.customer || '').toLowerCase().includes(f) || 
-             (s.product || '').toLowerCase().includes(f) ||
-             (s.category || '').toLowerCase().includes(f) ||
-             (s.orderNo || '').toLowerCase().includes(f) ||
-             productCategoryMatch;
+      const prodCat = productCategoryMap.get((s.product || '').toLowerCase()) || '';
+      return (
+        (s.customer || '').toLowerCase().includes(f) || 
+        (s.product || '').toLowerCase().includes(f) ||
+        (s.category || '').toLowerCase().includes(f) ||
+        (s.orderNo || '').toLowerCase().includes(f) ||
+        prodCat.toLowerCase().includes(f)
+      );
     }).sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
-  }, [sales, productFilter, allBatches]);
+  }, [sales, productFilter, productCategoryMap]);
 
   const groupedSales = useMemo(() => {
     const groups: Record<string, Sale[]> = {};
@@ -207,18 +233,29 @@ export default function SalesPage() {
   const getSuggestionsList = useCallback((query: string) => {
     const q = query.toLowerCase().trim();
     const tokens = q.split(/\s+/).filter(Boolean);
-    const filtered = allBatches.filter(b => {
-      if (!tokens.length) return true;
-      const fullText = `${b.productName || ''} ${b.productCode || ''} ${b.category || ''} ${b.batchNumber || ''}`.toLowerCase();
-      return tokens.every(token => fullText.includes(token));
-    });
+    let filtered = allBatches;
+    if (tokens.length > 0) {
+      filtered = allBatches.filter(b => {
+        const fullText = `${b.productName || ''} ${b.productCode || ''} ${b.category || ''} ${b.batchNumber || ''}`.toLowerCase();
+        return tokens.every(token => fullText.includes(token));
+      });
+    }
+
+    const sorted = [...filtered].sort((a, b) => (b.availableQty || 0) - (a.availableQty || 0));
 
     const list: { batch: StockBatch; category: 'Available' | 'Display' | 'Damage'; label: string }[] = [];
-    filtered.forEach(b => {
-      list.push({ batch: b, category: 'Available', label: 'Available' });
-      list.push({ batch: b, category: 'Display', label: 'Display' });
-      list.push({ batch: b, category: 'Damage', label: 'Damage' });
-    });
+    for (const b of sorted) {
+      if ((b.availableQty || 0) > 0 || list.length < 10) {
+        list.push({ batch: b, category: 'Available', label: 'Available' });
+      }
+      if ((b.displayQty || 0) > 0) {
+        list.push({ batch: b, category: 'Display', label: 'Display' });
+      }
+      if ((b.damageQty || 0) > 0) {
+        list.push({ batch: b, category: 'Damage', label: 'Damage' });
+      }
+      if (list.length >= 30) break;
+    }
     return list;
   }, [allBatches]);
 
@@ -545,7 +582,7 @@ export default function SalesPage() {
                   <div className="col-span-1"></div>
                 </div>
                 {items.map((item, index) => {
-                  const productBatches = allBatches.filter(b => b.productName === item.productName);
+                  const productBatches = batchesByProductMap.get(item.productName) || [];
 
                   return (
                     <div key={index} className="grid grid-cols-12 gap-3 items-start relative overflow-visible px-2 py-2 border-b last:border-0">
@@ -672,7 +709,7 @@ export default function SalesPage() {
                           <div className="text-[10px] text-muted-foreground mt-1 ml-1 flex flex-col gap-1 bg-blue-50/50 p-1.5 rounded-sm border border-blue-100/50">
                             {(() => {
                               const batch = item.batchNo ? productBatches.find(b => b.batchNumber === item.batchNo) : productBatches[0];
-                              const productCat = batch?.category || allBatches.find(b => b.productName === item.productName)?.category;
+                              const productCat = batch?.category || (item.productName ? productCategoryMap.get(item.productName.toLowerCase()) : undefined);
                               return (
                                 <>
                                   <div className="flex items-center justify-between w-full font-semibold gap-2">
@@ -834,17 +871,17 @@ export default function SalesPage() {
             </div>
           </div>
 
-          <Card><CardContent className="p-0" id="sales-table"><div className="overflow-x-auto">
-            <Table className="border-collapse border-2 border-slate-300 w-full">
-              <TableHeader className="bg-slate-50/75">
+          <Card><CardContent className="p-0" id="sales-table">
+            <Table className="border-collapse border-2 border-slate-300 w-full" wrapperClassName="max-h-[calc(100vh-250px)]">
+              <TableHeader className="sticky top-0 bg-slate-100 z-10 shadow-2xs border-b-2 border-slate-300">
                 <TableRow className="hover:bg-transparent">
                   <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Date</TableHead>
                   <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Order #</TableHead>
                   <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Customer</TableHead>
                   <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Product</TableHead>
                   <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right">Ordered</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right text-green-600">Delivered</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right text-red-600">Pending</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-green-600 px-4 py-3 text-right">Delivered</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-red-600 px-4 py-3 text-right">Pending</TableHead>
                   <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -1077,7 +1114,7 @@ export default function SalesPage() {
                 ))}
               </TableBody>
             </Table>
-          </div></CardContent></Card>
+          </CardContent></Card>
         </TabsContent>
       </Tabs>
     </div>

@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   getBatches,
+  getBatchesPaginated,
   exportCSV,
   deleteBatch,
   updateBatch,
@@ -11,6 +12,7 @@ import {
   getSales,
   Sale,
   StockBatch,
+  StockStats,
   CATEGORIES,
   getLocalDateString,
   formatLocalDate,
@@ -56,6 +58,8 @@ import {
   Trash2,
   Upload,
   Loader2,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -63,8 +67,21 @@ export default function StockList() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
-  const [allBatches, setAllBatches] = useState<StockBatch[]>([]);
+  const [page, setPage] = useState<number>(1);
+  const limit = 50;
+  const [batches, setBatches] = useState<StockBatch[]>([]);
+  const [total, setTotal] = useState<number>(0);
+  const [totalPages, setTotalPages] = useState<number>(1);
+  const [stats, setStats] = useState<StockStats>({
+    totalSales: 0,
+    availableStock: 0,
+    totalDisplay: 0,
+    totalDamage: 0,
+  });
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [allCategories, setAllCategories] = useState<string[]>([]);
   const [pendingOrders, setPendingOrders] = useState<Sale[]>([]);
   const [editingBatch, setEditingBatch] = useState<StockBatch | null>(null);
   const [isAdminUnlocked, setIsAdminUnlocked] = useState(false);
@@ -80,63 +97,79 @@ export default function StockList() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const { toast } = useToast();
 
-  const refreshData = useCallback(async () => {
-    const [b, s] = await Promise.all([getBatches(), getSales()]);
-    setAllBatches(b);
-    setPendingOrders(s.filter((sale) => sale.status !== "Delivered" && sale.status !== "Cancelled" && sale.pendingQty > 0));
+  // Debounce search string by 300ms
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const refreshCategories = useCallback(async () => {
+    try {
+      const bList = await getBatches();
+      const list = new Set<string>();
+      bList.forEach((b) => {
+        if (b.category) list.add(b.category);
+      });
+      CATEGORIES.forEach((c) => list.add(c));
+      setAllCategories(Array.from(list).sort());
+    } catch (err) {
+      console.error("Failed to load categories:", err);
+    }
   }, []);
+
+  useEffect(() => {
+    refreshCategories();
+  }, [refreshCategories]);
+
+  const refreshData = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const [res, s] = await Promise.all([
+        getBatchesPaginated({
+          page,
+          limit,
+          search: debouncedSearch,
+          category: selectedCategory,
+        }),
+        getSales(),
+      ]);
+      setBatches(res.data);
+      setTotal(res.total);
+      setTotalPages(res.totalPages || Math.ceil(res.total / limit) || 1);
+      if (res.stats) {
+        setStats(res.stats);
+      }
+      setPendingOrders(
+        s.filter(
+          (sale) =>
+            sale.status !== "Delivered" &&
+            sale.status !== "Cancelled" &&
+            sale.pendingQty > 0,
+        ),
+      );
+    } catch (err) {
+      console.error("Failed to fetch stock batches:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [page, limit, debouncedSearch, selectedCategory]);
 
   useEffect(() => {
     refreshData();
   }, [refreshData]);
 
   useEffect(() => {
-    const handleStockUpdate = () => refreshData();
+    const handleStockUpdate = () => {
+      refreshData();
+      refreshCategories();
+    };
     window.addEventListener("erp-stock-updated", handleStockUpdate);
     return () =>
       window.removeEventListener("erp-stock-updated", handleStockUpdate);
-  }, [refreshData]);
-
-  const categoriesList = useMemo(() => {
-    const list = new Set<string>();
-    allBatches.forEach((b) => {
-      if (b.category) list.add(b.category);
-    });
-    // Add default categories from store
-    CATEGORIES.forEach((c) => list.add(c));
-    return Array.from(list).sort();
-  }, [allBatches]);
-
-  const batches = useMemo(() => {
-    let b = allBatches;
-    if (selectedCategory && selectedCategory !== "all") {
-      b = b.filter(
-        (i) =>
-          (i.category || "").toLowerCase() === selectedCategory.toLowerCase(),
-      );
-    }
-    if (search) {
-      const s = search.toLowerCase().trim();
-      const tokens = s.split(/\s+/).filter(Boolean);
-      b = b.filter((i) => {
-        const fullString = `${i.productName || ""} ${i.productCode || ""} ${i.batchNumber || ""} ${i.category || ""} ${i.supplier || ""} ${i.description || ""}`.toLowerCase();
-        return tokens.every((token) => fullString.includes(token));
-      });
-    }
-    return [...b].sort((a, b) => {
-      const nameCompare = (a.productName || "").localeCompare(
-        b.productName || "",
-        undefined,
-        { numeric: true, sensitivity: "base" },
-      );
-      if (nameCompare !== 0) return nameCompare;
-      return (a.batchNumber || "").localeCompare(
-        b.batchNumber || "",
-        undefined,
-        { numeric: true, sensitivity: "base" },
-      );
-    });
-  }, [allBatches, search, selectedCategory]);
+  }, [refreshData, refreshCategories]);
 
   const handleDelete = async (id: string) => {
     const password = prompt("Please enter admin password to delete:");
@@ -389,8 +422,9 @@ export default function StockList() {
 
     let created = 0;
     let updated = 0;
+    const currentBatches = await getBatches();
     const existingByKey = new Set(
-      allBatches.map(
+      currentBatches.map(
         (b) =>
           `${b.productName.trim().toLowerCase()}||${(b.batchNumber || "").trim().toLowerCase()}`,
       ),
@@ -705,11 +739,12 @@ export default function StockList() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => {
+            onClick={async () => {
               let csvContent = "";
+              const fullBatchesList = await getBatches();
 
               const brands: Record<string, Record<string, any[]>> = {};
-              batches.forEach((b) => {
+              fullBatchesList.forEach((b) => {
                 let brand = "UNKNOWN";
                 let prefix = "Other";
                 let suffix = b.productName;
@@ -841,21 +876,7 @@ export default function StockList() {
               Total Sales (Items)
             </div>
             <div className="text-2xl font-bold text-primary">
-              {allBatches
-                .reduce(
-                  (acc, b) =>
-                    acc +
-                    Math.max(
-                      0,
-                      b.quantity -
-                        b.availableQty -
-                        (b.displayQty || 0) -
-                        (b.damageQty || 0) -
-                        (b.holdQty || 0),
-                    ),
-                  0,
-                )
-                .toLocaleString()}
+              {stats.totalSales.toLocaleString()}
             </div>
           </CardContent>
         </Card>
@@ -865,9 +886,7 @@ export default function StockList() {
               Available Stock
             </div>
             <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
-              {allBatches
-                .reduce((acc, b) => acc + (b.availableQty || 0), 0)
-                .toLocaleString()}
+              {stats.availableStock.toLocaleString()}
             </div>
           </CardContent>
         </Card>
@@ -877,9 +896,7 @@ export default function StockList() {
               Total Display Qty
             </div>
             <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">
-              {allBatches
-                .reduce((acc, b) => acc + (b.displayQty || 0), 0)
-                .toLocaleString()}
+              {stats.totalDisplay.toLocaleString()}
             </div>
           </CardContent>
         </Card>
@@ -889,9 +906,7 @@ export default function StockList() {
               Total Damage Qty
             </div>
             <div className="text-2xl font-bold text-rose-600 dark:text-rose-400">
-              {allBatches
-                .reduce((acc, b) => acc + (b.damageQty || 0), 0)
-                .toLocaleString()}
+              {stats.totalDamage.toLocaleString()}
             </div>
           </CardContent>
         </Card>
@@ -908,13 +923,19 @@ export default function StockList() {
           />
         </div>
         <div className="w-full sm:w-[220px]">
-          <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+          <Select
+            value={selectedCategory}
+            onValueChange={(val) => {
+              setSelectedCategory(val);
+              setPage(1);
+            }}
+          >
             <SelectTrigger>
               <SelectValue placeholder="All Categories" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Categories</SelectItem>
-              {categoriesList.map((c) => (
+              {allCategories.map((c) => (
                 <SelectItem key={c} value={c}>
                   {c}
                 </SelectItem>
@@ -942,7 +963,19 @@ export default function StockList() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {batches.length === 0 ? (
+              {isLoading && batches.length === 0 ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={11}
+                    className="border-2 border-slate-300 text-center text-muted-foreground py-8"
+                  >
+                    <div className="flex items-center justify-center gap-2">
+                      <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                      Loading stock items...
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ) : batches.length === 0 ? (
                 <TableRow>
                   <TableCell
                     colSpan={11}
@@ -1023,6 +1056,35 @@ export default function StockList() {
               )}
             </TableBody>
           </Table>
+
+          {/* Pagination Controls */}
+          <div className="flex flex-wrap items-center justify-between gap-4 p-4 border-t-2 border-slate-300 bg-slate-50 no-print">
+            <div className="text-sm text-slate-600 font-medium">
+              Showing {total === 0 ? 0 : (page - 1) * limit + 1} to{" "}
+              {Math.min(page * limit, total)} of {total} entries
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page <= 1 || isLoading}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                <ChevronLeft className="h-4 w-4 mr-1" /> Previous
+              </Button>
+              <span className="text-sm font-semibold px-2.5 py-1 bg-white border border-slate-300 rounded text-slate-700 shadow-2xs">
+                Page {page} of {totalPages || 1}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page >= totalPages || isLoading}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
+                Next <ChevronRight className="h-4 w-4 ml-1" />
+              </Button>
+            </div>
+          </div>
         </CardContent>
       </Card>
 
@@ -1062,7 +1124,7 @@ export default function StockList() {
                       <SelectValue placeholder="Select Category" />
                     </SelectTrigger>
                     <SelectContent>
-                      {categoriesList.map((c) => (
+                      {allCategories.map((c) => (
                         <SelectItem key={c} value={c}>
                           {c}
                         </SelectItem>
