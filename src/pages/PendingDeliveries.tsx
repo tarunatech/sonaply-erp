@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
-import { getSales, getChallans, exportCSV, addChallan, getBatches, getProducts, getClients, confirmChallanGroup, deleteChallanGroup, updateChallanGroup, updateSale, Sale, StockBatch, Challan, Product, Client, formatLocalDate, getLocalDateString } from "@/lib/store";
+import { getSales, getChallans, exportCSV, addChallan, generatePendingGroupChallan, getBatches, getProducts, getClients, confirmChallanGroup, deleteChallanGroup, updateChallanGroup, updateSale, Sale, StockBatch, Challan, Product, Client, formatLocalDate, getLocalDateString } from "@/lib/store";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
@@ -459,6 +459,25 @@ export default function PendingDeliveries() {
     return Object.values(groups);
   }, [filteredSales, challans, batches]);
 
+  useEffect(() => {
+    if (groupedPendingDeliveries.length > 0) {
+      const missingChallans = groupedPendingDeliveries.filter(g => !g.challanNo && g.salesItems.length > 0);
+      if (missingChallans.length > 0) {
+        Promise.all(
+          missingChallans.map(g =>
+            generatePendingGroupChallan(g.orderNo, g.salesItems.map(si => si.sale.id))
+          )
+        ).then(results => {
+          if (results.some(res => res && res.length > 0)) {
+            refresh();
+          }
+        }).catch(err => {
+          console.error("Auto-generate pending challans error:", err);
+        });
+      }
+    }
+  }, [groupedPendingDeliveries, refresh]);
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -533,21 +552,20 @@ export default function PendingDeliveries() {
 
       <Card>
         <CardContent className="p-0" id="pending-table">
-          <div className="overflow-x-auto">
-            <Table className="border-collapse border-2 border-slate-300 w-full">
-              <TableHeader className="bg-slate-50/75">
-                <TableRow className="hover:bg-transparent">
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 whitespace-nowrap">Date</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 whitespace-nowrap">Challan #</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 whitespace-nowrap">Client</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 whitespace-nowrap">Product</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right whitespace-nowrap">Ordered</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right text-green-600 whitespace-nowrap">Delivered</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right text-red-600 whitespace-nowrap">Pending Qty</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 whitespace-nowrap">Status</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right whitespace-nowrap">Action</TableHead>
-                </TableRow>
-              </TableHeader>
+          <Table className="border-collapse border-2 border-slate-300 w-full" wrapperClassName="max-h-[calc(100vh-220px)]">
+            <TableHeader className="sticky top-0 bg-slate-100 z-10 shadow-2xs border-b-2 border-slate-300">
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 whitespace-nowrap">Date</TableHead>
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 whitespace-nowrap">Challan #</TableHead>
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 whitespace-nowrap">Client</TableHead>
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 whitespace-nowrap">Product</TableHead>
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right whitespace-nowrap">Ordered</TableHead>
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-green-600 px-4 py-3 text-right whitespace-nowrap">Delivered</TableHead>
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-red-600 px-4 py-3 text-right whitespace-nowrap">Pending Qty</TableHead>
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 whitespace-nowrap">Status</TableHead>
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right whitespace-nowrap">Action</TableHead>
+              </TableRow>
+            </TableHeader>
               <TableBody>
                 {groupedPendingDeliveries.length === 0 ? (
                   <TableRow>
@@ -728,7 +746,6 @@ export default function PendingDeliveries() {
                 })}
               </TableBody>
             </Table>
-          </div>
         </CardContent>
       </Card>
 

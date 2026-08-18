@@ -113,18 +113,17 @@ export default function HoldPage() {
 
       <Card>
         <CardContent className="p-0" id="holds-table">
-          <div className="overflow-x-auto">
-            <Table className="border-collapse border-2 border-slate-300 w-full">
-              <TableHeader className="bg-slate-50/75">
-                <TableRow className="hover:bg-transparent">
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Date</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Client Name</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Product</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Batch</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right">Quantity</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
+          <Table className="border-collapse border-2 border-slate-300 w-full" wrapperClassName="max-h-[calc(100vh-220px)]">
+            <TableHeader className="sticky top-0 bg-slate-100 z-10 shadow-2xs border-b-2 border-slate-300">
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Date</TableHead>
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Client Name</TableHead>
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Product</TableHead>
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Batch</TableHead>
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right">Quantity</TableHead>
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
               <TableBody>
                 {loading ? (
                   <TableRow>
@@ -204,7 +203,6 @@ export default function HoldPage() {
                 )}
               </TableBody>
             </Table>
-          </div>
         </CardContent>
       </Card>
     </div>

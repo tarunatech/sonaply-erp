@@ -267,9 +267,53 @@ export const addProduct = (p: Omit<Product, "id">) =>
   request<Product>("/products", { method: "POST", body: JSON.stringify(p) });
 
 // Batches
+export interface GetBatchesParams {
+  page?: number;
+  limit?: number;
+  search?: string;
+  category?: string;
+}
+
+export interface StockStats {
+  totalSales: number;
+  availableStock: number;
+  totalDisplay: number;
+  totalDamage: number;
+}
+
+export interface PaginatedBatchesResponse {
+  data: StockBatch[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+  stats?: StockStats;
+}
+
 export const getBatches = async (): Promise<StockBatch[]> => {
   const data = await request<any[]>("/batches");
   return data.map(mapBatch);
+};
+
+export const getBatchesPaginated = async (
+  params: GetBatchesParams = {},
+): Promise<PaginatedBatchesResponse> => {
+  const query = new URLSearchParams();
+  if (params.page !== undefined) query.set("page", String(params.page));
+  if (params.limit !== undefined) query.set("limit", String(params.limit));
+  if (params.search) query.set("search", params.search);
+  if (params.category && params.category !== "all")
+    query.set("category", params.category);
+
+  const res = await request<any>(`/batches?${query.toString()}`);
+  return {
+    data: (res.data || []).map(mapBatch),
+    total: res.total || 0,
+    page: res.page || 1,
+    limit: res.limit || 50,
+    totalPages: res.totalPages || 1,
+    stats: res.stats,
+  };
 };
 export const addBatch = (b: Omit<StockBatch, "id">) => {
   const body = {
@@ -499,6 +543,11 @@ export const deleteSalesReturn = (id: string) =>
 // Challans
 export const getChallans = async () =>
   (await request<any[]>("/challans")).map(mapChallan);
+export const generatePendingGroupChallan = (orderNo: string, salesIds?: (number | string)[]) =>
+  request<any[]>("/challans/group/generate-pending", {
+    method: "POST",
+    body: JSON.stringify({ orderNo, salesIds }),
+  }).then(list => list.map(mapChallan));
 export const addChallan = (
   c: Omit<Challan, "id" | "challanNo"> & { status?: string },
 ) => {
