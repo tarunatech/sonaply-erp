@@ -141,6 +141,7 @@ export interface User {
 export interface Client {
   id: string;
   name: string;
+  nameGujarati?: string;
   phone: string;
   priceCategory: string;
   createdAt: string;
@@ -633,6 +634,7 @@ export const deleteUser = (id: string) =>
 const mapClient = (c: any): Client => ({
   id: c.id,
   name: c.name,
+  nameGujarati: c.name_gujarati || c.nameGujarati || "",
   phone: c.phone,
   priceCategory: c.price_category,
   createdAt: c.created_at,
@@ -644,6 +646,7 @@ export const addClient = (c: Partial<Client>) =>
     method: "POST",
     body: JSON.stringify({
       name: c.name,
+      name_gujarati: c.nameGujarati,
       phone: c.phone,
       price_category: c.priceCategory,
     }),
@@ -653,6 +656,7 @@ export const updateClient = (id: string, c: Partial<Client>) =>
     method: "PUT",
     body: JSON.stringify({
       name: c.name,
+      name_gujarati: c.nameGujarati,
       phone: c.phone,
       price_category: c.priceCategory,
     }),

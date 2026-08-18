@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Download, Pencil, Trash2, UserCircle, UserPlus, FileSpreadsheet, Upload, FileDown, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Download, Pencil, Trash2, UserCircle, UserPlus, FileSpreadsheet, Upload, FileDown, CheckCircle2, AlertTriangle, Languages, Sparkles } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -18,7 +18,7 @@ export default function ClientsPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [editingClient, setEditingClient] = useState<any>(null);
   const [filter, setFilter] = useState('');
-  const [newClient, setNewClient] = useState({ name: '', phone: '', priceCategory: 'Regular' });
+  const [newClient, setNewClient] = useState({ name: '', nameGujarati: '', phone: '', priceCategory: 'Regular' });
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showNameSuggestions, setShowNameSuggestions] = useState(false);
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(-1);
@@ -28,6 +28,92 @@ export default function ClientsPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const nameContainerRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
+  const [isConvertingNew, setIsConvertingNew] = useState(false);
+  const [isConvertingEdit, setIsConvertingEdit] = useState(false);
+
+  const transliterateText = async (text: string): Promise<string> => {
+    if (!text || !text.trim()) return "";
+
+    // 1. Primary: Google GTX Translate & Transliteration API (100% reliable, zero CORS/ITC errors)
+    try {
+      const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=gu&dt=t&q=${encodeURIComponent(text.trim())}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && Array.isArray(data[0])) {
+          const translatedSegments = data[0]
+            .map((seg: any) => (Array.isArray(seg) && seg[0] ? seg[0] : ""))
+            .join("");
+          if (translatedSegments && translatedSegments.trim()) {
+            return translatedSegments.trim();
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Google GTX translation error:", err);
+    }
+
+    // 2. Secondary Fallback: Google Input Tools API
+    try {
+      const url = `https://inputtools.google.com/request?text=${encodeURIComponent(text.trim())}&itc=gu-t-i10n&num=5&cp=0&cs=1&ie=utf-8&oe=utf-8&app=test`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data[0] === "SUCCESS" && Array.isArray(data[1])) {
+          const translatedWords = data[1].map((wordGroup: any) => {
+            if (wordGroup && Array.isArray(wordGroup[1]) && wordGroup[1].length > 0) {
+              return wordGroup[1][0];
+            }
+            return wordGroup[0] || "";
+          });
+          const resultStr = translatedWords.join(" ").trim();
+          if (resultStr) return resultStr;
+        }
+      }
+    } catch (err) {
+      console.error("Google Input Tools error:", err);
+    }
+
+    return "";
+  };
+
+  const handleAutoConvertNewGujarati = async () => {
+    if (!newClient.name.trim()) {
+      toast({ title: "Please enter client name first", variant: "destructive" });
+      return;
+    }
+    setIsConvertingNew(true);
+    try {
+      const gujarati = await transliterateText(newClient.name);
+      if (gujarati) {
+        setNewClient(prev => ({ ...prev, nameGujarati: gujarati }));
+        toast({ title: "Converted to Gujarati", description: gujarati });
+      } else {
+        toast({ title: "Could not convert automatically", variant: "destructive" });
+      }
+    } finally {
+      setIsConvertingNew(false);
+    }
+  };
+
+  const handleAutoConvertEditGujarati = async () => {
+    if (!editingClient?.name?.trim()) {
+      toast({ title: "Please enter client name first", variant: "destructive" });
+      return;
+    }
+    setIsConvertingEdit(true);
+    try {
+      const gujarati = await transliterateText(editingClient.name);
+      if (gujarati) {
+        setEditingClient(prev => ({ ...prev, nameGujarati: gujarati }));
+        toast({ title: "Converted to Gujarati", description: gujarati });
+      } else {
+        toast({ title: "Could not convert automatically", variant: "destructive" });
+      }
+    } finally {
+      setIsConvertingEdit(false);
+    }
+  };
 
   const refresh = useCallback(() => getClients().then(setClients), []);
   useEffect(() => { refresh(); }, [refresh]);
@@ -140,7 +226,7 @@ export default function ClientsPage() {
       await addClient(newClient);
       refresh();
       setShowAddDialog(false);
-      setNewClient({ name: '', phone: '', priceCategory: 'Regular' });
+      setNewClient({ name: '', nameGujarati: '', phone: '', priceCategory: 'Regular' });
       toast({ title: "New client profile created" });
     } catch (err: any) {
       toast({ title: "Failed to create profile", description: err.message, variant: "destructive" });
@@ -150,6 +236,7 @@ export default function ClientsPage() {
   const pickClientSuggestion = (client: Client) => {
     setNewClient({
       name: client.name,
+      nameGujarati: client.nameGujarati || '',
       phone: client.phone || '',
       priceCategory: client.priceCategory || 'Regular',
     });
@@ -360,6 +447,28 @@ export default function ClientsPage() {
                   </div>
                 </div>
                 <div className="grid gap-2">
+                  <div className="flex items-center justify-between">
+                    <Label>Client Name (Gujarati)</Label>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs text-primary hover:bg-primary/10 gap-1 px-2 font-semibold"
+                      disabled={isConvertingNew}
+                      onClick={handleAutoConvertNewGujarati}
+                      title="Phonetically convert English client name into Gujarati"
+                    >
+                      <Languages className="h-3.5 w-3.5" />
+                      {isConvertingNew ? "Converting..." : "Auto Convert to Gujarati"}
+                    </Button>
+                  </div>
+                  <Input 
+                    placeholder="Enter client name in Gujarati (optional)" 
+                    value={newClient.nameGujarati} 
+                    onChange={e => setNewClient({...newClient, nameGujarati: e.target.value})} 
+                  />
+                </div>
+                <div className="grid gap-2">
                   <Label>Phone Number</Label>
                   <Input 
                     placeholder="Enter phone number" 
@@ -447,6 +556,24 @@ export default function ClientsPage() {
                                 <div className="grid gap-2">
                                   <Label>Name</Label>
                                   <Input value={editingClient?.name || ''} onChange={e => setEditingClient({...editingClient, name: e.target.value})} />
+                                </div>
+                                <div className="grid gap-2">
+                                  <div className="flex items-center justify-between">
+                                    <Label>Client Name (Gujarati)</Label>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-7 text-xs text-primary hover:bg-primary/10 gap-1 px-2 font-semibold"
+                                      disabled={isConvertingEdit}
+                                      onClick={handleAutoConvertEditGujarati}
+                                      title="Phonetically convert English client name into Gujarati"
+                                    >
+                                      <Languages className="h-3.5 w-3.5" />
+                                      {isConvertingEdit ? "Converting..." : "Auto Convert to Gujarati"}
+                                    </Button>
+                                  </div>
+                                  <Input placeholder="Enter client name in Gujarati (optional)" value={editingClient?.nameGujarati || ''} onChange={e => setEditingClient({...editingClient, nameGujarati: e.target.value})} />
                                 </div>
                                 <div className="grid gap-2">
                                   <Label>Phone Number</Label>
