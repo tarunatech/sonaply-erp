@@ -349,9 +349,22 @@ export default function ChallanPage() {
       console.error("Failed to mark as printed", e);
     }
 
+    const normGroupCustomer = (group.customer || "").trim().toLowerCase();
+    const groupPhone = (group.clientPhone || "").trim();
+    const matchingClient = clients.find(c => {
+      if (c.name && c.name.trim().toLowerCase() === normGroupCustomer) return true;
+      if (groupPhone && c.phone && c.phone.trim() === groupPhone) return true;
+      return false;
+    });
+
+    const printableClientName = (matchingClient?.nameGujarati && matchingClient.nameGujarati.trim())
+      ? matchingClient.nameGujarati.trim()
+      : group.customer;
+
     const content = `
       <html>
         <head>
+          <meta charset="UTF-8">
           <title>Print Challan</title>
           <style>
             @media print {
@@ -361,13 +374,13 @@ export default function ChallanPage() {
           </style>
         </head>
         <body style="margin: 0; padding: 10px; -webkit-print-color-adjust: exact;">
-          <div style="width: 260px; border: 1px solid #000; padding: 10px; box-sizing: border-box; font-family: 'Courier New', Courier, monospace; font-size: 13px; line-height: 1.3; color: #000; margin: 0;">
+          <div style="width: 260px; border: 1px solid #000; padding: 10px; box-sizing: border-box; font-family: 'Shruti', 'Gujarati', 'Mukta Vaani', 'Noto Sans Gujarati', 'Arial', sans-serif, 'Courier New', Courier, monospace; font-size: 13px; line-height: 1.3; color: #000; margin: 0;">
             <div style="text-align: center; margin-bottom: 8px;">
               <span style="border: 1px solid #000; padding: 2px 6px; font-weight: bold; display: inline-block; font-size: 12px; letter-spacing: 0.5px;">DELIVERY SLIP</span>
             </div>
             
             <div style="border-top: 2px solid #000; border-bottom: 2px solid #000; text-align: center; padding: 4px 0; margin-bottom: 8px; font-weight: bold; font-size: 14px;">
-              CLIENT: ${group.customer}
+              CLIENT: ${printableClientName}
             </div>
 
             <div style="border-bottom: 1px dashed #000; padding-bottom: 4px; margin-bottom: 8px;">

@@ -550,6 +550,7 @@ async function migrate() {
 
     await db.query(`UPDATE clients SET phone = TRIM(phone) WHERE phone IS NOT NULL AND phone != TRIM(phone)`);
     await db.query(`UPDATE clients SET phone = NULL WHERE phone IS NOT NULL AND TRIM(phone) = ''`);
+    await addColumnIfNotExist('clients', 'name_gujarati TEXT');
 
     // 12. Migrate nil_qty to display_qty if legacy column exists
     console.log('Step 12: Checking legacy nil_qty column on batches...');

@@ -113,6 +113,7 @@ CREATE TABLE IF NOT EXISTS challans (
 CREATE TABLE IF NOT EXISTS clients (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT UNIQUE NOT NULL,
+  name_gujarati TEXT,
   phone TEXT,
   price_category TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

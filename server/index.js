@@ -3358,8 +3358,9 @@ app.get("/api/clients", async (req, res) => {
 });
 
 app.post("/api/clients", async (req, res) => {
-  const { name, phone, price_category } = req.body;
+  const { name, name_gujarati, nameGujarati, phone, price_category } = req.body;
   const nameTrimmed = name ? String(name).trim() : "";
+  const nameGujaratiTrimmed = (name_gujarati || nameGujarati) ? String(name_gujarati || nameGujarati).trim() : null;
   const phoneTrimmed = phone ? String(phone).trim() : "";
 
   if (!nameTrimmed) {
@@ -3390,8 +3391,8 @@ app.post("/api/clients", async (req, res) => {
     }
 
     const result = await db.query(
-      "INSERT INTO clients (name, phone, price_category) VALUES ($1, $2, $3) RETURNING *",
-      [nameTrimmed, phoneTrimmed, price_category || "Regular"],
+      "INSERT INTO clients (name, name_gujarati, phone, price_category) VALUES ($1, $2, $3, $4) RETURNING *",
+      [nameTrimmed, nameGujaratiTrimmed, phoneTrimmed, price_category || "Regular"],
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -3426,6 +3427,7 @@ app.post("/api/clients/bulk", async (req, res) => {
     for (const c of clients) {
       const nameTrimmed = c.name ? String(c.name).trim() : "";
       const phoneTrimmed = c.phone ? String(c.phone).trim() : "";
+      const nameGujaratiTrimmed = (c.name_gujarati || c.nameGujarati) ? String(c.name_gujarati || c.nameGujarati).trim() : null;
       const nameLower = nameTrimmed.toLowerCase();
 
       if (!nameTrimmed) {
@@ -3456,11 +3458,12 @@ app.post("/api/clients/bulk", async (req, res) => {
       }
 
       const result = await db.query(
-        `INSERT INTO clients (name, phone, price_category)
-         VALUES ($1, $2, $3)
+        `INSERT INTO clients (name, name_gujarati, phone, price_category)
+         VALUES ($1, $2, $3, $4)
          RETURNING *`,
         [
           nameTrimmed,
+          nameGujaratiTrimmed,
           phoneTrimmed,
           c.price_category ? String(c.price_category).trim() : "Regular",
         ]
@@ -3490,8 +3493,10 @@ app.post("/api/clients/bulk", async (req, res) => {
 
 app.put("/api/clients/:id", async (req, res) => {
   const { id } = req.params;
-  const { name, phone, price_category } = req.body;
+  const { name, name_gujarati, nameGujarati, phone, price_category } = req.body;
   const nameTrimmed = name ? String(name).trim() : "";
+  const nameGujaratiRaw = name_gujarati !== undefined ? name_gujarati : nameGujarati;
+  const nameGujaratiTrimmed = nameGujaratiRaw !== undefined ? (nameGujaratiRaw ? String(nameGujaratiRaw).trim() : null) : undefined;
   const phoneTrimmed = phone ? String(phone).trim() : "";
 
   try {
@@ -3517,10 +3522,18 @@ app.put("/api/clients/:id", async (req, res) => {
       }
     }
 
-    const result = await db.query(
-      "UPDATE clients SET name = $1, phone = $2, price_category = $3 WHERE id = $4 RETURNING *",
-      [nameTrimmed, phoneTrimmed, price_category, id],
-    );
+    let result;
+    if (nameGujaratiTrimmed !== undefined) {
+      result = await db.query(
+        "UPDATE clients SET name = $1, name_gujarati = $2, phone = $3, price_category = $4 WHERE id = $5 RETURNING *",
+        [nameTrimmed, nameGujaratiTrimmed, phoneTrimmed, price_category, id],
+      );
+    } else {
+      result = await db.query(
+        "UPDATE clients SET name = $1, phone = $2, price_category = $3 WHERE id = $4 RETURNING *",
+        [nameTrimmed, phoneTrimmed, price_category, id],
+      );
+    }
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
