@@ -111,24 +111,21 @@ export default function DailyExport() {
           const isDeadStock = matchingBatch?.isDeadStock || false;
           const status = isCancelled ? 'Dead Stock' : isNil ? 'Not next Folder' : isDeadStock ? 'Nil' : s.status;
           return {
-            "Order No": s.orderNo,
-            "Customer": s.customer,
-            "Phone": s.clientPhone || "",
+            "Customer Name": s.customer,
             "Product": s.product,
             "Category": s.category,
+            "Ordered": s.orderedQty,
+            "Delivered": s.deliveredQty || 0,
+            "Pending": s.pendingQty || 0,
+            "Phone No": s.clientPhone || "",
+            "Order No": s.orderNo,
+            "Order Date": s.orderDate,
             "Description": description,
-            "Ordered Qty": s.orderedQty,
-            "Delivered Qty": s.deliveredQty || 0,
-            "Pending Qty": s.pendingQty || 0,
-            "Rate": s.rate || 0,
-            "GST (%)": s.GST || 0,
-            "Total Price": s.totalPrice || 0,
             "Stock Category": s.stockCategory || "Available",
             "Is Not next Folder": isNil ? "Yes" : "No",
             "Is Dead Stock": isCancelled ? "Yes" : "No",
             "Is Nil": isDeadStock ? "Yes" : "No",
-            "Status": status,
-            "Order Date": s.orderDate
+            "Status": status
           };
         });
         break;

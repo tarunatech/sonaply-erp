@@ -74,7 +74,6 @@ export default function SalesPage() {
       }
     }
   }, [items.length]);
-  const [showNarrationDialog, setShowNarrationDialog] = useState(false);
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
   const [productFilter, setProductFilter] = useState('');
   const [showClientSuggestions, setShowClientSuggestions] = useState(false);
@@ -814,44 +813,49 @@ export default function SalesPage() {
               </div>
             </div>
 
-            <div className="flex justify-end gap-3 mt-6 border-t pt-4">
-              <Dialog open={showNarrationDialog} onOpenChange={setShowNarrationDialog}>
-                <DialogTrigger asChild>
-                  <Button variant="outline" className="text-blue-600 hover:text-blue-700 hover:bg-blue-50 border-blue-200">
-                    <MessageCircle className="mr-2 h-4 w-4" /> Narration
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Add Narration / Notes</DialogTitle>
-                  </DialogHeader>
-                  <div className="py-4">
-                    <Label>Narration</Label>
-                    <Input 
-                      placeholder="Enter narration here..." 
-                      value={narration} 
-                      onChange={(e) => setNarration(e.target.value)} 
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          setShowNarrationDialog(false);
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-end justify-between gap-4 mt-6 border-t pt-4">
+              <div className="w-full sm:max-w-md space-y-1.5">
+                <Label htmlFor="sales-narration" className="text-xs font-semibold text-slate-700">Narration / Notes</Label>
+                <div className="flex items-center gap-2">
+                  <Input 
+                    id="sales-narration"
+                    placeholder="Enter narration / notes..." 
+                    value={narration} 
+                    onChange={(e) => setNarration(e.target.value)} 
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (narration.trim()) {
+                          toast({ title: "Narration saved", description: "Narration attached to this order." });
                         }
-                      }}
-                    />
-                  </div>
-                  <DialogFooter>
-                    <Button onClick={() => setShowNarrationDialog(false)}>
-                      Add Naration
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-              <Button variant="outline" className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 border-amber-200" onClick={handleHold}>
-                <Hand className="mr-2 h-4 w-4" /> Hold
-              </Button>
-              <Button onClick={handleSubmit}>
-                <Plus className="mr-2 h-4 w-4" /> Record Sale & Save
-              </Button>
+                      }
+                    }}
+                    className="h-10"
+                  />
+                  <Button 
+                    type="button"
+                    variant="outline"
+                    className="h-10 px-4 shrink-0 text-blue-600 border-blue-200 hover:bg-blue-50 font-semibold"
+                    onClick={() => {
+                      if (narration.trim()) {
+                        toast({ title: "Narration saved", description: "Narration attached to this order." });
+                      } else {
+                        toast({ title: "Please enter narration first", variant: "destructive" });
+                      }
+                    }}
+                  >
+                    Save
+                  </Button>
+                </div>
+              </div>
+              <div className="flex justify-end gap-3 shrink-0">
+                <Button variant="outline" className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 border-amber-200" onClick={handleHold}>
+                  <Hand className="mr-2 h-4 w-4" /> Hold
+                </Button>
+                <Button onClick={handleSubmit}>
+                  <Plus className="mr-2 h-4 w-4" /> Record Sale & Save
+                </Button>
+              </div>
             </div>
           </CardContent></Card>
         </TabsContent>
