@@ -18,6 +18,7 @@ import {
   Client,
 } from "@/lib/store";
 import { printElement } from "@/lib/print";
+import { transliterateToGujarati } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -361,69 +362,240 @@ export default function ChallanPage() {
       ? matchingClient.nameGujarati.trim()
       : group.customer;
 
-    const content = `
-      <html>
-        <head>
-          <meta charset="UTF-8">
-          <title>Print Challan</title>
-          <style>
-            @media print {
-              body { margin: 0; padding: 0; }
-              @page { size: auto; margin: 0mm; }
-            }
-          </style>
-        </head>
-        <body style="margin: 0; padding: 10px; -webkit-print-color-adjust: exact;">
-          <div style="width: 260px; border: 1px solid #000; padding: 10px; box-sizing: border-box; font-family: 'Shruti', 'Gujarati', 'Mukta Vaani', 'Noto Sans Gujarati', 'Arial', sans-serif, 'Courier New', Courier, monospace; font-size: 13px; line-height: 1.3; color: #000; margin: 0;">
-            <div style="text-align: center; margin-bottom: 8px;">
-              <span style="border: 1px solid #000; padding: 2px 6px; font-weight: bold; display: inline-block; font-size: 12px; letter-spacing: 0.5px;">DELIVERY SLIP</span>
-            </div>
-            
-            <div style="border-top: 2px solid #000; border-bottom: 2px solid #000; text-align: center; padding: 4px 0; margin-bottom: 8px; font-weight: bold; font-size: 14px;">
-              CLIENT: ${printableClientName}
-            </div>
+    const formattedDate = group.createdAt
+      ? format(new Date(group.createdAt), "dd-MM-yyyy")
+      : (group.items[0]?.createdAt ? format(new Date(group.items[0].createdAt), "dd-MM-yyyy") : "");
 
-            <div style="border-bottom: 1px dashed #000; padding-bottom: 4px; margin-bottom: 8px;">
-              <table style="width: 100%; font-family: inherit; font-size: inherit; border-collapse: collapse;">
-                <tr>
-                  <td style="text-align: left; padding: 1px 0;">Challan:</td>
-                  <td style="text-align: right; padding: 1px 0; font-weight: bold;">${group.challanNo}</td>
-                </tr>
-                <tr>
-                  <td style="text-align: left; padding: 1px 0;">Date:</td>
-                  <td style="text-align: right; padding: 1px 0;">${group.createdAt ? format(new Date(group.createdAt), "dd-MM-yyyy") : ""}</td>
-                </tr>
-              </table>
-            </div>
+    const totalQty = group.items.reduce((sum: number, item: any) => sum + Number(item.quantity || 0), 0);
 
-            <div style="border-top: 2px solid #000; padding-top: 8px;">
-              ${group.items.map((item: any) => {
-                const itemSale = sales.find((s: Sale) => s.id === item.salesId);
-                const itemBatches = batches.filter((b: StockBatch) => b.productName === item.product);
-                const currentBatch = item.batchNo
-                  ? itemBatches.find((b: StockBatch) => b.batchNumber === item.batchNo)
-                  : itemBatches[0];
-                const productCategory = currentBatch?.category || itemBatches[0]?.category || "";
-                const batch = item.batchNo || itemSale?.batchNo || "";
-                const narration = item.notes || itemSale?.remarks || "";
-                const description = item.description || itemSale?.description || currentBatch?.description || "";
-                return `
-                  <div style="text-align: center; margin-bottom: 10px; font-weight: bold; border-bottom: 1px dashed #ccc; padding-bottom: 6px;">
-                    <div style="font-size: 14px;">${item.product}</div>
-                    ${description ? `<div style="font-size: 12px; font-weight: bold; color: #222; margin-top: 2px;">Description: ${description}</div>` : ""}
-                    ${productCategory ? `<div style="font-size: 12px; font-weight: normal; margin-top: 1px;">Category: ${productCategory}</div>` : ""}
-                    <div style="font-size: 13px; margin-top: 1px;">QTY: ${item.quantity} [${item.stockCategory || "Available"}]</div>
-                    ${batch ? `<div style="font-size: 12px; font-weight: normal; margin-top: 1px;">Batch: ${batch}</div>` : ""}
-                    ${narration ? `<div style="font-size: 12px; font-weight: normal; margin-top: 2px; font-style: italic;">Narration: ${narration}</div>` : ""}
-                  </div>
-                `;
-              }).join("")}
+    const allNotes = Array.from(new Set(group.items.map((i: any) => {
+      const is = sales.find((s: Sale) => s.id === i.salesId);
+      return (i.notes || is?.remarks || "").trim();
+    }).filter(Boolean))).join(", ");
+
+    let printableNarration = allNotes;
+    if (allNotes) {
+      try {
+        const gujaratiNotes = await transliterateToGujarati(allNotes);
+        if (gujaratiNotes) {
+          printableNarration = gujaratiNotes;
+        }
+      } catch (err) {
+        console.error("Failed to convert narration to Gujarati:", err);
+      }
+    }
+
+    const itemsHtml = group.items.map((item: any) => {
+      const itemSale = sales.find((s: Sale) => s.id === item.salesId);
+      const itemBatches = batches.filter((b: StockBatch) => b.productName === item.product);
+      const currentBatch = item.batchNo
+        ? itemBatches.find((b: StockBatch) => b.batchNumber === item.batchNo)
+        : itemBatches[0];
+      const productCategory = currentBatch?.category || itemBatches[0]?.category || itemSale?.category || "-";
+      const batch = item.batchNo || itemSale?.batchNo || "";
+      const description = item.description || itemSale?.description || currentBatch?.description || "";
+
+      return `
+        <div class="item">
+          <div class="row-data">
+            <div class="c-cat bold">${productCategory}</div>
+            <div class="c-prod bold">
+              <div>${item.product}</div>
+              ${batch ? `<div class="sub-batch">Batch: ${batch}</div>` : ""}
+              ${description ? `<div class="sub-desc">Desc: ${description}</div>` : ""}
+              ${item.stockCategory && item.stockCategory !== 'Available' ? `<div class="sub-desc">[${item.stockCategory}]</div>` : ""}
             </div>
-            <div style="border-top: 2px solid #000; margin-top: 8px;"></div>
+            <div class="c-qty bold">${item.quantity}</div>
           </div>
-        </body>
-      </html>
-    `;
+        </div>
+      `;
+    }).join("");
+
+    const content = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Challan - ${group.challanNo}</title>
+<style>
+  :root{
+    --paper-width: 80mm;
+    --side-margin: 2.5mm;
+  }
+
+  @page{
+    size: var(--paper-width) auto;
+    margin: 0;
+  }
+
+  *{ box-sizing: border-box; }
+
+  html,body{
+    margin:0;
+    padding:0;
+    background:#e9e9e9;
+  }
+
+  .receipt{
+    width: var(--paper-width);
+    margin: 0 auto;
+    padding: 3mm var(--side-margin) 4mm;
+    background:#fff;
+    font-family: 'Courier New', Consolas, 'Shruti', 'Gujarati', 'Mukta Vaani', 'Noto Sans Gujarati', monospace;
+    color:#000;
+    font-size: 11px;
+    line-height: 1.35;
+  }
+
+  .center{ text-align:center; }
+  .bold{ font-weight:700; }
+  .row{ display:flex; justify-content:space-between; gap:4px; }
+  .row span:last-child{ text-align:right; white-space:nowrap; }
+
+  .dashed{
+    border-top: 1.5px dashed #000;
+    margin: 2.5mm 0;
+  }
+  .dashed-light{
+    border-top: 1px dashed #444;
+    margin: 2mm 0;
+  }
+
+  .meta div{ margin:2px 0; }
+  .meta .label{ display:inline-block; width: 22mm; font-weight:700; }
+  .meta .client-row{ font-size: 12.5px; font-weight: 700; }
+
+  .col-head{
+    display:flex;
+    justify-content:space-between;
+    font-weight:700;
+    font-size: 10px;
+    text-transform:uppercase;
+    border-bottom: 1.5px solid #000;
+    padding-bottom: 1.5mm;
+    margin-bottom: 2mm;
+  }
+  .col-head .c-cat{ width: 22mm; flex-shrink: 0; }
+  .col-head .c-prod{ flex: 1; padding: 0 3px; }
+  .col-head .c-qty{ width: 12mm; text-align:right; flex-shrink: 0; }
+
+  .item{
+    padding-bottom: 2mm;
+    margin-bottom: 2mm;
+    border-bottom: 1px dashed #777;
+  }
+  .item:last-child{
+    border-bottom: none;
+    margin-bottom: 0;
+    padding-bottom: 1mm;
+  }
+  .item .row-data{
+    display:flex;
+    justify-content:space-between;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.3;
+  }
+  .item .c-cat{
+    width: 22mm;
+    flex-shrink: 0;
+    word-break: break-word;
+    font-weight: 700;
+  }
+  .item .c-prod{
+    flex: 1;
+    padding: 0 3px;
+    font-weight: 700;
+    word-break: break-word;
+  }
+  .item .c-qty{
+    width: 12mm;
+    text-align: right;
+    flex-shrink: 0;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .item .sub-batch{
+    font-size: 9.5px;
+    font-weight: 700;
+    color: #111;
+    margin-top: 1px;
+  }
+  .item .sub-desc{
+    font-size: 9px;
+    font-weight: 600;
+    color: #333;
+    margin-top: 1px;
+  }
+
+  .totals .row{ font-size: 11px; margin: 0.5mm 0; }
+  .totals .grand{ font-weight:700; font-size: 12px; }
+
+  .print-btn-wrap{
+    text-align:center;
+    padding: 10px;
+  }
+  .print-btn{
+    font-family: sans-serif;
+    background:#2b2b2b;
+    color:#fff;
+    border:none;
+    border-radius:4px;
+    padding:8px 16px;
+    font-size:13px;
+    cursor:pointer;
+  }
+  @media print{
+    body{ background:#fff; }
+    .print-btn-wrap{ display:none; }
+    .receipt{ box-shadow:none; }
+  }
+  @media screen{
+    .receipt{ box-shadow: 0 0 6px rgba(0,0,0,0.25); margin-top:14px; margin-bottom:6px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="print-btn-wrap">
+  <button class="print-btn" onclick="window.print()">🖨️ Print Challan</button>
+</div>
+
+<div class="receipt">
+
+  <div class="meta">
+    <div class="client-row"><span class="label">Client</span>: <span class="bold">${printableClientName}</span></div>
+    <div><span class="label">Challan No</span>: <span class="bold">${group.challanNo}</span></div>
+    <div><span class="label">Date</span>: ${formattedDate}</div>
+  </div>
+
+  <div class="dashed"></div>
+
+  <div class="col-head">
+    <span class="c-cat">Category</span>
+    <span class="c-prod">Product</span>
+    <span class="c-qty">Qty</span>
+  </div>
+
+  <div id="items">
+    ${itemsHtml}
+  </div>
+
+  <div class="dashed"></div>
+
+  <div class="totals">
+    <div class="row grand bold"><span>Total Qty</span><span>${totalQty}</span></div>
+  </div>
+
+  ${printableNarration ? `
+  <div class="dashed-light"></div>
+  <div class="center bold">Narration: ${printableNarration}</div>
+  ` : ""}
+
+</div>
+
+</body>
+</html>`;
+
     const printWindow = window.open("", "_blank");
     if (printWindow) {
       printWindow.document.write(content);
@@ -431,7 +603,7 @@ export default function ChallanPage() {
       setTimeout(() => {
         printWindow.print();
         printWindow.close();
-      }, 250);
+      }, 300);
     }
   };
 
