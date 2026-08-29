@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
-import { addSale, addSaleBulk, addClient, getBatches, getClients, getSales, addHold, updateSale, deleteSale, exportCSV, confirmSale, deliverSale, Sale, Client, StockBatch, generateWhatsAppLink, getLocalDateString } from "@/lib/store";
+import { useLocation, useNavigate } from "react-router-dom";
+import { addSale, addSaleBulk, addClient, getBatches, getClients, getSales, addHold, updateSale, deleteSale, exportCSV, confirmSale, deliverSale, updateChallanGroup, Sale, Client, StockBatch, generateWhatsAppLink, getLocalDateString } from "@/lib/store";
 import { Hand } from "lucide-react";
 
 import { printElement } from "@/lib/print";
@@ -27,12 +28,14 @@ const renderCustomer = (customerName: string) => {
   }
   return <span className="font-semibold text-slate-900 leading-tight">{customerName}</span>;
 };
-import { Download, Printer, MessageCircle, Plus, Trash2, Pencil, CheckCircle2, Truck, Calendar as CalendarIcon } from "lucide-react";
+import { Download, Printer, MessageCircle, Plus, Trash2, Pencil, CheckCircle2, Truck, Calendar as CalendarIcon, X, Check } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 
 const PRICE_CATEGORIES = ['Regular', 'Premium', 'Only Cash'];
 
 interface SaleItem {
+  id?: string;
+  salesId?: string;
   productName: string;
   quantity: number;
   stockCategory: 'Available' | 'Display' | 'Damage';
@@ -50,6 +53,11 @@ const parseLocalDate = (dateStr: string) => {
 };
 
 export default function SalesPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState('new');
+  const [editingChallanNumber, setEditingChallanNumber] = useState<string | null>(null);
+  const [returnTo, setReturnTo] = useState<string | null>(null);
   const [clientName, setClientName] = useState('');
   const [clientPhone, setClientPhone] = useState('');
   const [priceCategory, setPriceCategory] = useState('Regular');
@@ -64,6 +72,7 @@ export default function SalesPage() {
   const [editingSale, setEditingSale] = useState<any>(null);
   const productInputsRef = useRef<(HTMLInputElement | null)[]>([]);
   const orderDateRef = useRef<HTMLButtonElement>(null);
+  const clientInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (items.length > 1) {
@@ -98,6 +107,58 @@ export default function SalesPage() {
   const refreshSales = useCallback(() => getSales().then(setSales), []);
   const refreshBatches = useCallback(() => getBatches().then(setAllBatches), []);
   const refreshClients = useCallback(() => getClients().then(setAllClients), []);
+
+  useEffect(() => {
+    if (location.state?.editChallan) {
+      const { editChallan } = location.state;
+      setClientName(editChallan.customer || '');
+      setClientPhone(editChallan.clientPhone || '');
+      setPriceCategory(editChallan.category || 'Regular');
+      setOrderDate(editChallan.orderDate || getLocalDateString());
+      setNarration(editChallan.notes || '');
+      if (editChallan.items && editChallan.items.length > 0) {
+        setItems(
+          editChallan.items.map((it: any) => ({
+            id: it.id,
+            salesId: it.salesId,
+            productName: it.productName || it.product || '',
+            quantity: Number(it.quantity || 0),
+            stockCategory: it.stockCategory || 'Available',
+            batchNo: it.batchNo || '',
+            isProductSelected: true,
+          }))
+        );
+      }
+      setEditingChallanNumber(editChallan.challanNumber);
+      setReturnTo(editChallan.returnTo || '/challans');
+      setActiveTab('new');
+
+      if (allClients.length > 0 && editChallan.customer) {
+        const matching = allClients.find(
+          (c) => c.name.toLowerCase().trim() === editChallan.customer.toLowerCase().trim()
+        );
+        if (matching) setSelectedClientId(matching.id);
+      }
+
+      window.history.replaceState({}, document.title);
+
+      setTimeout(() => {
+        if (clientInputRef.current) {
+          clientInputRef.current.focus();
+          clientInputRef.current.select();
+        }
+      }, 100);
+    }
+  }, [location.state, allClients]);
+
+  useEffect(() => {
+    if (clientName && !selectedClientId && allClients.length > 0) {
+      const matching = allClients.find(
+        (c) => c.name.toLowerCase().trim() === clientName.toLowerCase().trim()
+      );
+      if (matching) setSelectedClientId(matching.id);
+    }
+  }, [allClients, clientName, selectedClientId]);
  
   useEffect(() => {
     refreshSales();
@@ -423,17 +484,170 @@ export default function SalesPage() {
     refreshClients();
   };
 
+  const handleSaveChallanEdit = async () => {
+    if (!clientName) {
+      toast({ title: "Please enter client name", variant: "destructive" });
+      return;
+    }
+
+    const selectedClient = selectedClientId
+      ? uniqueClients.find((c) => c.id === selectedClientId)
+      : filteredClients.find(
+          (c) => c.name.toLowerCase().trim() === clientName.toLowerCase().trim()
+        );
+    if (!selectedClient) {
+      toast({
+        title: "Please select an existing client from the suggestions",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const validItems = items.filter(
+      (item) => item.productName && item.quantity > 0
+    );
+    if (validItems.length === 0) {
+      toast({
+        title: "Please add at least one valid product with quantity > 0",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const itemsWithoutBatch = validItems.filter((item) => !item.batchNo);
+    if (itemsWithoutBatch.length > 0) {
+      toast({
+        title: "Please select a batch for all products",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      await updateChallanGroup(editingChallanNumber!, {
+        challanNumber: editingChallanNumber!,
+        clientName,
+        clientPhone,
+        date: orderDate,
+        items: validItems.map((item) => ({
+          id: item.id,
+          salesId: item.salesId,
+          productName: item.productName,
+          quantity: item.quantity,
+          batchNo: item.batchNo,
+          notes: narration,
+          stockCategory: item.stockCategory || "Available",
+        })),
+      });
+
+      toast({
+        title: "Order & Challan updated!",
+        description: `Changes saved for ${editingChallanNumber}.`,
+      });
+      window.dispatchEvent(new CustomEvent("erp-stock-updated"));
+
+      // Reset form
+      setClientName("");
+      setClientPhone("");
+      setItems([{ ...defaultItem }]);
+      setNarration("");
+      setSelectedClientId(null);
+      setEditingChallanNumber(null);
+
+      const dest = returnTo || "/challans";
+      setReturnTo(null);
+      navigate(dest);
+    } catch (err: any) {
+      toast({
+        title: "Update Failed",
+        description: err.message || "Failed to update order",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setClientName("");
+    setClientPhone("");
+    setItems([{ ...defaultItem }]);
+    setNarration("");
+    setSelectedClientId(null);
+    setEditingChallanNumber(null);
+    const dest = returnTo || "/challans";
+    setReturnTo(null);
+    navigate(dest);
+  };
+
+  const handleEditFromHistory = (group: any) => {
+    setClientName(group.customer || "");
+    setClientPhone(group.clientPhone || "");
+    setOrderDate(group.orderDate || getLocalDateString());
+    const firstItem = group.items[0];
+    setPriceCategory(firstItem?.category || "Regular");
+    setNarration(group.items.find((i: any) => i.remarks)?.remarks || "");
+    setItems(
+      group.items.map((i: any) => ({
+        id: i.id,
+        salesId: i.id,
+        productName: i.product,
+        quantity: i.orderedQty,
+        batchNo: i.batchNo,
+        stockCategory: i.stockCategory || "Available",
+        isProductSelected: true,
+      }))
+    );
+    setEditingChallanNumber(group.orderNo);
+    setReturnTo("/sales");
+    setActiveTab("new");
+    setTimeout(() => {
+      if (clientInputRef.current) {
+        clientInputRef.current.focus();
+        clientInputRef.current.select();
+      }
+    }, 100);
+  };
+
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-bold">Sales Module</h1>
-      <Tabs defaultValue="new">
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList><TabsTrigger value="new">New Sale</TabsTrigger><TabsTrigger value="history">History</TabsTrigger></TabsList>
         <TabsContent value="new">
           <Card><CardContent className="space-y-6 pt-6">
+            {editingChallanNumber && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3.5 flex items-center justify-between shadow-2xs">
+                <div className="flex items-center gap-3">
+                  <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold shrink-0">
+                    <Pencil className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <div className="font-bold text-blue-950 text-sm flex items-center gap-2">
+                      <span>Editing Order / Challan:</span>
+                      <span className="font-mono bg-blue-100 text-blue-800 px-2 py-0.5 rounded text-xs">
+                        {editingChallanNumber}
+                      </span>
+                    </div>
+                    <div className="text-xs text-blue-700 mt-0.5">
+                      Client: <span className="font-medium">{clientName || "N/A"}</span>
+                    </div>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="text-xs text-blue-700 border-blue-300 hover:bg-blue-100 h-8 gap-1.5"
+                  onClick={handleCancelEdit}
+                >
+                  <X className="h-3.5 w-3.5" /> Cancel Edit
+                </Button>
+              </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pb-4 border-b">
               <div className="relative">
                 <Label>Client Name *</Label>
                 <Input 
+                  ref={clientInputRef}
                   value={clientName} 
                   onChange={e => {
                     const value = e.target.value;
@@ -477,6 +691,13 @@ export default function SalesPage() {
                             orderDateRef.current?.focus();
                           }, 50);
                         }
+                      } else if (e.key === 'Enter') {
+                        e.preventDefault();
+                        setShowClientSuggestions(false);
+                        setSelectedClientIndex(-1);
+                        setTimeout(() => {
+                          orderDateRef.current?.focus();
+                        }, 50);
                       }
                     } else if (e.key === 'Escape') {
                       setShowClientSuggestions(false);
@@ -542,6 +763,12 @@ export default function SalesPage() {
                       ref={orderDateRef}
                       variant="outline"
                       className={`w-full justify-start text-left font-normal h-9 text-xs bg-background border-input ${!orderDate ? 'text-slate-400' : 'text-slate-900 font-medium'}`}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          productInputsRef.current[0]?.focus();
+                        }
+                      }}
                     >
                       <CalendarIcon className="mr-2 h-4 w-4 text-slate-500 shrink-0" />
                       {orderDate ? format(parseLocalDate(orderDate), "dd-MM-yyyy") : <span>Pick a date</span>}
@@ -556,7 +783,7 @@ export default function SalesPage() {
                           setOrderDate(getLocalDateString(date));
                           setIsCalendarOpen(false);
                           setTimeout(() => {
-                            orderDateRef.current?.focus();
+                            productInputsRef.current[0]?.focus();
                           }, 50);
                         }
                       }}
@@ -848,14 +1075,25 @@ export default function SalesPage() {
                   </Button>
                 </div>
               </div>
-              <div className="flex justify-end gap-3 shrink-0">
-                <Button variant="outline" className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 border-amber-200" onClick={handleHold}>
-                  <Hand className="mr-2 h-4 w-4" /> Hold
-                </Button>
-                <Button onClick={handleSubmit}>
-                  <Plus className="mr-2 h-4 w-4" /> Record Sale & Save
-                </Button>
-              </div>
+              {editingChallanNumber ? (
+                <div className="flex justify-end gap-3 shrink-0">
+                  <Button type="button" variant="outline" onClick={handleCancelEdit}>
+                    Cancel
+                  </Button>
+                  <Button type="button" onClick={handleSaveChallanEdit} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold shadow-xs">
+                    <Check className="mr-2 h-4 w-4" /> Save Changes & Return
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex justify-end gap-3 shrink-0">
+                  <Button type="button" variant="outline" className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 border-amber-200" onClick={handleHold}>
+                    <Hand className="mr-2 h-4 w-4" /> Hold
+                  </Button>
+                  <Button type="button" onClick={handleSubmit}>
+                    <Plus className="mr-2 h-4 w-4" /> Record Sale & Save
+                  </Button>
+                </div>
+              )}
             </div>
           </CardContent></Card>
         </TabsContent>
@@ -963,100 +1201,16 @@ export default function SalesPage() {
                             {group.status}
                           </span>
 
-                          <Dialog open={!!editingSale && editingSale.orderNo === group.orderNo} onOpenChange={(open) => !open && setEditingSale(null)}>
-                            <DialogTrigger asChild>
-                              <Button 
-                                variant="ghost" 
-                                size="icon" 
-                                className="h-8 w-8 text-blue-600 hover:bg-blue-50" 
-                                onClick={() => setEditingSale(JSON.parse(JSON.stringify(group)))} 
-                                title="Edit Order"
-                                disabled={group.status === 'Delivered'}
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </Button>
-                            </DialogTrigger>
-                            {editingSale && (
-                              <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
-                                <DialogHeader><DialogTitle>Edit Order ({editingSale.orderNo})</DialogTitle></DialogHeader>
-                                <div className="grid gap-4 py-4 mt-2">
-                                  <div className="grid gap-2">
-                                    <Label>Customer Name</Label>
-                                    <Input 
-                                      value={editingSale.customer || ''} 
-                                      onChange={e => setEditingSale({...editingSale, customer: e.target.value})} 
-                                      disabled={editingSale.status === 'Partial' || editingSale.status === 'Delivered'}
-                                    />
-                                  </div>
-                                  <div className="grid gap-2">
-                                    <Label>Client Phone</Label>
-                                    <Input 
-                                      value={editingSale.clientPhone || ''} 
-                                      onChange={e => setEditingSale({...editingSale, clientPhone: e.target.value})} 
-                                    />
-                                  </div>
-                                  <div className="grid gap-2">
-                                    <Label>Status</Label>
-                                    <Select 
-                                      value={editingSale.status || ''} 
-                                      onValueChange={v => setEditingSale({...editingSale, status: v})}
-                                      disabled={editingSale.status === 'Delivered'}
-                                    >
-                                      <SelectTrigger>
-                                        <SelectValue />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="Pending">Pending</SelectItem>
-                                        <SelectItem value="Confirmed">Confirmed</SelectItem>
-                                        <SelectItem value="Partial">Partial</SelectItem>
-                                        <SelectItem value="Delivered">Delivered</SelectItem>
-                                        <SelectItem value="Cancelled">Cancelled</SelectItem>
-                                      </SelectContent>
-                                    </Select>
-                                  </div>
-
-                                  <div className="border-t pt-3 mt-2">
-                                    <h4 className="font-semibold text-sm mb-3 text-left">Order Items</h4>
-                                    <div className="space-y-4">
-                                      {editingSale.items.map((item: any, idx: number) => (
-                                        <div key={idx} className="bg-muted/40 p-3 rounded-lg border space-y-2 text-left">
-                                          <div className="font-semibold text-xs text-slate-800">{item.product}</div>
-                                          <div className="grid grid-cols-2 gap-3">
-                                            <div>
-                                              <Label className="text-xs">Ordered Qty</Label>
-                                              <Input 
-                                                type="number" 
-                                                value={item.orderedQty || ''} 
-                                                onChange={e => {
-                                                  const updatedItems = [...editingSale.items];
-                                                  updatedItems[idx].orderedQty = +e.target.value;
-                                                  setEditingSale({...editingSale, items: updatedItems});
-                                                }} 
-                                                className="h-8 text-xs font-semibold"
-                                              />
-                                            </div>
-                                            <div>
-                                              <Label className="text-xs">Remarks</Label>
-                                              <Input 
-                                                value={item.remarks || ''} 
-                                                onChange={e => {
-                                                  const updatedItems = [...editingSale.items];
-                                                  updatedItems[idx].remarks = e.target.value;
-                                                  setEditingSale({...editingSale, items: updatedItems});
-                                                }} 
-                                                className="h-8 text-xs"
-                                              />
-                                            </div>
-                                          </div>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                </div>
-                                <DialogFooter><Button onClick={handleEditSave}>Save Changes</Button></DialogFooter>
-                              </DialogContent>
-                            )}
-                          </Dialog>
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-8 w-8 text-blue-600 hover:bg-blue-50" 
+                            onClick={() => handleEditFromHistory(group)} 
+                            title="Edit Order in Sales Form"
+                            disabled={group.status === 'Delivered'}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
 
                           <Button 
                             variant="ghost" 

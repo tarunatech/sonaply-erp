@@ -124,6 +124,7 @@ export interface ChallanGroupItem {
 }
 
 export interface ChallanGroupUpdate {
+  challanNumber?: string;
   clientName?: string;
   customer?: string;
   clientPhone?: string;

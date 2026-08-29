@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   getChallans,
   getSales,
@@ -79,56 +80,13 @@ const renderCustomer = (customerName: string) => {
 };
 
 export default function ChallanPage() {
+  const navigate = useNavigate();
   const [challans, setChallans] = useState<Challan[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [batches, setBatches] = useState<StockBatch[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
-  const [showClientSearch, setShowClientSearch] = useState(false);
-  const [selectedClientIndexForEdit, setSelectedClientIndexForEdit] = useState<number>(-1);
-  const [editingGroup, setEditingGroup] = useState<any>(null);
   const [filter, setFilter] = useState("");
-  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState<number | null>(null);
-  const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState<number>(-1);
-  const suggestionContainerRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
-
-  const getSuggestionsList = useCallback((query: string) => {
-    const q = query.toLowerCase().trim();
-    const tokens = q.split(/\s+/).filter(Boolean);
-    const filtered = batches.filter(b => {
-      if (!tokens.length) return true;
-      const fullText = `${b.productName || ''} ${b.productCode || ''} ${b.category || ''} ${b.batchNumber || ''}`.toLowerCase();
-      return tokens.every(token => fullText.includes(token));
-    });
-
-    const list: { batch: StockBatch; category: 'Available' | 'Display' | 'Damage'; label: string }[] = [];
-    filtered.forEach(b => {
-      const hasDisplay = (b.displayQty || 0) > 0;
-      const hasDamage = (b.damageQty || 0) > 0;
-
-      list.push({ batch: b, category: 'Available', label: 'Available' });
-
-      if (hasDisplay) {
-        list.push({ batch: b, category: 'Display', label: 'Display' });
-      }
-      if (hasDamage) {
-        list.push({ batch: b, category: 'Damage', label: 'Damage' });
-      }
-    });
-    return list;
-  }, [batches]);
-
-  useEffect(() => {
-    if (selectedSuggestionIndex >= 0 && suggestionContainerRef.current) {
-      const activeElement = suggestionContainerRef.current.children[selectedSuggestionIndex] as HTMLElement;
-      if (activeElement) {
-        activeElement.scrollIntoView({
-          behavior: 'smooth',
-          block: 'nearest',
-        });
-      }
-    }
-  }, [selectedSuggestionIndex]);
 
   const refresh = useCallback(() => {
     Promise.all([getChallans(), getSales(), getBatches(), getClients()]).then(([c, s, b, cl]) => {
@@ -138,15 +96,6 @@ export default function ChallanPage() {
       setClients(cl);
     });
   }, []);
-
-  const filteredClientsForEdit = useMemo(() => {
-    const q = (editingGroup?.clientName || "").toLowerCase().trim();
-    if (!q) return clients;
-    return clients.filter(c =>
-      (c.name || "").toLowerCase().includes(q) ||
-      (c.phone || "").toLowerCase().includes(q)
-    );
-  }, [clients, editingGroup?.clientName]);
 
   useEffect(() => {
     refresh();
@@ -216,28 +165,37 @@ export default function ChallanPage() {
     });
   }, [challans, sales, filter]);
 
-  const openEditDialog = (group: any) => {
-    setEditingGroup({
-      challanNumber: group.challanNo,
-      salesId: group.salesId,
-      clientName: group.customer,
-      clientPhone: group.items[0]?.clientPhone || "",
-      date: group.createdAt ? new Date(group.createdAt).toISOString().slice(0, 10) : "",
-      items: group.items.map((item: Challan) => {
-        const itemSale = sales.find((s) => s.id === item.salesId);
-        const totalOrderQty = itemSale ? itemSale.orderedQty : item.quantity;
-        return {
-          id: item.id,
-          salesId: item.salesId,
-          productName: item.product,
-          quantity: totalOrderQty,
-          fulfilledQty: item.quantity,
-          batchNo: item.batchNo,
-          notes: item.notes || "",
-          stockCategory: item.stockCategory || "Available",
-          isProductSelected: true,
-        };
-      }),
+  const handleEditChallan = (group: any) => {
+    const firstSale = sales.find((s) => s.id === group.salesId);
+    const orderNotes = group.items.find((i: any) => i.notes)?.notes || firstSale?.remarks || "";
+    navigate("/sales", {
+      state: {
+        editChallan: {
+          challanNumber: group.challanNo,
+          salesId: group.salesId,
+          customer: group.customer,
+          clientPhone: group.items[0]?.clientPhone || group.clientPhone || "",
+          orderDate: group.createdAt ? new Date(group.createdAt).toISOString().slice(0, 10) : "",
+          category: firstSale?.category || "Regular",
+          notes: orderNotes,
+          returnTo: "/challans",
+          items: group.items.map((item: Challan) => {
+            const itemSale = sales.find((s) => s.id === item.salesId);
+            const totalOrderQty = itemSale ? itemSale.orderedQty : item.quantity;
+            return {
+              id: item.id,
+              salesId: item.salesId,
+              productName: item.product,
+              quantity: totalOrderQty,
+              fulfilledQty: item.quantity,
+              batchNo: item.batchNo,
+              notes: item.notes || "",
+              stockCategory: item.stockCategory || "Available",
+              isProductSelected: true,
+            };
+          }),
+        },
+      },
     });
   };
 
@@ -265,25 +223,6 @@ export default function ChallanPage() {
     }
   };
 
-  const handleStatusChange = async (group: any, newStatus: string) => {
-    if (newStatus === group.status) return;
-    try {
-      if (newStatus === "Confirmed") {
-        await confirmChallanGroup(group.challanNo);
-        toast({ title: "Challan Confirmed", description: `${group.challanNo} marked as Confirmed.` });
-      } else if (newStatus === "Delivered") {
-        const ok = window.confirm(`Deliver ${group.challanNo}?`);
-        if (!ok) return;
-        await deliverChallanGroup(group.challanNo);
-        toast({ title: "Challan Delivered", description: `${group.challanNo} delivered successfully.` });
-      }
-      window.dispatchEvent(new CustomEvent("erp-stock-updated"));
-      refresh();
-    } catch (err: any) {
-      toast({ title: "Status Change Failed", description: err.message, variant: "destructive" });
-    }
-  };
-
   const handleDeliver = async (group: any) => {
     const ok = window.confirm(`Deliver order ${group.challanNo}? This will mark it as Delivered.`);
     if (!ok) return;
@@ -294,19 +233,6 @@ export default function ChallanPage() {
       toast({ title: "Challan Delivered", description: `${group.challanNo} delivered successfully.` });
     } catch (err: any) {
       toast({ title: "Delivery Failed", description: err.message, variant: "destructive" });
-    }
-  };
-
-  const handleEditSave = async () => {
-    if (!editingGroup) return;
-    try {
-      await updateChallanGroup(editingGroup.challanNumber, editingGroup);
-      window.dispatchEvent(new CustomEvent("erp-stock-updated"));
-      refresh();
-      setEditingGroup(null);
-      toast({ title: "Challan updated successfully" });
-    } catch (err: any) {
-      toast({ title: "Update Failed", description: err.message, variant: "destructive" });
     }
   };
 
@@ -442,46 +368,49 @@ export default function ChallanPage() {
     background:#fff;
     font-family: 'Courier New', Consolas, 'Shruti', 'Gujarati', 'Mukta Vaani', 'Noto Sans Gujarati', monospace;
     color:#000;
-    font-size: 11px;
+    font-size: 12.5px;
+    font-weight: 700;
     line-height: 1.35;
+    -webkit-text-stroke: 0.15px #000;
   }
 
   .center{ text-align:center; }
-  .bold{ font-weight:700; }
+  .bold{ font-weight:900; }
   .row{ display:flex; justify-content:space-between; gap:4px; }
   .row span:last-child{ text-align:right; white-space:nowrap; }
 
   .dashed{
-    border-top: 1.5px dashed #000;
+    border-top: 2px dashed #000;
     margin: 2.5mm 0;
   }
   .dashed-light{
-    border-top: 1px dashed #444;
+    border-top: 1.5px dashed #000;
     margin: 2mm 0;
   }
 
-  .meta div{ margin:2px 0; }
-  .meta .label{ display:inline-block; width: 22mm; font-weight:700; }
-  .meta .client-row{ font-size: 12.5px; font-weight: 700; }
+  .meta div{ margin:2.5px 0; font-size: 12.5px; font-weight: 700; }
+  .meta .label{ display:inline-block; width: 23mm; font-weight:900; font-size: 12.5px; }
+  .meta .client-row{ font-size: 14.5px; font-weight: 900; line-height: 1.3; }
 
   .col-head{
     display:flex;
     justify-content:space-between;
-    font-weight:700;
-    font-size: 10px;
+    font-weight:900;
+    font-size: 11.5px;
+    letter-spacing: 0.3px;
     text-transform:uppercase;
-    border-bottom: 1.5px solid #000;
+    border-bottom: 2px solid #000;
     padding-bottom: 1.5mm;
     margin-bottom: 2mm;
   }
   .col-head .c-cat{ width: 22mm; flex-shrink: 0; }
   .col-head .c-prod{ flex: 1; padding: 0 3px; }
-  .col-head .c-qty{ width: 12mm; text-align:right; flex-shrink: 0; }
+  .col-head .c-qty{ width: 13mm; text-align:right; flex-shrink: 0; }
 
   .item{
     padding-bottom: 2mm;
     margin-bottom: 2mm;
-    border-bottom: 1px dashed #777;
+    border-bottom: 1.2px dashed #444;
   }
   .item:last-child{
     border-bottom: none;
@@ -491,44 +420,48 @@ export default function ChallanPage() {
   .item .row-data{
     display:flex;
     justify-content:space-between;
-    font-size: 11px;
-    font-weight: 700;
-    line-height: 1.3;
+    font-size: 12.5px;
+    font-weight: 800;
+    line-height: 1.35;
   }
   .item .c-cat{
     width: 22mm;
     flex-shrink: 0;
     word-break: break-word;
-    font-weight: 700;
+    font-weight: 800;
+    font-size: 12px;
   }
   .item .c-prod{
     flex: 1;
     padding: 0 3px;
-    font-weight: 700;
+    font-weight: 800;
     word-break: break-word;
+    font-size: 12.5px;
   }
   .item .c-qty{
-    width: 12mm;
+    width: 13mm;
     text-align: right;
     flex-shrink: 0;
-    font-weight: 700;
+    font-weight: 900;
+    font-size: 13.5px;
     white-space: nowrap;
   }
   .item .sub-batch{
-    font-size: 9.5px;
-    font-weight: 700;
-    color: #111;
-    margin-top: 1px;
+    font-size: 11px;
+    font-weight: 800;
+    color: #000;
+    margin-top: 1.5px;
   }
   .item .sub-desc{
-    font-size: 9px;
-    font-weight: 600;
-    color: #333;
-    margin-top: 1px;
+    font-size: 11px;
+    font-weight: 800;
+    color: #000;
+    margin-top: 1.5px;
   }
 
-  .totals .row{ font-size: 11px; margin: 0.5mm 0; }
-  .totals .grand{ font-weight:700; font-size: 12px; }
+  .totals .row{ font-size: 12.5px; font-weight: 800; margin: 0.5mm 0; }
+  .totals .grand{ font-weight:900; font-size: 14.5px; }
+  .narration-text{ font-size: 12.5px; font-weight: 800; line-height: 1.35; }
 
   .print-btn-wrap{
     text-align:center;
@@ -588,7 +521,7 @@ export default function ChallanPage() {
 
   ${printableNarration ? `
   <div class="dashed-light"></div>
-  <div class="center bold">Narration: ${printableNarration}</div>
+  <div class="center bold narration-text">Narration: ${printableNarration}</div>
   ` : ""}
 
 </div>
@@ -834,537 +767,17 @@ export default function ChallanPage() {
                             >
                               <FileSpreadsheet className="h-4 w-4" />
                             </Button>
-                            
-                            {/* Edit Dialog - open with Total Order Qty prefilled */}
+                            {/* Edit Button - navigates to Sales module */}
                             {group.status !== "Delivered" && !group.isCancelled && (
-                              <Dialog
-                                open={
-                                  !!editingGroup &&
-                                  editingGroup.challanNumber === group.challanNo
-                                }
-                                onOpenChange={(open) =>
-                                  !open && setEditingGroup(null)
-                                }
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-blue-600 hover:bg-blue-50 rounded-md"
+                                onClick={() => handleEditChallan(group)}
+                                title="Edit Order in Sales Module"
                               >
-                                <DialogTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-8 w-8 text-blue-600"
-                                    onClick={() => openEditDialog(group)}
-                                    title="Edit Total Order Qty"
-                                  >
-                                    <Pencil className="h-4 w-4" />
-                                  </Button>
-                                </DialogTrigger>
-                                <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-                                   <DialogHeader>
-                                     <DialogTitle>Edit Total Order Details</DialogTitle>
-                                     <DialogDescription>
-                                       Enter the total intended order quantity below. The system automatically fulfills available stock in this Delivery Challans page and puts any remaining quantity into Pending Deliveries.
-                                     </DialogDescription>
-                                   </DialogHeader>
-                                   <div className="grid gap-4 py-4">
-                                      {/* Customer Name with Auto-Search */}
-                                       <div className="grid gap-2">
-                                         <Label>Customer Name</Label>
-                                         <div className="relative">
-                                           <div className="relative">
-                                             <Input
-                                               className="pr-8"
-                                               value={editingGroup?.clientName || ""}
-                                               onChange={(e) => {
-                                                 const val = e.target.value;
-                                                 setEditingGroup((prev: any) => ({ ...prev, clientName: val }));
-                                                 setShowClientSearch(true);
-                                                 setSelectedClientIndexForEdit(-1);
-                                               }}
-                                               onFocus={() => {
-                                                 setShowClientSearch(true);
-                                                 setSelectedClientIndexForEdit(-1);
-                                               }}
-                                               onBlur={() => setTimeout(() => {
-                                                 setShowClientSearch(false);
-                                                 setSelectedClientIndexForEdit(-1);
-                                               }, 200)}
-                                               onKeyDown={(e) => {
-                                                 if (!showClientSearch || filteredClientsForEdit.length === 0) return;
-                                                 if (e.key === 'ArrowDown') {
-                                                   e.preventDefault();
-                                                   setSelectedClientIndexForEdit(prev => (prev < filteredClientsForEdit.length - 1 ? prev + 1 : 0));
-                                                 } else if (e.key === 'ArrowUp') {
-                                                   e.preventDefault();
-                                                   setSelectedClientIndexForEdit(prev => (prev > 0 ? prev - 1 : filteredClientsForEdit.length - 1));
-                                                 } else if (e.key === 'Enter' || e.key === 'Tab') {
-                                                   e.preventDefault();
-                                                   const idxToPick = selectedClientIndexForEdit >= 0 ? selectedClientIndexForEdit : 0;
-                                                   const c = filteredClientsForEdit[idxToPick];
-                                                   if (c) {
-                                                     setEditingGroup((prev: any) => ({
-                                                       ...prev,
-                                                       clientName: c.name,
-                                                       clientPhone: c.phone || prev?.clientPhone || "",
-                                                     }));
-                                                     setShowClientSearch(false);
-                                                     setSelectedClientIndexForEdit(-1);
-                                                   }
-                                                 } else if (e.key === 'Escape') {
-                                                   setShowClientSearch(false);
-                                                   setSelectedClientIndexForEdit(-1);
-                                                 }
-                                               }}
-                                               placeholder="Search client by name or phone..."
-                                               autoComplete="off"
-                                             />
-                                             <User className="absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
-                                           </div>
-
-                                           {showClientSearch && filteredClientsForEdit.length > 0 && (
-                                             <div className="absolute z-[120] left-0 right-0 mt-1 bg-popover border border-slate-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
-                                               {filteredClientsForEdit.map((c, i) => (
-                                                 <div
-                                                   key={c.id}
-                                                   className={`px-3 py-2 cursor-pointer text-xs flex items-center justify-between border-b border-slate-100 last:border-0 ${selectedClientIndexForEdit === i ? 'bg-blue-50 text-blue-900 font-semibold' : 'hover:bg-slate-100'}`}
-                                                   onMouseDown={(e) => {
-                                                     e.preventDefault();
-                                                     setEditingGroup((prev: any) => ({
-                                                       ...prev,
-                                                       clientName: c.name,
-                                                       clientPhone: c.phone || prev?.clientPhone || "",
-                                                     }));
-                                                     setShowClientSearch(false);
-                                                     setSelectedClientIndexForEdit(-1);
-                                                   }}
-                                                 >
-                                                   <span className="font-semibold text-slate-900">{c.name}</span>
-                                                   <span className="text-[11px] text-slate-500 font-mono">{c.phone || "No phone"}</span>
-                                                 </div>
-                                               ))}
-                                             </div>
-                                           )}
-                                         </div>
-                                       </div>
-
-                                      {/* Client Phone */}
-                                      <div className="grid gap-2">
-                                        <Label>Client Phone</Label>
-                                        <Input
-                                          value={editingGroup?.clientPhone || ""}
-                                          onChange={(e) =>
-                                            setEditingGroup({
-                                              ...editingGroup,
-                                              clientPhone: e.target.value,
-                                            })
-                                          }
-                                          placeholder="Client phone number"
-                                        />
-                                      </div>
-                                     <div className="grid gap-2">
-                                       <Label>Challan Date</Label>
-                                       <Input
-                                         type="date"
-                                         value={editingGroup?.date || ""}
-                                         onChange={(e) =>
-                                           setEditingGroup({
-                                             ...editingGroup,
-                                             date: e.target.value,
-                                           })
-                                         }
-                                       />
-                                     </div>
-                                     <div className="space-y-3">
-                                       <div className="flex items-center justify-between">
-                                         <div className="font-semibold text-sm">Items & Order Quantities</div>
-                                         <Button
-                                           type="button"
-                                           variant="outline"
-                                           size="sm"
-                                           onClick={() => {
-                                             setEditingGroup({
-                                               ...editingGroup,
-                                               items: [
-                                                 {
-                                                   productName: "",
-                                                   quantity: 1,
-                                                   fulfilledQty: 0,
-                                                   stockCategory: "Available",
-                                                   batchNo: "",
-                                                   notes: "",
-                                                   isProductSelected: false,
-                                                 },
-                                                 ...editingGroup.items,
-                                               ],
-                                             });
-                                           }}
-                                           className="h-8 text-xs gap-1 border-blue-200 bg-blue-50/50 text-blue-700 hover:bg-blue-100"
-                                         >
-                                           <Plus className="h-3.5 w-3.5" /> Add Product
-                                         </Button>
-                                       </div>
-                                       {editingGroup?.items?.map(
-                                         (item: any, idx: number) => {
-                                           const itemBatches = batches.filter(
-                                             (b) => b.productName === (item.productName || item.product)
-                                           );
-                                           const currentBatch = item.batchNo
-                                             ? itemBatches.find((b) => b.batchNumber === item.batchNo)
-                                             : itemBatches[0];
-                                           const productCat = currentBatch?.category || itemBatches[0]?.category || "";
-
-                                           return (
-                                             <div
-                                               key={item.id || idx}
-                                               className={`grid grid-cols-12 gap-3 items-start border p-3 rounded-lg bg-muted/20 relative ${
-                                                 activeSuggestionIndex === idx ? "z-50" : "z-1"
-                                               }`}
-                                             >
-                                               <div className="col-span-4 relative min-w-0">
-                                                 <Label className="text-xs font-semibold">Product Name *</Label>
-                                                 <Input
-                                                   value={item.productName || item.product || ""}
-                                                   placeholder="Search product..."
-                                                   autoComplete="off"
-                                                   className="w-full text-xs h-9"
-                                                   onChange={(e) => {
-                                                     const next = [...editingGroup.items];
-                                                     next[idx] = {
-                                                       ...next[idx],
-                                                       productName: e.target.value,
-                                                       batchNo: "",
-                                                       isProductSelected: false,
-                                                     };
-                                                     setEditingGroup({
-                                                       ...editingGroup,
-                                                       items: next,
-                                                     });
-                                                     setActiveSuggestionIndex(idx);
-                                                   }}
-                                                   onFocus={() => {
-                                                     setActiveSuggestionIndex(idx);
-                                                     setSelectedSuggestionIndex(-1);
-                                                   }}
-                                                   onBlur={() =>
-                                                     setTimeout(() => {
-                                                       setActiveSuggestionIndex(null);
-                                                       setSelectedSuggestionIndex(-1);
-                                                     }, 200)
-                                                   }
-                                                   onKeyDown={(e) => {
-                                                     const sugList = getSuggestionsList(
-                                                       item.productName || item.product || ""
-                                                     );
-                                                     if (e.key === "ArrowDown") {
-                                                       e.preventDefault();
-                                                       setSelectedSuggestionIndex((prev) =>
-                                                         prev < sugList.length - 1 ? prev + 1 : 0
-                                                       );
-                                                     } else if (e.key === "ArrowUp") {
-                                                       e.preventDefault();
-                                                       setSelectedSuggestionIndex((prev) =>
-                                                         prev > 0 ? prev - 1 : sugList.length - 1
-                                                       );
-                                                     } else if (e.key === "Enter" || e.key === "Tab") {
-                                                       if (activeSuggestionIndex === idx && sugList.length > 0) {
-                                                         e.preventDefault();
-                                                         const pickIdx = selectedSuggestionIndex >= 0 && selectedSuggestionIndex < sugList.length ? selectedSuggestionIndex : 0;
-                                                         const sug = sugList[pickIdx];
-                                                         const next = [...editingGroup.items];
-                                                         next[idx] = {
-                                                           ...next[idx],
-                                                           productName: sug.batch.productName,
-                                                           batchNo: sug.batch.batchNumber,
-                                                           stockCategory: sug.category,
-                                                           isProductSelected: true,
-                                                         };
-                                                         setEditingGroup({
-                                                           ...editingGroup,
-                                                           items: next,
-                                                         });
-                                                         setActiveSuggestionIndex(null);
-                                                         setSelectedSuggestionIndex(-1);
-                                                       }
-                                                     } else if (e.key === "Escape") {
-                                                       setActiveSuggestionIndex(null);
-                                                       setSelectedSuggestionIndex(-1);
-                                                     }
-                                                   }}
-                                                 />
-
-                                                 {activeSuggestionIndex === idx && (
-                                                   <div
-                                                     ref={suggestionContainerRef}
-                                                     className="absolute left-0 right-0 top-full z-[100] mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-y-auto min-w-[240px]"
-                                                   >
-                                                     {(() => {
-                                                       const sugList = getSuggestionsList(
-                                                         item.productName || item.product || ""
-                                                       );
-                                                       return (
-                                                         <>
-                                                           {sugList.map((sug, i) => {
-                                                             const { batch: b, category, label } = sug;
-                                                             return (
-                                                               <div
-                                                                 key={`${b.id}-${category}-${i}`}
-                                                                 className={`px-3 py-2 cursor-pointer text-sm text-popover-foreground border-b last:border-0 ${
-                                                                   selectedSuggestionIndex === i
-                                                                     ? "bg-accent"
-                                                                     : "hover:bg-accent"
-                                                                 } ${
-                                                                   b.isCancelled
-                                                                     ? "bg-destructive/10 hover:bg-destructive/20"
-                                                                     : ""
-                                                                 }`}
-                                                                 onMouseDown={(e) => {
-                                                                   e.preventDefault();
-                                                                   const next = [...editingGroup.items];
-                                                                   next[idx] = {
-                                                                     ...next[idx],
-                                                                     productName: b.productName,
-                                                                     batchNo: b.batchNumber,
-                                                                     stockCategory: category,
-                                                                     isProductSelected: true,
-                                                                   };
-                                                                   setEditingGroup({
-                                                                     ...editingGroup,
-                                                                     items: next,
-                                                                   });
-                                                                   setActiveSuggestionIndex(null);
-                                                                   setSelectedSuggestionIndex(-1);
-                                                                 }}
-                                                               >
-                                                                 <div className="flex items-center justify-between gap-1">
-                                                                   <div className="font-semibold text-primary">
-                                                                     {b.productName}
-                                                                   </div>
-                                                                   {b.category && (
-                                                                     <span className="text-[10px] font-bold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200 shrink-0">
-                                                                       {b.category}
-                                                                     </span>
-                                                                   )}
-                                                                 </div>
-                                                                 <div className="text-xs text-muted-foreground mt-0.5 font-medium">
-                                                                   Batch: {b.batchNumber} |{" "}
-                                                                   <span className="text-blue-600 font-bold bg-blue-50 px-1 rounded">
-                                                                     {label}
-                                                                   </span>
-                                                                 </div>
-                                                                 <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-xs text-muted-foreground mt-1 bg-muted/30 p-1 rounded">
-                                                                   {category === "Available" && (
-                                                                     <span>
-                                                                       Avail:{" "}
-                                                                       <span className="font-semibold text-foreground">
-                                                                         {b.availableQty}
-                                                                       </span>
-                                                                     </span>
-                                                                   )}
-                                                                   {category === "Display" && (
-                                                                     <span>
-                                                                       Disp:{" "}
-                                                                       <span className="font-semibold text-foreground">
-                                                                         {b.displayQty || 0}
-                                                                       </span>
-                                                                     </span>
-                                                                   )}
-                                                                   {category === "Damage" && (
-                                                                     <span>
-                                                                       Dmg:{" "}
-                                                                       <span className="font-semibold text-foreground">
-                                                                         {b.damageQty || 0}
-                                                                       </span>
-                                                                     </span>
-                                                                   )}
-                                                                 </div>
-                                                               </div>
-                                                             );
-                                                           })}
-                                                           {sugList.length === 0 && (
-                                                             <div className="px-3 py-2 text-sm text-muted-foreground text-center">
-                                                               No matches
-                                                             </div>
-                                                           )}
-                                                         </>
-                                                       );
-                                                     })()}
-                                                   </div>
-                                                 )}
-
-                                                 {(item.isProductSelected || item.productName || item.product) && (
-                                                   <div className="text-[10px] text-muted-foreground mt-1 flex justify-between items-center bg-blue-50/50 p-1.5 rounded-sm border border-blue-100/50">
-                                                     {(() => {
-                                                       const prodName = item.productName || item.product;
-                                                       const pBatches = batches.filter(
-                                                         (b) => b.productName === prodName
-                                                       );
-                                                       const batch = item.batchNo
-                                                         ? pBatches.find((b) => b.batchNumber === item.batchNo)
-                                                         : pBatches[0];
-                                                       const categoryTag =
-                                                         batch?.category || pBatches[0]?.category;
-
-                                                       return (
-                                                         <div className="flex items-center justify-between w-full font-semibold gap-2">
-                                                           {categoryTag ? (
-                                                             <span className="text-purple-700 font-bold bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200 shrink-0">
-                                                               Cat: {categoryTag}
-                                                             </span>
-                                                           ) : (
-                                                             <span />
-                                                           )}
-                                                           {batch ? (
-                                                             <span className="text-blue-700 text-right">
-                                                               Avail: {batch.availableQty} | Disp:{" "}
-                                                               {batch.displayQty || 0} | Dmg: {batch.damageQty || 0}
-                                                             </span>
-                                                           ) : null}
-                                                         </div>
-                                                       );
-                                                     })()}
-                                                   </div>
-                                                 )}
-                                               </div>
-
-                                               <div className="col-span-2 min-w-0">
-                                                 <Label className="text-xs">Batch No</Label>
-                                                 {(() => {
-                                                   const prodName = item.productName || item.product;
-                                                   const pBatches = batches.filter(
-                                                     (b) => b.productName === prodName
-                                                   );
-                                                   if (pBatches.length > 1) {
-                                                     return (
-                                                       <Select
-                                                         value={item.batchNo || pBatches[0]?.batchNumber || ""}
-                                                         onValueChange={(v) => {
-                                                           const next = [...editingGroup.items];
-                                                           next[idx] = { ...next[idx], batchNo: v };
-                                                           setEditingGroup({ ...editingGroup, items: next });
-                                                         }}
-                                                       >
-                                                         <SelectTrigger className="w-full text-xs h-9">
-                                                           <SelectValue placeholder="Select Batch" />
-                                                         </SelectTrigger>
-                                                         <SelectContent>
-                                                           {pBatches.map((b) => (
-                                                             <SelectItem key={b.id} value={b.batchNumber}>
-                                                               {b.batchNumber} (Avail: {b.availableQty})
-                                                             </SelectItem>
-                                                           ))}
-                                                         </SelectContent>
-                                                       </Select>
-                                                     );
-                                                   }
-                                                   return (
-                                                     <Input
-                                                       value={item.batchNo || ""}
-                                                       placeholder="Batch No"
-                                                       className="text-xs h-9"
-                                                       onChange={(e) => {
-                                                         const next = [...editingGroup.items];
-                                                         next[idx] = { ...next[idx], batchNo: e.target.value };
-                                                         setEditingGroup({ ...editingGroup, items: next });
-                                                       }}
-                                                     />
-                                                   );
-                                                 })()}
-                                               </div>
-
-                                               <div className="col-span-2">
-                                                 <Label className="text-xs font-bold text-blue-700">
-                                                   Total Order Qty
-                                                 </Label>
-                                                 <Input
-                                                   type="number"
-                                                   className="font-bold border-blue-300 bg-blue-50/50 text-xs h-9"
-                                                   value={item.quantity}
-                                                   onChange={(e) => {
-                                                     const next = [...editingGroup.items];
-                                                     next[idx] = {
-                                                       ...next[idx],
-                                                       quantity: +e.target.value,
-                                                     };
-                                                     setEditingGroup({
-                                                       ...editingGroup,
-                                                       items: next,
-                                                     });
-                                                   }}
-                                                 />
-                                                 <div className="text-[10px] text-muted-foreground mt-1 font-semibold">
-                                                   Fulfilled:{" "}
-                                                   <span className="text-green-700 font-bold">
-                                                     {item.fulfilledQty || 0}
-                                                   </span>
-                                                 </div>
-                                               </div>
-
-                                               <div className="col-span-3">
-                                                 <Label className="text-xs">Stock Category</Label>
-                                                 <Select
-                                                   value={item.stockCategory || "Available"}
-                                                   onValueChange={(v) => {
-                                                     const next = [...editingGroup.items];
-                                                     next[idx] = {
-                                                       ...next[idx],
-                                                       stockCategory: v,
-                                                     };
-                                                     setEditingGroup({
-                                                       ...editingGroup,
-                                                       items: next,
-                                                     });
-                                                   }}
-                                                 >
-                                                   <SelectTrigger className="w-full text-xs h-9">
-                                                     <SelectValue placeholder="Select Category" />
-                                                   </SelectTrigger>
-                                                   <SelectContent>
-                                                     <SelectItem value="Available">Available</SelectItem>
-                                                     <SelectItem value="Display">Display</SelectItem>
-                                                     <SelectItem value="Damage">Damage</SelectItem>
-                                                   </SelectContent>
-                                                 </Select>
-                                               </div>
-
-                                               <div className="col-span-1 flex items-center justify-center pt-5">
-                                                 {editingGroup.items.length > 1 && (
-                                                   <Button
-                                                     type="button"
-                                                     variant="ghost"
-                                                     size="icon"
-                                                     className="h-8 w-8 text-destructive hover:bg-destructive/10"
-                                                     onClick={() => {
-                                                       const next = editingGroup.items.filter(
-                                                         (_: any, i: number) => i !== idx
-                                                       );
-                                                       setEditingGroup({
-                                                         ...editingGroup,
-                                                         items: next,
-                                                       });
-                                                     }}
-                                                     title="Remove Product"
-                                                   >
-                                                     <Trash2 className="h-4 w-4" />
-                                                   </Button>
-                                                 )}
-                                               </div>
-                                             </div>
-                                           );
-                                         }
-                                       )}
-                                     </div>
-                                   </div>
-                                   <DialogFooter>
-                                     <Button
-                                       variant="outline"
-                                       onClick={() => setEditingGroup(null)}
-                                     >
-                                       Cancel
-                                     </Button>
-                                     <Button onClick={handleEditSave} className="bg-blue-600 hover:bg-blue-700">
-                                       Save Order Changes
-                                     </Button>
-                                   </DialogFooter>
-                                 </DialogContent>
-                              </Dialog>
+                                <Pencil className="h-4 w-4" />
+                              </Button>
                             )}
 
                             {/* Cancel Button */}
