@@ -394,12 +394,12 @@ export default function ChallanPage() {
 
   .col-head{
     display: grid;
-    grid-template-columns: 28mm 1fr 14mm;
-    gap: 3.5mm;
+    grid-template-columns: 24mm 1fr 12mm;
+    gap: 4.5mm;
     align-items: flex-end;
     font-weight: 700;
     font-size: 16px;
-    letter-spacing: 0.2px;
+    letter-spacing: normal;
     text-transform: uppercase;
     border-bottom: 2px solid #000;
     padding-bottom: 1.5mm;
@@ -419,31 +419,33 @@ export default function ChallanPage() {
   }
   .item .row-data{
     display: grid;
-    grid-template-columns: 28mm 1fr 14mm;
-    gap: 3.5mm;
+    grid-template-columns: 24mm 1fr 12mm;
+    gap: 4.5mm;
     font-size: 16px;
     font-weight: 600;
-    line-height: 1.45;
+    line-height: 1.35;
   }
   .item .c-cat{
-    word-break: break-word;
-    font-weight: 600;
+    word-break: normal;
+    overflow-wrap: break-word;
+    font-weight: 550;
     font-size: 16px;
-    line-height: 1.4;
+    line-height: 1.35;
     text-transform: none;
   }
   .item .c-prod{
-    font-weight: 600;
-    word-break: break-word;
-    font-size: 18.5px;
-    line-height: 1.4;
+    font-weight: 550;
+    word-break: normal;
+    overflow-wrap: break-word;
+    font-size: 16px;
+    line-height: 1.35;
     text-transform: uppercase;
-    letter-spacing: 0.1px;
+    letter-spacing: -0.2px;
   }
   .item .c-qty{
     text-align: right;
     font-weight: 600;
-    font-size: 18px;
+    font-size: 17px;
     white-space: nowrap;
   }
   .item .sub-batch{
