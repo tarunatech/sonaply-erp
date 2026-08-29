@@ -345,7 +345,7 @@ export default function ChallanPage() {
 <style>
   :root{
     --paper-width: 80mm;
-    --side-margin: 2.5mm;
+    --side-margin: 3mm;
   }
 
   @page{
@@ -366,37 +366,37 @@ export default function ChallanPage() {
     margin: 0 auto;
     padding: 3mm var(--side-margin) 4mm;
     background:#fff;
-    font-family: 'Courier New', Consolas, 'Shruti', 'Gujarati', 'Mukta Vaani', 'Noto Sans Gujarati', monospace;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans Gujarati", "Shruti", sans-serif;
     color:#000;
-    font-size: 12.5px;
-    font-weight: 700;
-    line-height: 1.35;
-    -webkit-text-stroke: 0.15px #000;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.3;
   }
 
   .center{ text-align:center; }
-  .bold{ font-weight:900; }
+  .bold{ font-weight:800; }
   .row{ display:flex; justify-content:space-between; gap:4px; }
   .row span:last-child{ text-align:right; white-space:nowrap; }
 
   .dashed{
-    border-top: 2px dashed #000;
+    border-top: 1.5px dashed #000;
     margin: 2.5mm 0;
   }
   .dashed-light{
-    border-top: 1.5px dashed #000;
+    border-top: 1.2px dashed #333;
     margin: 2mm 0;
   }
 
-  .meta div{ margin:2.5px 0; font-size: 12.5px; font-weight: 700; }
-  .meta .label{ display:inline-block; width: 23mm; font-weight:900; font-size: 12.5px; }
-  .meta .client-row{ font-size: 14.5px; font-weight: 900; line-height: 1.3; }
+  .meta div{ margin:2.5px 0; font-size: 13px; font-weight: 600; }
+  .meta .label{ display:inline-block; width: 23mm; font-weight:700; font-size: 13px; }
+  .meta .client-row{ font-size: 14px; font-weight: 700; line-height: 1.3; }
+  .meta .client-name{ font-size: 15.5px; font-weight: 900; }
 
   .col-head{
     display:flex;
     justify-content:space-between;
-    font-weight:900;
-    font-size: 11.5px;
+    font-weight:800;
+    font-size: 12px;
     letter-spacing: 0.3px;
     text-transform:uppercase;
     border-bottom: 2px solid #000;
@@ -410,7 +410,7 @@ export default function ChallanPage() {
   .item{
     padding-bottom: 2mm;
     margin-bottom: 2mm;
-    border-bottom: 1.2px dashed #444;
+    border-bottom: 1px dashed #555;
   }
   .item:last-child{
     border-bottom: none;
@@ -420,48 +420,54 @@ export default function ChallanPage() {
   .item .row-data{
     display:flex;
     justify-content:space-between;
-    font-size: 12.5px;
+    font-size: 13.5px;
     font-weight: 800;
-    line-height: 1.35;
+    line-height: 1.3;
   }
   .item .c-cat{
     width: 22mm;
     flex-shrink: 0;
     word-break: break-word;
-    font-weight: 800;
-    font-size: 12px;
+    font-weight: 700;
+    font-size: 13px;
+    line-height: 1.35;
+    text-transform: none;
   }
   .item .c-prod{
     flex: 1;
     padding: 0 3px;
     font-weight: 800;
     word-break: break-word;
-    font-size: 12.5px;
+    font-size: 13.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.2px;
   }
   .item .c-qty{
     width: 13mm;
     text-align: right;
     flex-shrink: 0;
-    font-weight: 900;
-    font-size: 13.5px;
+    font-weight: 800;
+    font-size: 14px;
     white-space: nowrap;
   }
   .item .sub-batch{
-    font-size: 11px;
-    font-weight: 800;
-    color: #000;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: #111;
     margin-top: 1.5px;
+    text-transform: none;
   }
   .item .sub-desc{
-    font-size: 11px;
-    font-weight: 800;
-    color: #000;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: #111;
     margin-top: 1.5px;
+    text-transform: none;
   }
 
-  .totals .row{ font-size: 12.5px; font-weight: 800; margin: 0.5mm 0; }
-  .totals .grand{ font-weight:900; font-size: 14.5px; }
-  .narration-text{ font-size: 12.5px; font-weight: 800; line-height: 1.35; }
+  .totals .row{ font-size: 13px; font-weight: 700; margin: 0.5mm 0; }
+  .totals .grand{ font-weight:800; font-size: 14.5px; }
+  .narration-text{ font-size: 13px; font-weight: 700; line-height: 1.35; }
 
   .print-btn-wrap{
     text-align:center;
@@ -496,7 +502,7 @@ export default function ChallanPage() {
 <div class="receipt">
 
   <div class="meta">
-    <div class="client-row"><span class="label">Client</span>: <span class="bold">${printableClientName}</span></div>
+    <div class="client-row"><span class="label">Client</span>: <span class="bold client-name">${printableClientName}</span></div>
     <div><span class="label">Challan No</span>: <span class="bold">${group.challanNo}</span></div>
     <div><span class="label">Date</span>: ${formattedDate}</div>
   </div>
