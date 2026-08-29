@@ -324,14 +324,14 @@ export default function ChallanPage() {
       return `
         <div class="item">
           <div class="row-data">
-            <div class="c-cat bold">${productCategory}</div>
-            <div class="c-prod bold">
+            <div class="c-cat">${productCategory}</div>
+            <div class="c-prod">
               <div>${item.product}</div>
               ${batch ? `<div class="sub-batch">Batch: ${batch}</div>` : ""}
               ${description ? `<div class="sub-desc">Desc: ${description}</div>` : ""}
               ${item.stockCategory && item.stockCategory !== 'Available' ? `<div class="sub-desc">[${item.stockCategory}]</div>` : ""}
             </div>
-            <div class="c-qty bold">${item.quantity}</div>
+            <div class="c-qty">${item.quantity}</div>
           </div>
         </div>
       `;
@@ -345,7 +345,7 @@ export default function ChallanPage() {
 <style>
   :root{
     --paper-width: 80mm;
-    --side-margin: 3mm;
+    --side-margin: 2.5mm;
   }
 
   @page{
@@ -366,51 +366,51 @@ export default function ChallanPage() {
     margin: 0 auto;
     padding: 3mm var(--side-margin) 4mm;
     background:#fff;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans Gujarati", "Shruti", sans-serif;
+    font-family: Arial, Helvetica, 'Noto Sans Gujarati', 'Shruti', sans-serif;
     color:#000;
-    font-size: 13px;
-    font-weight: 600;
-    line-height: 1.3;
+    font-size: 15.5px;
+    font-weight: 700;
+    line-height: 1.45;
   }
 
   .center{ text-align:center; }
-  .bold{ font-weight:800; }
+  .bold{ font-weight:700; }
   .row{ display:flex; justify-content:space-between; gap:4px; }
   .row span:last-child{ text-align:right; white-space:nowrap; }
 
   .dashed{
     border-top: 1.5px dashed #000;
-    margin: 2.5mm 0;
+    margin: 3mm 0;
   }
   .dashed-light{
-    border-top: 1.2px dashed #333;
-    margin: 2mm 0;
+    border-top: 1.2px dashed #000;
+    margin: 2.5mm 0;
   }
 
-  .meta div{ margin:2.5px 0; font-size: 13px; font-weight: 600; }
-  .meta .label{ display:inline-block; width: 23mm; font-weight:700; font-size: 13px; }
-  .meta .client-row{ font-size: 14px; font-weight: 700; line-height: 1.3; }
-  .meta .client-name{ font-size: 15.5px; font-weight: 900; }
+  .meta div{ margin:3px 0; font-size: 15.5px; font-weight: 700; line-height: 1.4; }
+  .meta .label{ display:inline-block; width: 28mm; font-weight:700; font-size: 15.5px; }
+  .meta .client-row{ font-size: 17px; font-weight: 700; line-height: 1.4; }
+  .meta .client-name{ font-size: 18px; font-weight: 700; }
 
   .col-head{
-    display:flex;
-    justify-content:space-between;
-    font-weight:800;
-    font-size: 12px;
-    letter-spacing: 0.3px;
-    text-transform:uppercase;
+    display: grid;
+    grid-template-columns: 28mm 1fr 14mm;
+    gap: 3.5mm;
+    align-items: flex-end;
+    font-weight: 700;
+    font-size: 16px;
+    letter-spacing: 0.2px;
+    text-transform: uppercase;
     border-bottom: 2px solid #000;
     padding-bottom: 1.5mm;
-    margin-bottom: 2mm;
+    margin-bottom: 2.5mm;
   }
-  .col-head .c-cat{ width: 22mm; flex-shrink: 0; }
-  .col-head .c-prod{ flex: 1; padding: 0 3px; }
-  .col-head .c-qty{ width: 13mm; text-align:right; flex-shrink: 0; }
+  .col-head .c-qty{ text-align: right; }
 
   .item{
-    padding-bottom: 2mm;
-    margin-bottom: 2mm;
-    border-bottom: 1px dashed #555;
+    padding-bottom: 2.5mm;
+    margin-bottom: 2.5mm;
+    border-bottom: 1px dashed #666;
   }
   .item:last-child{
     border-bottom: none;
@@ -418,56 +418,54 @@ export default function ChallanPage() {
     padding-bottom: 1mm;
   }
   .item .row-data{
-    display:flex;
-    justify-content:space-between;
-    font-size: 13.5px;
-    font-weight: 800;
-    line-height: 1.3;
+    display: grid;
+    grid-template-columns: 28mm 1fr 14mm;
+    gap: 3.5mm;
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.45;
   }
   .item .c-cat{
-    width: 22mm;
-    flex-shrink: 0;
     word-break: break-word;
-    font-weight: 700;
-    font-size: 13px;
-    line-height: 1.35;
+    font-weight: 600;
+    font-size: 16px;
+    line-height: 1.4;
     text-transform: none;
   }
   .item .c-prod{
-    flex: 1;
-    padding: 0 3px;
-    font-weight: 800;
+    font-weight: 600;
     word-break: break-word;
-    font-size: 13.5px;
+    font-size: 18.5px;
+    line-height: 1.4;
     text-transform: uppercase;
-    letter-spacing: 0.2px;
+    letter-spacing: 0.1px;
   }
   .item .c-qty{
-    width: 13mm;
     text-align: right;
-    flex-shrink: 0;
-    font-weight: 800;
-    font-size: 14px;
+    font-weight: 600;
+    font-size: 18px;
     white-space: nowrap;
   }
   .item .sub-batch{
-    font-size: 11.5px;
-    font-weight: 600;
-    color: #111;
-    margin-top: 1.5px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #222;
+    margin-top: 2px;
+    line-height: 1.4;
     text-transform: none;
   }
   .item .sub-desc{
-    font-size: 11.5px;
-    font-weight: 600;
-    color: #111;
-    margin-top: 1.5px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #222;
+    margin-top: 2px;
+    line-height: 1.4;
     text-transform: none;
   }
 
-  .totals .row{ font-size: 13px; font-weight: 700; margin: 0.5mm 0; }
-  .totals .grand{ font-weight:800; font-size: 14.5px; }
-  .narration-text{ font-size: 13px; font-weight: 700; line-height: 1.35; }
+  .totals .row{ font-size: 16px; font-weight: 700; margin: 1mm 0; }
+  .totals .grand{ font-weight:700; font-size: 18px; line-height: 1.4; }
+  .narration-text{ font-size: 15.5px; font-weight: 700; line-height: 1.45; }
 
   .print-btn-wrap{
     text-align:center;
