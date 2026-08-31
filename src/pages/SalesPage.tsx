@@ -28,6 +28,44 @@ const renderCustomer = (customerName: string) => {
   }
   return <span className="font-semibold text-slate-900 leading-tight">{customerName}</span>;
 };
+
+const getBatchStatusInfo = (b?: StockBatch) => {
+  if (!b) return null;
+  if (b.isCancelled) {
+    return {
+      label: 'Dead Stock',
+      bgClass: 'bg-red-100/90 text-red-950 border-red-300',
+      badgeClass: 'text-[10px] font-bold text-red-700 bg-red-100 px-1.5 py-0.5 rounded border border-red-300',
+      rowClass: 'bg-red-50/80 border-red-200 text-red-950',
+      inputClass: 'bg-red-50/80 border-red-300 text-red-950 focus-visible:ring-red-400 font-semibold',
+      sugClass: 'bg-red-50 hover:bg-red-100 text-red-950 border-red-200',
+      textColor: 'text-red-950 font-bold',
+    };
+  }
+  if (b.isNil) {
+    return {
+      label: 'Not next Folder',
+      bgClass: 'bg-blue-100/90 text-blue-950 border-blue-300',
+      badgeClass: 'text-[10px] font-bold text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded border border-blue-300',
+      rowClass: 'bg-blue-50/80 border-blue-200 text-blue-950',
+      inputClass: 'bg-blue-50/80 border-blue-300 text-blue-950 focus-visible:ring-blue-400 font-semibold',
+      sugClass: 'bg-blue-50 hover:bg-blue-100 text-blue-950 border-blue-200',
+      textColor: 'text-blue-950 font-bold',
+    };
+  }
+  if (b.isDeadStock) {
+    return {
+      label: 'Nil',
+      bgClass: 'bg-slate-200/90 text-slate-900 border-slate-300',
+      badgeClass: 'text-[10px] font-bold text-slate-700 bg-slate-200 px-1.5 py-0.5 rounded border border-slate-300',
+      rowClass: 'bg-slate-100/80 border-slate-300 text-slate-900',
+      inputClass: 'bg-slate-100/80 border-slate-300 text-slate-900 focus-visible:ring-slate-400 font-semibold',
+      sugClass: 'bg-slate-100 hover:bg-slate-200 text-slate-900 border-slate-300',
+      textColor: 'text-slate-900 font-bold',
+    };
+  }
+  return null;
+};
 import { Download, Printer, MessageCircle, Plus, Trash2, Pencil, CheckCircle2, Truck, Calendar as CalendarIcon, X, Check, Loader2 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 
@@ -825,7 +863,9 @@ export default function SalesPage() {
                   <div className="col-span-1"></div>
                 </div>
                 {items.map((item, index) => {
-                  const productBatches = batchesByProductMap.get(item.productName) || [];
+                  const productBatches = batchesByProductMap.get((item.productName || '').trim()) || [];
+                  const selectedBatch = item.batchNo ? productBatches.find(b => b.batchNumber === item.batchNo) : productBatches[0];
+                  const selectedStatusInfo = getBatchStatusInfo(selectedBatch);
 
                   return (
                     <div key={index} className="grid grid-cols-12 gap-3 items-start relative overflow-visible px-2 py-2 border-b last:border-0">
@@ -880,12 +920,12 @@ export default function SalesPage() {
                           ref={el => { productInputsRef.current[index] = el; }}
                           placeholder="Search product..."
                           autoComplete="off"
-                          className="w-full text-xs h-9"
+                          className={`w-full text-xs h-9 ${selectedStatusInfo ? selectedStatusInfo.inputClass : ''}`}
                         />
                         {activeSuggestionIndex === index && (
                           <div 
                             ref={suggestionContainerRef}
-                            className="absolute left-0 right-0 top-full z-[100] mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-y-auto min-w-[220px]"
+                            className="absolute left-0 right-0 top-full z-[100] mt-1 bg-popover border rounded-md shadow-lg max-h-60 overflow-y-auto min-w-[240px]"
                           >
                             {(() => {
                               const sugList = getSuggestionsList(item.productName);
@@ -893,10 +933,13 @@ export default function SalesPage() {
                                 <>
                                   {sugList.map((sug, i) => {
                                     const { batch: b, category, label } = sug;
+                                    const statusInfo = getBatchStatusInfo(b);
                                     return (
                                       <div 
                                         key={`${b.id}-${category}-${i}`} 
-                                        className={`px-3 py-2 cursor-pointer text-sm text-popover-foreground border-b last:border-0 ${selectedSuggestionIndex === i ? 'bg-accent' : 'hover:bg-accent'} ${b.isCancelled ? 'bg-destructive/10 hover:bg-destructive/20' : ''}`}
+                                        className={`px-3 py-2 cursor-pointer text-sm border-b last:border-0 ${
+                                          selectedSuggestionIndex === i ? 'bg-accent' : statusInfo ? statusInfo.sugClass : 'hover:bg-accent text-popover-foreground'
+                                        }`}
                                         onMouseDown={(e) => {
                                           e.preventDefault();
                                           updateItem(index, { 
@@ -916,12 +959,21 @@ export default function SalesPage() {
                                         }}
                                       >
                                         <div className="flex items-center justify-between gap-1">
-                                          <div className="font-semibold text-primary">{b.productName}</div>
-                                          {b.category && (
-                                            <span className="text-[10px] font-bold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200 shrink-0">
-                                              {b.category}
-                                            </span>
-                                          )}
+                                          <div className={`font-semibold ${statusInfo ? statusInfo.textColor : 'text-primary'}`}>
+                                            {b.productName}
+                                          </div>
+                                          <div className="flex items-center gap-1.5 shrink-0">
+                                            {statusInfo && (
+                                              <span className={statusInfo.badgeClass}>
+                                                {statusInfo.label}
+                                              </span>
+                                            )}
+                                            {b.category && (
+                                              <span className="text-[10px] font-bold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200 shrink-0">
+                                                {b.category}
+                                              </span>
+                                            )}
+                                          </div>
                                         </div>
                                         <div className="text-xs text-muted-foreground mt-0.5 font-medium">
                                           Batch: {b.batchNumber} | <span className="text-blue-600 font-bold bg-blue-50 px-1 rounded">{label}</span>
@@ -949,18 +1001,27 @@ export default function SalesPage() {
                           </div>
                         )}
                         {item.isProductSelected && item.productName && (
-                          <div className="text-[10px] text-muted-foreground mt-1 ml-1 flex flex-col gap-1 bg-blue-50/50 p-1.5 rounded-sm border border-blue-100/50">
+                          <div className={`text-[10px] text-muted-foreground mt-1 ml-1 flex flex-col gap-1 p-1.5 rounded-sm border ${
+                            selectedStatusInfo ? selectedStatusInfo.rowClass : 'bg-blue-50/50 border-blue-100/50'
+                          }`}>
                             {(() => {
-                              const batch = item.batchNo ? productBatches.find(b => b.batchNumber === item.batchNo) : productBatches[0];
+                              const batch = selectedBatch;
                               const productCat = batch?.category || (item.productName ? productCategoryMap.get(item.productName.toLowerCase()) : undefined);
                               return (
                                 <>
                                   <div className="flex items-center justify-between w-full font-semibold gap-2">
-                                    {productCat ? (
-                                      <span className="text-purple-700 font-bold bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200 shrink-0">
-                                        Cat: {productCat}
-                                      </span>
-                                    ) : <span />}
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      {selectedStatusInfo && (
+                                        <span className={selectedStatusInfo.badgeClass}>
+                                          {selectedStatusInfo.label}
+                                        </span>
+                                      )}
+                                      {productCat && (
+                                        <span className="text-purple-700 font-bold bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200 shrink-0">
+                                          Cat: {productCat}
+                                        </span>
+                                      )}
+                                    </div>
                                     {batch ? (
                                       <span className="text-blue-700 text-right">
                                         Avail: {batch.availableQty} | Disp: {batch.displayQty || 0} | Dmg: {batch.damageQty}
@@ -1027,11 +1088,9 @@ export default function SalesPage() {
                       <div className="col-span-3 min-w-0">
                         <Select
                           value={item.stockCategory || 'Available'}
-                          onValueChange={v => {
-                            updateItem(index, { stockCategory: v as any });
-                          }}
+                          disabled
                         >
-                          <SelectTrigger className="h-9 text-xs font-semibold">
+                          <SelectTrigger className="h-9 text-xs font-semibold bg-muted/50 cursor-not-allowed">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -1185,20 +1244,30 @@ export default function SalesPage() {
                     </TableCell>
                     <TableCell className="border-2 border-slate-300 px-4 py-3">
                       <div className="space-y-1">
-                        {group.items.map((item, idx) => (
-                          <div key={idx} className="flex items-center gap-1.5 flex-wrap border-b border-slate-100 last:border-0 pb-1 h-7">
-                            <span className="font-semibold text-slate-900">{item.product}</span>
-                            {item.stockCategory && (
-                              <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
-                                item.stockCategory === 'Display' ? 'bg-amber-50 text-amber-800 border border-amber-200' :
-                                item.stockCategory === 'Damage' ? 'bg-red-50 text-red-800 border border-red-200' :
-                                'bg-blue-50 text-blue-800 border border-blue-200'
-                              }`}>
-                                {item.stockCategory}
-                              </span>
-                            )}
-                          </div>
-                        ))}
+                        {group.items.map((item, idx) => {
+                          const pBatches = batchesByProductMap.get((item.product || '').trim()) || [];
+                          const mBatch = item.batchNo ? pBatches.find(b => b.batchNumber === item.batchNo) : pBatches[0];
+                          const sInfo = getBatchStatusInfo(mBatch);
+                          return (
+                            <div key={idx} className="flex items-center gap-1.5 flex-wrap border-b border-slate-100 last:border-0 pb-1 h-7">
+                              <span className={`font-semibold ${sInfo ? sInfo.textColor : 'text-slate-900'}`}>{item.product}</span>
+                              {sInfo && (
+                                <span className={sInfo.badgeClass}>
+                                  {sInfo.label}
+                                </span>
+                              )}
+                              {item.stockCategory && (
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
+                                  item.stockCategory === 'Display' ? 'bg-amber-50 text-amber-800 border border-amber-200' :
+                                  item.stockCategory === 'Damage' ? 'bg-red-50 text-red-800 border border-red-200' :
+                                  'bg-blue-50 text-blue-800 border border-blue-200'
+                                }`}>
+                                  {item.stockCategory}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     </TableCell>
                     <TableCell className="border-2 border-slate-300 px-4 py-3 text-right">
