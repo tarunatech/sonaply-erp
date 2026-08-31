@@ -28,7 +28,7 @@ const renderCustomer = (customerName: string) => {
   }
   return <span className="font-semibold text-slate-900 leading-tight">{customerName}</span>;
 };
-import { Download, Printer, MessageCircle, Plus, Trash2, Pencil, CheckCircle2, Truck, Calendar as CalendarIcon, X, Check } from "lucide-react";
+import { Download, Printer, MessageCircle, Plus, Trash2, Pencil, CheckCircle2, Truck, Calendar as CalendarIcon, X, Check, Loader2 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 
 const PRICE_CATEGORIES = ['Regular', 'Premium', 'Only Cash'];
@@ -63,6 +63,7 @@ export default function SalesPage() {
   const [priceCategory, setPriceCategory] = useState('Regular');
   const [orderDate, setOrderDate] = useState(getLocalDateString());
   const [narration, setNarration] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const status = 'Pending';
   const [items, setItems] = useState<SaleItem[]>([{ ...defaultItem }]);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState<number | null>(null);
@@ -382,6 +383,7 @@ export default function SalesPage() {
   };
 
   const handleSubmit = async () => {
+    if (isSubmitting) return;
     if (!clientName) {
       toast({ title: "Please enter client name", variant: "destructive" }); return;
     }
@@ -405,6 +407,7 @@ export default function SalesPage() {
 
     const valueCategory = 'Standard';
 
+    setIsSubmitting(true);
     try {
       await addSaleBulk({
         customer: clientName,
@@ -435,10 +438,13 @@ export default function SalesPage() {
       refreshClients();
     } catch (err: any) {
       toast({ title: "Error", description: err.message || "Failed to record sale", variant: "destructive" });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleHold = async () => {
+    if (isSubmitting) return;
     if (!clientName) {
       toast({ title: "Please enter client name", variant: "destructive" }); return;
     }
@@ -460,31 +466,39 @@ export default function SalesPage() {
       toast({ title: "Please select a batch for all products", variant: "destructive" }); return;
     }
 
-    for (const item of validItems) {
-      await addHold({
-        clientName,
-        clientPhone,
-        productName: item.productName,
-        category: priceCategory,
-        quantity: item.quantity,
-        batchNo: item.batchNo || '',
-        holdDate: orderDate
-      });
-    }
+    setIsSubmitting(true);
+    try {
+      for (const item of validItems) {
+        await addHold({
+          clientName,
+          clientPhone,
+          productName: item.productName,
+          category: priceCategory,
+          quantity: item.quantity,
+          batchNo: item.batchNo || '',
+          holdDate: orderDate
+        });
+      }
 
-    toast({ title: "Products put on hold!" });
-    window.dispatchEvent(new CustomEvent("erp-stock-updated"));
-    
-    // Reset form
-    setClientName('');
-    setClientPhone('');
-    setItems([{ ...defaultItem }]);
-    setSelectedClientId(null);
-    refreshSales(); // To refresh batches
-    refreshClients();
+      toast({ title: "Products put on hold!" });
+      window.dispatchEvent(new CustomEvent("erp-stock-updated"));
+      
+      // Reset form
+      setClientName('');
+      setClientPhone('');
+      setItems([{ ...defaultItem }]);
+      setSelectedClientId(null);
+      refreshSales(); // To refresh batches
+      refreshClients();
+    } catch (err: any) {
+      toast({ title: "Hold Failed", description: err.message || "Failed to put on hold", variant: "destructive" });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleSaveChallanEdit = async () => {
+    if (isSubmitting) return;
     if (!clientName) {
       toast({ title: "Please enter client name", variant: "destructive" });
       return;
@@ -523,6 +537,7 @@ export default function SalesPage() {
       return;
     }
 
+    setIsSubmitting(true);
     try {
       await updateChallanGroup(editingChallanNumber!, {
         challanNumber: editingChallanNumber!,
@@ -563,6 +578,8 @@ export default function SalesPage() {
         description: err.message || "Failed to update order",
         variant: "destructive",
       });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -1077,20 +1094,44 @@ export default function SalesPage() {
               </div>
               {editingChallanNumber ? (
                 <div className="flex justify-end gap-3 shrink-0">
-                  <Button type="button" variant="outline" onClick={handleCancelEdit}>
+                  <Button type="button" variant="outline" onClick={handleCancelEdit} disabled={isSubmitting}>
                     Cancel
                   </Button>
-                  <Button type="button" onClick={handleSaveChallanEdit} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold shadow-xs">
-                    <Check className="mr-2 h-4 w-4" /> Save Changes & Return
+                  <Button type="button" onClick={handleSaveChallanEdit} disabled={isSubmitting} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold shadow-xs">
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving Changes...
+                      </>
+                    ) : (
+                      <>
+                        <Check className="mr-2 h-4 w-4" /> Save Changes & Return
+                      </>
+                    )}
                   </Button>
                 </div>
               ) : (
                 <div className="flex justify-end gap-3 shrink-0">
-                  <Button type="button" variant="outline" className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 border-amber-200" onClick={handleHold}>
-                    <Hand className="mr-2 h-4 w-4" /> Hold
+                  <Button type="button" variant="outline" className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 border-amber-200" onClick={handleHold} disabled={isSubmitting}>
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Putting on Hold...
+                      </>
+                    ) : (
+                      <>
+                        <Hand className="mr-2 h-4 w-4" /> Hold
+                      </>
+                    )}
                   </Button>
-                  <Button type="button" onClick={handleSubmit}>
-                    <Plus className="mr-2 h-4 w-4" /> Record Sale & Save
+                  <Button type="button" onClick={handleSubmit} disabled={isSubmitting}>
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Processing...
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="mr-2 h-4 w-4" /> Record Sale & Save
+                      </>
+                    )}
                   </Button>
                 </div>
               )}

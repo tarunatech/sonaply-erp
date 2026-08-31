@@ -422,7 +422,14 @@ export default function PendingDeliveries() {
       const displayPendingQty = getUnhandledPendingQty(s);
 
       const totalStock = batches
-        .filter(b => b.productName.trim().toLowerCase() === s.product.trim().toLowerCase())
+        .filter(b => {
+          const nameMatches = b.productName.trim().toLowerCase() === s.product.trim().toLowerCase();
+          if (!nameMatches) return false;
+          if (s.batchNo && s.batchNo !== "0" && s.batchNo.trim() !== "") {
+            return (b.batchNumber || "").trim().toLowerCase() === s.batchNo.trim().toLowerCase();
+          }
+          return true;
+        })
         .reduce((acc, curr) => {
           const col = s.stockCategory === "Display" ? curr.displayQty : s.stockCategory === "Damage" ? curr.damageQty : curr.availableQty;
           return acc + Number(col || 0);
@@ -990,18 +997,26 @@ export default function PendingDeliveries() {
                 </div>
 
                 {editForm.items.map((item, idx) => {
-                  const itemBatches = batches.filter(b => b.productName.trim().toLowerCase() === item.product.trim().toLowerCase());
-                  const itemTotalStock = itemBatches.reduce((acc, curr) => {
+                  const allProductBatches = batches.filter(b => b.productName.trim().toLowerCase() === item.product.trim().toLowerCase());
+                  const matchingBatches = batches.filter(b => {
+                    const nameMatches = b.productName.trim().toLowerCase() === item.product.trim().toLowerCase();
+                    if (!nameMatches) return false;
+                    if (item.batchNo && item.batchNo !== "0" && item.batchNo.trim() !== "") {
+                      return (b.batchNumber || "").trim().toLowerCase() === item.batchNo.trim().toLowerCase();
+                    }
+                    return true;
+                  });
+                  const itemTotalStock = matchingBatches.reduce((acc, curr) => {
                     const col = item.stockCategory === "Display" ? curr.displayQty : item.stockCategory === "Damage" ? curr.damageQty : curr.availableQty;
                     return acc + Number(col || 0);
                   }, 0);
 
-                  const prodCategory = products.find(p => p.name.trim().toLowerCase() === item.product.trim().toLowerCase())?.category || batches.find(b => b.productName.trim().toLowerCase() === item.product.trim().toLowerCase())?.category || "";
+                  const prodCategory = products.find(p => p.name.trim().toLowerCase() === item.product.trim().toLowerCase())?.category || allProductBatches.find(b => b.productName.trim().toLowerCase() === item.product.trim().toLowerCase())?.category || "";
 
                   const batchOptionsSet = new Set<string>();
                   if (item.batchNo) batchOptionsSet.add(item.batchNo);
                   batchOptionsSet.add("0");
-                  itemBatches.forEach(b => { if (b.batchNumber) batchOptionsSet.add(b.batchNumber); });
+                  allProductBatches.forEach(b => { if (b.batchNumber) batchOptionsSet.add(b.batchNumber); });
                   const batchOptionsList = Array.from(batchOptionsSet);
 
                   return (
@@ -1137,7 +1152,7 @@ export default function PendingDeliveries() {
                             <SelectContent>
                               {batchOptionsList.map(bNo => {
                                 const bv = bNo || "0";
-                                const mb = itemBatches.find(b => (b.batchNumber || "0") === bv);
+                                const mb = allProductBatches.find(b => (b.batchNumber || "0") === bv);
                                 const avail = mb ? (item.stockCategory === "Display" ? mb.displayQty : item.stockCategory === "Damage" ? mb.damageQty : mb.availableQty) : 0;
                                 return (
                                   <SelectItem key={bv} value={bv}>
