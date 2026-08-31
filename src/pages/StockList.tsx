@@ -244,6 +244,7 @@ export default function StockList() {
       "Supplier",
       "Date",
       "Available Qty",
+      "Stock Maintain",
       "Damage Qty",
       "Display Qty",
       "Description",
@@ -261,6 +262,7 @@ export default function StockList() {
       "ABC SUPPLIER",
       `${dd}-${mm}-${yyyy}`,
       "100",
+      "0",
       "0",
       "0",
       "Optional note",
@@ -363,6 +365,16 @@ export default function StockList() {
         "available_qty",
         "available",
       ]),
+      stockMaintain: findHeader([
+        "Stock Maintain",
+        "stockMaintain",
+        "stock_maintain",
+        "Maintain Stock",
+        "maintain_stock",
+        "maintain_qty",
+        "Min Stock",
+        "min_stock",
+      ]),
       damageQty: findHeader([
         "Damage Qty",
         "damageQty",
@@ -439,6 +451,7 @@ export default function StockList() {
       quantity: number;
       date: string;
       availableQty: number;
+      stockMaintain: number;
       damageQty: number;
       displayQty: number;
       description: string;
@@ -502,6 +515,9 @@ export default function StockList() {
       const displayQty = mapKeys.displayQty
         ? Number(row[mapKeys.displayQty] || 0)
         : 0;
+      const stockMaintain = mapKeys.stockMaintain
+        ? Number(row[mapKeys.stockMaintain] || 0)
+        : 0;
       const description = mapKeys.description
         ? row[mapKeys.description]?.trim() || ""
         : "";
@@ -550,6 +566,7 @@ export default function StockList() {
           quantity: qtyForBatch,
           date,
           availableQty: availForBatch,
+          stockMaintain,
           damageQty: dmgForBatch,
           displayQty: dispForBatch,
           description,
@@ -598,6 +615,7 @@ export default function StockList() {
         existing.availableQty += row.availableQty;
         existing.damageQty += row.damageQty;
         existing.displayQty += row.displayQty;
+        if (row.stockMaintain) existing.stockMaintain = row.stockMaintain;
         if (row.isNil) existing.isNil = true;
         if (row.isCancelled) existing.isCancelled = true;
         if (row.isDeadStock) existing.isDeadStock = true;
@@ -622,6 +640,7 @@ export default function StockList() {
           supplier: row.supplier,
           quantity: row.quantity,
           availableQty: row.availableQty,
+          stockMaintain: row.stockMaintain,
           damageQty: row.damageQty,
           displayQty: row.displayQty,
           description: row.description,
@@ -789,8 +808,8 @@ export default function StockList() {
               });
 
               for (const [brand, prefixes] of Object.entries(brands)) {
-                csvContent += `Brand: ${brand},,,,,,,,\n`;
-                csvContent += `Product Name,Product Number,Date,Quantity,Available,Hold,Display,Damaged,Description\n`;
+                csvContent += `Brand: ${brand},,,,,,,,,,\n`;
+                csvContent += `Product Name,Product Number,Date,Quantity,Available,Stock Maintain,Hold,Display,Damaged,Description\n`;
 
                 const sortedPrefixes = Object.keys(prefixes).sort();
                 for (const prefix of sortedPrefixes) {
@@ -806,10 +825,10 @@ export default function StockList() {
                     .forEach((item) => {
                       const cleanDesc = (item.description || "").replace(/"/g, '""');
                       // Data row
-                      csvContent += `"${prefix}","${item.parsedSuffix}","${item.date || ""}","${item.quantity || 0}","${item.availableQty || 0}","${item.holdQty || 0}","${item.displayQty || 0}","${item.damageQty || 0}","${cleanDesc}"\n`;
+                      csvContent += `"${prefix}","${item.parsedSuffix}","${item.date || ""}","${item.quantity || 0}","${item.availableQty || 0}","${item.stockMaintain || 0}","${item.holdQty || 0}","${item.displayQty || 0}","${item.damageQty || 0}","${cleanDesc}"\n`;
                     });
                   // Empty row between groups
-                  csvContent += `,,,,,,,,,\n`;
+                  csvContent += `,,,,,,,,,,\n`;
                 }
                 csvContent += `\n`;
               }
@@ -954,6 +973,7 @@ export default function StockList() {
                 <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-slate-800">Batch</TableHead>
                 <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-slate-800 text-right">Sold</TableHead>
                 <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-slate-800 text-right">Available</TableHead>
+                <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-indigo-800 text-right">Stock Maintain</TableHead>
                 <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-amber-700 text-right">Hold</TableHead>
                 <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-slate-800 text-right">Display</TableHead>
                 <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-slate-800 text-right">Damaged</TableHead>
@@ -966,7 +986,7 @@ export default function StockList() {
               {isLoading && batches.length === 0 ? (
                 <TableRow>
                   <TableCell
-                    colSpan={11}
+                    colSpan={12}
                     className="border-2 border-slate-300 text-center text-muted-foreground py-8"
                   >
                     <div className="flex items-center justify-center gap-2">
@@ -978,7 +998,7 @@ export default function StockList() {
               ) : batches.length === 0 ? (
                 <TableRow>
                   <TableCell
-                    colSpan={11}
+                    colSpan={12}
                     className="border-2 border-slate-300 text-center text-muted-foreground py-8"
                   >
                     No stock entries found
@@ -1012,6 +1032,9 @@ export default function StockList() {
                     </TableCell>
                     <TableCell className="border-2 border-slate-300 px-4 py-3 align-middle text-right font-bold text-emerald-700">
                       {b.availableQty}
+                    </TableCell>
+                    <TableCell className="border-2 border-slate-300 px-4 py-3 align-middle text-right font-bold text-indigo-700">
+                      {b.stockMaintain ?? 0}
                     </TableCell>
                     <TableCell className="border-2 border-slate-300 px-4 py-3 align-middle text-right font-bold text-amber-600">
                       {b.holdQty || 0}
@@ -1224,6 +1247,21 @@ export default function StockList() {
                       availableQty: (editingBatch.availableQty || 0) - diff,
                     });
                   }}
+                />
+              </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label className="text-right">Stock Maintain</Label>
+                <Input
+                  type="number"
+                  className="col-span-3"
+                  placeholder="0"
+                  value={editingBatch.stockMaintain ?? 0}
+                  onChange={(e) =>
+                    setEditingBatch({
+                      ...editingBatch,
+                      stockMaintain: Number(e.target.value) || 0,
+                    })
+                  }
                 />
               </div>
               <div className="grid grid-cols-4 items-center gap-4">

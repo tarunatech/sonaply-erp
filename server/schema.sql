@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS batches (
   damage_qty INTEGER DEFAULT 0,
   display_qty INTEGER DEFAULT 0,
   hold_qty INTEGER DEFAULT 0,
+  stock_maintain INTEGER DEFAULT 0,
   is_nil BOOLEAN DEFAULT FALSE,
   is_cancelled BOOLEAN DEFAULT FALSE,
   is_dead_stock BOOLEAN DEFAULT FALSE,

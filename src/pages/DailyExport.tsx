@@ -2,7 +2,8 @@ import { useState, useEffect, useMemo } from "react";
 import { 
   getSales, getPurchases, getBatches, exportCSV, 
   deleteSale, deletePurchase, deleteBatch, getSalesReturns,
-  getChallans, StockBatch, Sale, Purchase, SaleReturn, Challan, getLocalDateString
+  getChallans, StockBatch, Sale, Purchase, SaleReturn, Challan, getLocalDateString,
+  CATEGORIES
 } from "@/lib/store";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Download, Search, RefreshCw, Layers, Eye, Trash2, Filter } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 
 interface LedgerTransaction {
@@ -24,6 +26,25 @@ interface LedgerTransaction {
   isCancelled?: boolean;
   isDeadStock?: boolean;
 }
+
+const formatDateDDMMYYYY = (dateStr: string) => {
+  if (!dateStr) return "";
+  const parts = dateStr.slice(0, 10).split('-');
+  if (parts.length === 3 && parts[0].length === 4) {
+    const [year, month, day] = parts;
+    return `${day}-${month}-${year}`;
+  }
+  try {
+    const d = new Date(dateStr);
+    if (!isNaN(d.getTime())) {
+      const day = String(d.getDate()).padStart(2, '0');
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const year = d.getFullYear();
+      return `${day}-${month}-${year}`;
+    }
+  } catch (e) {}
+  return dateStr;
+};
 
 export default function DailyExport() {
   const { toast } = useToast();
@@ -48,6 +69,7 @@ export default function DailyExport() {
   const [appliedToDate, setAppliedToDate] = useState(() => getLocalDateString());
 
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("all");
 
   // DB States
   const [allBatches, setAllBatches] = useState<StockBatch[]>([]);
@@ -367,15 +389,30 @@ export default function DailyExport() {
     }).sort((a, b) => a.productName.localeCompare(b.productName));
   }, [allBatches, allSales, allPurchases, allSalesReturns, allChallans, appliedFromDate, appliedToDate]);
 
-  // Filtered ledger data for live search preview
+  // List of all categories available in the system
+  const allCategories = useMemo(() => {
+    const cats = new Set<string>();
+    CATEGORIES.forEach(c => cats.add(c));
+    allBatches.forEach(b => { if (b.category?.trim()) cats.add(b.category.trim()); });
+    allSales.forEach(s => { if (s.category?.trim()) cats.add(s.category.trim()); });
+    allPurchases.forEach(p => { if (p.category?.trim()) cats.add(p.category.trim()); });
+    return Array.from(cats).sort((a, b) => a.localeCompare(b));
+  }, [allBatches, allSales, allPurchases]);
+
+  // Filtered ledger data for live category & search preview
   const filteredLedger = useMemo(() => {
-    if (!searchQuery) return ledgerData;
-    const q = searchQuery.toLowerCase();
-    return ledgerData.filter(item => 
-      item.productName.toLowerCase().includes(q) ||
-      item.category.toLowerCase().includes(q)
-    );
-  }, [ledgerData, searchQuery]);
+    let list = ledgerData;
+    if (selectedCategory && selectedCategory !== "all") {
+      list = list.filter(item => item.category?.toLowerCase().trim() === selectedCategory.toLowerCase().trim());
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      list = list.filter(item => 
+        item.productName.toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [ledgerData, selectedCategory, searchQuery]);
 
   // Find the selected product's calculated details live so modal stays synced after deletes
   const selectedProductLedger = useMemo(() => {
@@ -414,7 +451,8 @@ export default function DailyExport() {
     }
 
     const typeStr = t.type === 'Addition' ? 'Stock Addition' : 'Stock Subtraction';
-    if (window.confirm(`Are you sure you want to delete this transaction?\n[${t.date}] - ${typeStr}: ${t.qty} units\nDescription: "${t.description}"\n\nThis will permanently update/revert stock values.`)) {
+    const formattedDate = formatDateDDMMYYYY(t.date);
+    if (window.confirm(`Are you sure you want to delete this transaction?\n[${formattedDate}] - ${typeStr}: ${t.qty} units\nDescription: "${t.description}"\n\nThis will permanently update/revert stock values.`)) {
       try {
         if (t.source === 'purchase') {
           await deletePurchase(t.id);
@@ -499,15 +537,31 @@ export default function DailyExport() {
             >
               <Filter className="h-4 w-4" /> Filter
             </Button>
+            <div className="space-y-1.5 flex-1 min-w-[180px]">
+              <Label className="font-semibold text-slate-800">Category</Label>
+              <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+                <SelectTrigger className="w-full bg-white">
+                  <SelectValue placeholder="All Categories" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Categories</SelectItem>
+                  {allCategories.map(cat => (
+                    <SelectItem key={cat} value={cat}>
+                      {cat}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="space-y-1.5 flex-1 min-w-[180px] relative">
-              <Label>Search Product</Label>
+              <Label className="font-semibold text-slate-800">Search Product</Label>
               <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input 
-                  placeholder="Filter preview..." 
+                  placeholder={selectedCategory && selectedCategory !== "all" ? `Search product in ${selectedCategory}...` : "Search product..."} 
                   value={searchQuery} 
                   onChange={e => setSearchQuery(e.target.value)} 
-                  className="pl-8"
+                  className="pl-8 bg-white"
                 />
               </div>
             </div>
@@ -641,7 +695,7 @@ export default function DailyExport() {
               <Table>
                 <TableHeader className="bg-muted/30 sticky top-0">
                   <TableRow>
-                    <TableHead className="w-24">Date</TableHead>
+                    <TableHead className="w-28 whitespace-nowrap">Date</TableHead>
                     <TableHead className="w-24 text-center">Change</TableHead>
                     <TableHead>Description</TableHead>
                     <TableHead className="text-right w-16">Action</TableHead>
@@ -672,7 +726,7 @@ export default function DailyExport() {
                               : "hover:bg-muted/10"
                           }`}
                         >
-                          <TableCell className="text-xs font-medium font-mono">{t.date}</TableCell>
+                          <TableCell className="text-xs font-medium font-mono whitespace-nowrap">{formatDateDDMMYYYY(t.date)}</TableCell>
                           <TableCell className="text-center font-mono font-bold">
                             <span className={`px-2 py-0.5 rounded text-xs ${t.type === 'Addition' ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-red-100 text-red-700 border border-red-200'}`}>
                               {t.type === 'Addition' ? `+${t.qty}` : `-${t.qty}`}

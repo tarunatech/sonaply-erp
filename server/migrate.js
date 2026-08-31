@@ -1,5 +1,27 @@
 const db = require('./db');
 
+async function transliterateText(text) {
+  if (!text || !text.trim()) return "";
+  try {
+    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=gu&dt=t&q=${encodeURIComponent(text.trim())}`;
+    const res = await fetch(url);
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && Array.isArray(data[0])) {
+        const translatedSegments = data[0]
+          .map((seg) => (Array.isArray(seg) && seg[0] ? seg[0] : ""))
+          .join("");
+        if (translatedSegments && translatedSegments.trim()) {
+          return translatedSegments.trim();
+        }
+      }
+    }
+  } catch (err) {
+    // Ignore transliteration errors to keep migration resilient
+  }
+  return "";
+}
+
 async function renameColumnIfExists(table, oldCol, newCol) {
   const checkOld = await db.query(
     `SELECT column_name FROM information_schema.columns WHERE table_name = $1 AND column_name = $2`,
@@ -95,6 +117,7 @@ async function migrate() {
         damage_qty INTEGER DEFAULT 0,
         display_qty INTEGER DEFAULT 0,
         hold_qty INTEGER DEFAULT 0,
+        stock_maintain INTEGER DEFAULT 0,
         is_nil BOOLEAN DEFAULT FALSE,
         is_cancelled BOOLEAN DEFAULT FALSE,
         is_dead_stock BOOLEAN DEFAULT FALSE,
@@ -172,6 +195,7 @@ async function migrate() {
       CREATE TABLE IF NOT EXISTS clients (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         name TEXT UNIQUE NOT NULL,
+        name_gujarati TEXT,
         phone TEXT,
         price_category TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -312,8 +336,19 @@ async function migrate() {
     await db.query('ALTER TABLE sales ADD COLUMN IF NOT EXISTS damage_qty INTEGER DEFAULT 0');
     await db.query('ALTER TABLE holds ADD COLUMN IF NOT EXISTS held_qty INTEGER');
     await db.query('ALTER TABLE batches ADD COLUMN IF NOT EXISTS display_qty INTEGER DEFAULT 0');
+    await db.query('ALTER TABLE batches ADD COLUMN IF NOT EXISTS stock_maintain INTEGER DEFAULT 0');
     await db.query("ALTER TABLE sales ADD COLUMN IF NOT EXISTS stock_category TEXT DEFAULT 'Available'");
     await db.query("ALTER TABLE challans ADD COLUMN IF NOT EXISTS stock_category TEXT DEFAULT 'Available'");
+
+    // Ensure default integer / text values for consistency
+    await db.query('UPDATE batches SET display_qty = 0 WHERE display_qty IS NULL');
+    await db.query('UPDATE batches SET damage_qty = 0 WHERE damage_qty IS NULL');
+    await db.query('UPDATE batches SET available_qty = 0 WHERE available_qty IS NULL');
+    await db.query('UPDATE batches SET hold_qty = 0 WHERE hold_qty IS NULL');
+    await db.query('UPDATE batches SET stock_maintain = 0 WHERE stock_maintain IS NULL');
+    await db.query('UPDATE sales SET damage_qty = 0 WHERE damage_qty IS NULL');
+    await db.query("UPDATE sales SET stock_category = 'Available' WHERE stock_category IS NULL OR TRIM(stock_category) = ''");
+    await db.query("UPDATE challans SET stock_category = 'Available' WHERE stock_category IS NULL OR TRIM(stock_category) = ''");
 
     // Update sales status constraint to support 'Confirmed'
     try {
@@ -373,8 +408,8 @@ async function migrate() {
           console.log(`Matching order ${order.order_number} to existing sale ID ${saleId}`);
           await db.query(
             `UPDATE sales 
-             SET order_no = $1, status = $2, remarks = COALESCE(remarks, $3), created_at = $4, updated_at = CURRENT_TIMESTAMP
-             WHERE id = $5`,
+              SET order_no = $1, status = $2, remarks = COALESCE(remarks, $3), created_at = $4, updated_at = CURRENT_TIMESTAMP
+              WHERE id = $5`,
             [order.order_number, order.status, order.narration, order.order_date, saleId]
           );
         } else {
@@ -480,6 +515,7 @@ async function migrate() {
     await addColumnIfNotExist('clients', 'phone TEXT');
     await addColumnIfNotExist('clients', 'price_category TEXT DEFAULT \'Regular\'');
     await addColumnIfNotExist('clients', 'created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
+    await addColumnIfNotExist('clients', 'name_gujarati TEXT');
 
     await db.query(`UPDATE clients SET price_category = 'Regular' WHERE price_category IS NULL OR TRIM(price_category) = ''`);
     // Fetch all clients to handle duplicates prior to trimming client names
@@ -550,7 +586,32 @@ async function migrate() {
 
     await db.query(`UPDATE clients SET phone = TRIM(phone) WHERE phone IS NOT NULL AND phone != TRIM(phone)`);
     await db.query(`UPDATE clients SET phone = NULL WHERE phone IS NOT NULL AND TRIM(phone) = ''`);
-    await addColumnIfNotExist('clients', 'name_gujarati TEXT');
+
+    // Transliterate and populate Gujarati names for clients missing it
+    console.log('Step 11b: Transliterating missing Gujarati client names...');
+    try {
+      const clientsMissingGujarati = await db.query(
+        "SELECT id, name FROM clients WHERE name_gujarati IS NULL OR TRIM(name_gujarati) = '' ORDER BY created_at ASC"
+      );
+      if (clientsMissingGujarati.rows.length > 0) {
+        console.log(`Found ${clientsMissingGujarati.rows.length} client(s) needing Gujarati transliteration.`);
+        for (const client of clientsMissingGujarati.rows) {
+          const gujaratiName = await transliterateText(client.name);
+          if (gujaratiName) {
+            await db.query("UPDATE clients SET name_gujarati = $1 WHERE id = $2", [
+              gujaratiName,
+              client.id,
+            ]);
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        console.log(`Populated Gujarati names for ${clientsMissingGujarati.rows.length} client(s).`);
+      } else {
+        console.log('All clients already have Gujarati names.');
+      }
+    } catch (transErr) {
+      console.log('Note: Gujarati transliteration skipped (network or api unavailable):', transErr.message);
+    }
 
     // 12. Migrate nil_qty to display_qty if legacy column exists
     console.log('Step 12: Checking legacy nil_qty column on batches...');
@@ -563,10 +624,14 @@ async function migrate() {
     await db.query(`CREATE INDEX IF NOT EXISTS idx_sales_order_no ON sales(order_no)`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_sales_customer ON sales(customer)`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_sales_estimated_delivery ON sales(estimated_delivery_date)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_sales_order_date ON sales(order_date)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_sales_status ON sales(status)`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_challans_sales_id ON challans(sales_id)`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_challans_customer ON challans(customer)`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_challans_product ON challans(product)`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_challans_cancelled ON challans(is_cancelled)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_challans_challan_no ON challans(challan_no)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_challans_created_at ON challans(created_at DESC)`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_batches_product_name ON batches(product_name)`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_batches_category_lower ON batches(LOWER(category))`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_batches_date_desc ON batches(date DESC)`);
@@ -576,9 +641,13 @@ async function migrate() {
     await db.query(`CREATE INDEX IF NOT EXISTS idx_sales_returns_client_name ON sales_returns(LOWER(TRIM(client_name)))`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_clients_name_lower ON clients(LOWER(TRIM(name)))`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_clients_phone ON clients(TRIM(phone)) WHERE phone IS NOT NULL`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_holds_client_name ON holds(LOWER(TRIM(client_name)))`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_holds_status ON holds(status)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_purchases_prod_batch ON purchases(LOWER(TRIM(product_name)), LOWER(TRIM(batch_number)))`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_purchases_date ON purchases(date DESC)`);
 
-    // 14. Sync products table from existing batches
-    console.log('Step 14: Syncing products table from batches...');
+    // 14. Sync products table from existing batches, purchases, and sales
+    console.log('Step 14: Syncing products table from batches, purchases, and sales...');
     await db.query(`
       INSERT INTO products (name, category)
       SELECT DISTINCT TRIM(b.product_name), COALESCE(MAX(b.category), 'Standard')
@@ -589,6 +658,30 @@ async function migrate() {
           SELECT 1 FROM products p WHERE LOWER(TRIM(p.name)) = LOWER(TRIM(b.product_name))
         )
       GROUP BY TRIM(b.product_name)
+    `);
+
+    await db.query(`
+      INSERT INTO products (name, category)
+      SELECT DISTINCT TRIM(p.product_name), COALESCE(MAX(p.category), 'Standard')
+      FROM purchases p
+      WHERE p.product_name IS NOT NULL 
+        AND TRIM(p.product_name) != ''
+        AND NOT EXISTS (
+          SELECT 1 FROM products prod WHERE LOWER(TRIM(prod.name)) = LOWER(TRIM(p.product_name))
+        )
+      GROUP BY TRIM(p.product_name)
+    `);
+
+    await db.query(`
+      INSERT INTO products (name, category)
+      SELECT DISTINCT TRIM(s.product), COALESCE(MAX(s.category), 'Standard')
+      FROM sales s
+      WHERE s.product IS NOT NULL 
+        AND TRIM(s.product) != ''
+        AND NOT EXISTS (
+          SELECT 1 FROM products prod WHERE LOWER(TRIM(prod.name)) = LOWER(TRIM(s.product))
+        )
+      GROUP BY TRIM(s.product)
     `);
 
     console.log('✅ All migrations applied successfully!');
@@ -605,3 +698,4 @@ async function migrate() {
 }
 
 migrate();
+

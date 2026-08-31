@@ -22,6 +22,7 @@ export interface StockBatch {
   damageQty: number;
   displayQty?: number;
   holdQty?: number;
+  stockMaintain?: number;
   description?: string;
   isNil?: boolean;
   isCancelled?: boolean;
@@ -181,6 +182,7 @@ const mapBatch = (b: any): StockBatch => ({
   damageQty: b.damage_qty,
   displayQty: b.display_qty || b.nil_qty,
   holdQty: b.hold_qty,
+  stockMaintain: Number(b.stock_maintain || 0),
   description: b.description,
   isNil: b.is_nil,
   isCancelled: b.is_cancelled,
@@ -331,6 +333,7 @@ export const addBatch = (b: Omit<StockBatch, "id">) => {
     available_qty: b.availableQty,
     damage_qty: b.damageQty,
     display_qty: b.displayQty,
+    stock_maintain: b.stockMaintain || 0,
     description: b.description,
     is_nil: b.isNil || false,
     is_cancelled: b.isCancelled || false,
@@ -347,6 +350,8 @@ export const updateBatch = (id: string, updates: Partial<StockBatch>) => {
     body.available_qty = updates.availableQty;
   if (updates.damageQty !== undefined) body.damage_qty = updates.damageQty;
   if (updates.displayQty !== undefined) body.display_qty = updates.displayQty;
+  if (updates.stockMaintain !== undefined)
+    body.stock_maintain = updates.stockMaintain;
   if (updates.quantity !== undefined) body.quantity = updates.quantity;
   if (updates.rate !== undefined) body.rate = updates.rate;
   if (updates.productName) body.product_name = updates.productName;
@@ -391,12 +396,13 @@ export const addPurchase = (p: Omit<Purchase, "id">) => {
 };
 export const updatePurchase = (id: string, updates: Partial<Purchase>) => {
   const body: any = {};
-  if (updates.supplierName) body.supplier_name = updates.supplierName;
-  if (updates.supplierPhone) body.supplier_phone = updates.supplierPhone;
-  if (updates.productName) body.product_name = updates.productName;
-  if (updates.quantity) body.quantity = updates.quantity;
-  if (updates.batchNumber) body.batch_number = updates.batchNumber;
-  if (updates.category) body.category = updates.category;
+  if (updates.supplierName !== undefined) body.supplier_name = updates.supplierName;
+  if (updates.supplierPhone !== undefined) body.supplier_phone = updates.supplierPhone;
+  if (updates.productName !== undefined) body.product_name = updates.productName;
+  if (updates.quantity !== undefined) body.quantity = updates.quantity;
+  if (updates.batchNumber !== undefined) body.batch_number = updates.batchNumber;
+  if (updates.category !== undefined) body.category = updates.category;
+  if (updates.date !== undefined) body.date = updates.date;
   return request<any>(`/purchases/${id}`, {
     method: "PUT",
     body: JSON.stringify(body),

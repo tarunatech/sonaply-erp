@@ -108,6 +108,9 @@ async function ensureDisplayQtyAndStockCategory() {
     "ALTER TABLE batches ADD COLUMN IF NOT EXISTS hold_qty INTEGER DEFAULT 0",
   );
   await db.query(
+    "ALTER TABLE batches ADD COLUMN IF NOT EXISTS stock_maintain INTEGER DEFAULT 0",
+  );
+  await db.query(
     "ALTER TABLE batches ADD COLUMN IF NOT EXISTS is_dead_stock BOOLEAN DEFAULT FALSE",
   );
   try {
@@ -301,6 +304,7 @@ app.post("/api/batches", async (req, res) => {
     available_qty,
     damage_qty,
     display_qty,
+    stock_maintain,
     nil_qty,
     description,
   } = req.body;
@@ -311,11 +315,12 @@ app.post("/api/batches", async (req, res) => {
       : nil_qty !== undefined
         ? nil_qty
         : 0;
+  const stockMaintain = stock_maintain !== undefined ? Number(stock_maintain) || 0 : 0;
   try {
     const result = await db.query(
       `INSERT INTO batches 
-      (product_id, product_code, product_name, category, batch_number, supplier, quantity, rate, date, available_qty, damage_qty, display_qty, description) 
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
+      (product_id, product_code, product_name, category, batch_number, supplier, quantity, rate, date, available_qty, damage_qty, display_qty, stock_maintain, description) 
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
       [
         productId,
         product_code,
@@ -329,6 +334,7 @@ app.post("/api/batches", async (req, res) => {
         available_qty,
         damage_qty,
         displayQty,
+        stockMaintain,
         description,
       ],
     );
@@ -632,12 +638,19 @@ async function deductStock(
 
   let batchesResult = await db.query(bQuery, bParams);
 
-  // If specific batch requested had no rows, fall back to searching any batch of the product
+  // If specific batch requested has no rows, create/find the batch record for that specific batch
   if (batchesResult.rows.length === 0 && cleanBatch && cleanBatch !== "0") {
-    batchesResult = await db.query(
-      `SELECT id, batch_number, "${updateCol}" FROM batches WHERE LOWER(TRIM(product_name)) = LOWER(TRIM($1)) ORDER BY date ASC`,
+    const productLookup = await db.query(
+      "SELECT category FROM products WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) LIMIT 1",
       [cleanProduct],
     );
+    const category =
+      productLookup.rows.length > 0 ? productLookup.rows[0].category : "Other";
+    const insRes = await db.query(
+      `INSERT INTO batches (product_name, category, batch_number, quantity, "${updateCol}", date) VALUES ($1, $2, $3, 0, 0, CURRENT_DATE) RETURNING id, batch_number, "${updateCol}"`,
+      [cleanProduct, category, cleanBatch],
+    );
+    batchesResult = insRes;
   }
 
   let remainingToSell = qty;
@@ -657,16 +670,9 @@ async function deductStock(
     lastBatchNo = b.batch_number;
   }
 
-  // If remaining > 0, deduct from the first/existing batch (allowing negative stock on a real batch record)
+  // If remaining > 0, deduct from the specific/first matching batch
   if (remainingToSell > 0) {
-    const existingBatch =
-      batchesResult.rows[0] ||
-      (
-        await db.query(
-          `SELECT id, batch_number FROM batches WHERE LOWER(TRIM(product_name)) = LOWER(TRIM($1)) ORDER BY date ASC LIMIT 1`,
-          [cleanProduct],
-        )
-      ).rows[0];
+    const existingBatch = batchesResult.rows[0];
 
     if (existingBatch) {
       await db.query(
@@ -761,7 +767,7 @@ async function resolveNegativeStock(productName) {
 
   for (const col of cols) {
     const negativeBatches = await db.query(
-      `SELECT id, "${col}" FROM batches WHERE LOWER(TRIM(product_name)) = LOWER(TRIM($1)) AND "${col}" < 0 ORDER BY date ASC`,
+      `SELECT id, batch_number, "${col}" FROM batches WHERE LOWER(TRIM(product_name)) = LOWER(TRIM($1)) AND "${col}" < 0 ORDER BY date ASC`,
       [cleanProduct],
     );
 
@@ -771,10 +777,17 @@ async function resolveNegativeStock(productName) {
       let needed = Math.abs(Number(negBatch[col]));
       if (needed <= 0) continue;
 
-      const positiveBatches = await db.query(
-        `SELECT id, "${col}" FROM batches WHERE LOWER(TRIM(product_name)) = LOWER(TRIM($1)) AND "${col}" > 0 AND id != $2 ORDER BY date ASC`,
-        [cleanProduct, negBatch.id],
-      );
+      const cleanBNo = (negBatch.batch_number || "0").trim();
+      let posQuery = `SELECT id, "${col}" FROM batches WHERE LOWER(TRIM(product_name)) = LOWER(TRIM($1)) AND "${col}" > 0 AND id != $2`;
+      let posParams = [cleanProduct, negBatch.id];
+
+      if (cleanBNo && cleanBNo !== "0") {
+        posQuery += ` AND LOWER(TRIM(batch_number)) = LOWER(TRIM($3))`;
+        posParams.push(cleanBNo);
+      }
+      posQuery += ` ORDER BY date ASC`;
+
+      const positiveBatches = await db.query(posQuery, posParams);
 
       for (const posBatch of positiveBatches.rows) {
         if (needed <= 0) break;
@@ -916,10 +929,10 @@ app.post("/api/sales/bulk", async (req, res) => {
       const finalStockCategory = item.stockCategory || "Available";
 
       let bQuery =
-        "SELECT id, batch_number, available_qty, display_qty, damage_qty FROM batches WHERE product_name = $1";
+        "SELECT id, batch_number, available_qty, display_qty, damage_qty FROM batches WHERE LOWER(TRIM(product_name)) = LOWER(TRIM($1))";
       let bParams = [finalProduct];
-      if (finalBatchNo) {
-        bQuery += " AND batch_number = $2";
+      if (finalBatchNo && finalBatchNo !== "0") {
+        bQuery += " AND LOWER(TRIM(batch_number)) = LOWER(TRIM($2))";
         bParams.push(finalBatchNo);
       }
       bQuery += " ORDER BY date ASC";
@@ -1112,10 +1125,10 @@ app.post("/api/sales", async (req, res) => {
 
     // 2. Check available stock to decide CH- vs P- prefix (NO deduction at sale creation)
     let bQuery =
-      "SELECT id, batch_number, available_qty, display_qty, damage_qty FROM batches WHERE product_name = $1";
+      "SELECT id, batch_number, available_qty, display_qty, damage_qty FROM batches WHERE LOWER(TRIM(product_name)) = LOWER(TRIM($1))";
     let bParams = [finalProduct];
-    if (finalBatchNo) {
-      bQuery += " AND batch_number = $2";
+    if (finalBatchNo && finalBatchNo !== "0") {
+      bQuery += " AND LOWER(TRIM(batch_number)) = LOWER(TRIM($2))";
       bParams.push(finalBatchNo);
     }
     bQuery += " ORDER BY date ASC";
