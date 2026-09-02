@@ -7,6 +7,7 @@ import {
   getClients,
   updateChallan,
   updateChallanGroup,
+  updateChallanGroupBillNo,
   deleteChallan,
   deleteChallanGroup,
   cancelChallanGroup,
@@ -37,7 +38,6 @@ import {
   Printer,
   Trash2,
   Pencil,
-  CheckSquare,
   CheckCircle2,
   Ban,
   Truck,
@@ -54,7 +54,6 @@ import {
   DialogTitle,
   DialogDescription,
   DialogFooter,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import {
   Select,
@@ -86,6 +85,9 @@ export default function ChallanPage() {
   const [batches, setBatches] = useState<StockBatch[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [filter, setFilter] = useState("");
+  const [billInputs, setBillInputs] = useState<Record<string, string>>({});
+  const [confirmDeliverGroup, setConfirmDeliverGroup] = useState<any | null>(null);
+  const [isDelivering, setIsDelivering] = useState(false);
   const { toast } = useToast();
 
   const refresh = useCallback(() => {
@@ -115,6 +117,7 @@ export default function ChallanPage() {
         items: items,
         isPrinted: items.every((i) => i.isPrinted),
         isBuilt: items.every((i) => i.isBuilt),
+        billNo: items.find((i) => i.billNo)?.billNo || "",
         isChallanGenerated: items.every((i) => i.isChallanGenerated),
         isCancelled: items.some((i) => i.isCancelled || i.status === "Cancelled"),
         status: items[0].status,
@@ -145,12 +148,14 @@ export default function ChallanPage() {
     const f = filter.toLowerCase();
     return groupedChallans.filter(g => {
       const orderNo = sales.find(s => s.id === g.salesId)?.orderNo || "";
+      const currentBill = (billInputs[g.challanNo] ?? g.billNo ?? "").toLowerCase();
       return (g.challanNo || '').toLowerCase().includes(f) ||
              (g.customer || '').toLowerCase().includes(f) ||
              orderNo.toLowerCase().includes(f) ||
+             currentBill.includes(f) ||
              g.items.some(item => (item.product || '').toLowerCase().includes(f));
     });
-  }, [groupedChallans, filter, sales]);
+  }, [groupedChallans, filter, sales, billInputs]);
 
   const filteredChallansForExport = useMemo(() => {
     if (!filter) return challans;
@@ -161,9 +166,27 @@ export default function ChallanPage() {
       return (c.customer || '').toLowerCase().includes(f) ||
              (c.product || '').toLowerCase().includes(f) ||
              (c.challanNo || '').toLowerCase().includes(f) ||
+             (c.billNo || '').toLowerCase().includes(f) ||
              orderNo.toLowerCase().includes(f);
     });
   }, [challans, sales, filter]);
+
+  const handleBillNoSave = async (challanNo: string, val: string) => {
+    try {
+      const targetGroup = groupedChallans.find((g) => g.challanNo === challanNo);
+      if (targetGroup && targetGroup.items.length > 0) {
+        await Promise.all(targetGroup.items.map((item) => updateChallan(item.id, { billNo: val })));
+      } else {
+        await updateChallanGroupBillNo(challanNo, val);
+      }
+      refresh();
+      if (val) {
+        toast({ title: "Bill No Saved", description: `${challanNo}: ${val}` });
+      }
+    } catch (err: any) {
+      toast({ title: "Failed to save Bill No", description: err.message, variant: "destructive" });
+    }
+  };
 
   const handleEditChallan = (group: any) => {
     const firstSale = sales.find((s) => s.id === group.salesId);
@@ -223,16 +246,46 @@ export default function ChallanPage() {
     }
   };
 
-  const handleDeliver = async (group: any) => {
-    const ok = window.confirm(`Deliver order ${group.challanNo}? This will mark it as Delivered.`);
-    if (!ok) return;
+  const handleDeliverClick = (group: any) => {
+    const currentBill = (billInputs[group.challanNo] !== undefined ? billInputs[group.challanNo] : (group.billNo || "")).trim();
+    if (!currentBill) {
+      toast({
+        title: "Bill No Required",
+        description: `Please enter Bill No for challan ${group.challanNo} before delivering.`,
+        variant: "destructive",
+      });
+      return;
+    }
+    setConfirmDeliverGroup({ ...group, currentBillNo: currentBill });
+  };
+
+  const executeDeliver = async () => {
+    if (!confirmDeliverGroup) return;
+    setIsDelivering(true);
     try {
-      await deliverChallanGroup(group.challanNo);
+      if (confirmDeliverGroup.items && confirmDeliverGroup.items.length > 0) {
+        await Promise.all(
+          confirmDeliverGroup.items.map((item: any) =>
+            updateChallan(item.id, { billNo: confirmDeliverGroup.currentBillNo })
+          )
+        );
+      }
+      await deliverChallanGroup(confirmDeliverGroup.challanNo);
       window.dispatchEvent(new CustomEvent("erp-stock-updated"));
       refresh();
-      toast({ title: "Challan Delivered", description: `${group.challanNo} delivered successfully.` });
+      toast({
+        title: "Challan Delivered",
+        description: `${confirmDeliverGroup.challanNo} (Bill: ${confirmDeliverGroup.currentBillNo}) delivered successfully.`,
+      });
+      setConfirmDeliverGroup(null);
     } catch (err: any) {
-      toast({ title: "Delivery Failed", description: err.message, variant: "destructive" });
+      toast({
+        title: "Delivery Failed",
+        description: err.message || "Failed to deliver challan",
+        variant: "destructive",
+      });
+    } finally {
+      setIsDelivering(false);
     }
   };
 
@@ -292,6 +345,7 @@ export default function ChallanPage() {
       ? format(new Date(group.createdAt), "dd-MM-yyyy")
       : (group.items[0]?.createdAt ? format(new Date(group.items[0].createdAt), "dd-MM-yyyy") : "");
 
+    const currentBillNo = group.billNo || billInputs[group.challanNo] || "";
     const totalQty = group.items.reduce((sum: number, item: any) => sum + Number(item.quantity || 0), 0);
 
     const allNotes = Array.from(new Set(group.items.map((i: any) => {
@@ -343,200 +397,66 @@ export default function ChallanPage() {
 <meta charset="UTF-8">
 <title>Challan - ${group.challanNo}</title>
 <style>
-  :root{
-    --paper-width: 80mm;
-    --side-margin: 2.5mm;
-  }
-
-  @page{
-    size: var(--paper-width) auto;
-    margin: 0;
-  }
-
+  :root{ --paper-width: 80mm; --side-margin: 2.5mm; }
+  @page{ size: var(--paper-width) auto; margin: 0; }
   *{ box-sizing: border-box; }
-
-  html,body{
-    margin:0;
-    padding:0;
-    background:#e9e9e9;
-  }
-
-  .receipt{
-    width: var(--paper-width);
-    margin: 0 auto;
-    padding: 3mm var(--side-margin) 4mm;
-    background:#fff;
-    font-family: Arial, Helvetica, 'Noto Sans Gujarati', 'Shruti', sans-serif;
-    color:#000;
-    font-size: 15.5px;
-    font-weight: 700;
-    line-height: 1.45;
-  }
-
+  html,body{ margin:0; padding:0; background:#e9e9e9; }
+  .receipt{ width: var(--paper-width); margin: 0 auto; padding: 3mm var(--side-margin) 4mm; background:#fff; font-family: Arial, sans-serif; color:#000; font-size: 15.5px; font-weight: 700; line-height: 1.45; }
   .center{ text-align:center; }
   .bold{ font-weight:700; }
-  .row{ display:flex; justify-content:space-between; gap:4px; }
-  .row span:last-child{ text-align:right; white-space:nowrap; }
-
-  .dashed{
-    border-top: 1.5px dashed #000;
-    margin: 3mm 0;
-  }
-  .dashed-light{
-    border-top: 1.2px dashed #000;
-    margin: 2.5mm 0;
-  }
-
+  .dashed{ border-top: 1.5px dashed #000; margin: 3mm 0; }
+  .dashed-light{ border-top: 1.2px dashed #000; margin: 2.5mm 0; }
   .meta div{ margin:3px 0; font-size: 15.5px; font-weight: 700; line-height: 1.4; }
   .meta .label{ display:inline-block; width: 28mm; font-weight:700; font-size: 15.5px; }
-  .meta .client-row{ font-size: 17px; font-weight: 700; line-height: 1.4; }
   .meta .client-name{ font-size: 18px; font-weight: 700; }
-
-  .col-head{
-    display: grid;
-    grid-template-columns: 24mm 1fr 12mm;
-    gap: 4.5mm;
-    align-items: flex-end;
-    font-weight: 700;
-    font-size: 16px;
-    letter-spacing: normal;
-    text-transform: uppercase;
-    border-bottom: 2px solid #000;
-    padding-bottom: 1.5mm;
-    margin-bottom: 2.5mm;
-  }
-  .col-head .c-qty{ text-align: right; }
-
-  .item{
-    padding-bottom: 2.5mm;
-    margin-bottom: 2.5mm;
-    border-bottom: 1px dashed #666;
-  }
-  .item:last-child{
-    border-bottom: none;
-    margin-bottom: 0;
-    padding-bottom: 1mm;
-  }
-  .item .row-data{
-    display: grid;
-    grid-template-columns: 24mm 1fr 12mm;
-    gap: 4.5mm;
-    font-size: 16px;
-    font-weight: 600;
-    line-height: 1.35;
-  }
-  .item .c-cat{
-    word-break: normal;
-    overflow-wrap: break-word;
-    font-weight: 550;
-    font-size: 16px;
-    line-height: 1.35;
-    text-transform: none;
-  }
-  .item .c-prod{
-    font-weight: 550;
-    word-break: normal;
-    overflow-wrap: break-word;
-    font-size: 16px;
-    line-height: 1.35;
-    text-transform: uppercase;
-    letter-spacing: -0.2px;
-  }
-  .item .c-qty{
-    text-align: right;
-    font-weight: 600;
-    font-size: 17px;
-    white-space: nowrap;
-  }
-  .item .sub-batch{
-    font-size: 14px;
-    font-weight: 500;
-    color: #222;
-    margin-top: 2px;
-    line-height: 1.4;
-    text-transform: none;
-  }
-  .item .sub-desc{
-    font-size: 14px;
-    font-weight: 500;
-    color: #222;
-    margin-top: 2px;
-    line-height: 1.4;
-    text-transform: none;
-  }
-
+  .col-head{ display: grid; grid-template-columns: 24mm 1fr 12mm; gap: 4.5mm; align-items: flex-end; font-weight: 700; font-size: 16px; border-bottom: 2px solid #000; padding-bottom: 1.5mm; margin-bottom: 2.5mm; }
+  .item{ padding-bottom: 2.5mm; margin-bottom: 2.5mm; border-bottom: 1px dashed #666; }
+  .item:last-child{ border-bottom: none; margin-bottom: 0; }
+  .item .row-data{ display: grid; grid-template-columns: 24mm 1fr 12mm; gap: 4.5mm; align-items: flex-start; }
+  .item .c-cat{ font-size: 14.5px; font-weight: 700; }
+  .item .c-prod{ font-size: 15.5px; font-weight: 700; }
+  .item .c-qty{ text-align: right; font-size: 16px; font-weight: 700; }
+  .item .sub-batch{ font-size: 13.5px; font-weight: 700; color: #111; margin-top: 1px; }
+  .item .sub-desc{ font-size: 14px; font-weight: 500; color: #222; margin-top: 2px; }
   .totals .row{ font-size: 16px; font-weight: 700; margin: 1mm 0; }
-  .totals .grand{ font-weight:700; font-size: 18px; line-height: 1.4; }
-  .narration-text{ font-size: 15.5px; font-weight: 700; line-height: 1.45; }
-
-  .print-btn-wrap{
-    text-align:center;
-    padding: 10px;
-  }
-  .print-btn{
-    font-family: sans-serif;
-    background:#2b2b2b;
-    color:#fff;
-    border:none;
-    border-radius:4px;
-    padding:8px 16px;
-    font-size:13px;
-    cursor:pointer;
-  }
-  @media print{
-    body{ background:#fff; }
-    .print-btn-wrap{ display:none; }
-    .receipt{ box-shadow:none; }
-  }
-  @media screen{
-    .receipt{ box-shadow: 0 0 6px rgba(0,0,0,0.25); margin-top:14px; margin-bottom:6px; }
-  }
+  .totals .grand{ font-weight:700; font-size: 18px; }
+  .narration-text{ font-size: 15.5px; font-weight: 700; }
+  @media print{ body{ background:#fff; } .print-btn-wrap{ display:none; } }
 </style>
 </head>
 <body>
-
-<div class="print-btn-wrap">
-  <button class="print-btn" onclick="window.print()">🖨️ Print Challan</button>
-</div>
-
 <div class="receipt">
-
   <div class="meta">
     <div class="client-row"><span class="label">Client</span>: <span class="bold client-name">${printableClientName}</span></div>
     <div><span class="label">Challan No</span>: <span class="bold">${group.challanNo}</span></div>
+    ${currentBillNo ? `<div><span class="label">Bill No</span>: <span class="bold">${currentBillNo}</span></div>` : ''}
     <div><span class="label">Date</span>: ${formattedDate}</div>
   </div>
-
   <div class="dashed"></div>
-
   <div class="col-head">
     <span class="c-cat">Category</span>
     <span class="c-prod">Product</span>
     <span class="c-qty">Qty</span>
   </div>
-
-  <div id="items">
-    ${itemsHtml}
-  </div>
-
+  <div id="items">${itemsHtml}</div>
   <div class="dashed"></div>
-
   <div class="totals">
     <div class="row grand bold"><span>Total Qty</span><span>${totalQty}</span></div>
   </div>
-
   ${printableNarration ? `
-  <div class="dashed-light"></div>
-  <div class="center bold narration-text">Narration: ${printableNarration}</div>
-  ` : ""}
-
+    <div class="dashed-light"></div>
+    <div class="narration-section">
+      <div class="bold" style="font-size: 15px; margin-bottom: 2px;">વિગત / Narration:</div>
+      <div class="narration-text">${printableNarration}</div>
+    </div>
+  ` : ''}
 </div>
-
 </body>
 </html>`;
 
-    const printWindow = window.open("", "_blank");
+    const printWindow = window.open('', '_blank');
     if (printWindow) {
+      printWindow.document.open();
       printWindow.document.write(content);
       printWindow.document.close();
       setTimeout(() => {
@@ -554,29 +474,29 @@ export default function ChallanPage() {
           <div className="relative w-full sm:w-72">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Search customer, product or challan/order #..."
+              placeholder="Search customer, product, challan or bill #..."
               value={filter}
               onChange={e => setFilter(e.target.value)}
               className="pl-9 h-9"
             />
           </div>
-          <Button variant="outline" size="sm" onClick={() => exportCSV(filteredChallansForExport as any, `challans-${new Date().toISOString().slice(0, 10)}.csv`)}>
-            <Download className="mr-1 h-4 w-4" /> Export CSV
+          <Button variant="outline" size="sm" onClick={() => exportCSV(filteredChallansForExport as any, `delivery-challans-${new Date().toISOString().slice(0, 10)}.csv`)}>
+            <Download className="mr-1 h-4 w-4" /> Export
           </Button>
-          <Button variant="outline" size="sm" onClick={() => printElement("delivery-challans-table")}>
+          <Button variant="outline" size="sm" onClick={() => printElement("challans-table")}>
             <Printer className="mr-1 h-4 w-4" /> Print
           </Button>
         </div>
       </div>
 
       <Card>
-        <CardContent className="p-0" id="delivery-challans-table">
+        <CardContent className="p-0" id="challans-table">
           <Table className="border-collapse border-2 border-slate-300 w-full" wrapperClassName="max-h-[calc(100vh-130px)]">
             <TableHeader className="sticky top-0 bg-slate-100 z-10 shadow-2xs border-b-2 border-slate-300">
               <TableRow className="hover:bg-transparent">
                 <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Date</TableHead>
-                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Challan #</TableHead>
-                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Client</TableHead>
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Challan / Bill No</TableHead>
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Customer</TableHead>
                 <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Items / Quantities</TableHead>
                 <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right">Actions</TableHead>
               </TableRow>
@@ -593,7 +513,9 @@ export default function ChallanPage() {
                   </TableRow>
                 ) : (
                   filteredGroupedChallans.map((group) => {
-                    const parentSale = sales.find((s) => s.id === group.salesId);
+                    const currentBillValue = billInputs[group.challanNo] !== undefined
+                      ? billInputs[group.challanNo]
+                      : (group.billNo || "");
                     return (
                       <TableRow
                         key={group.challanNo}
@@ -611,35 +533,51 @@ export default function ChallanPage() {
                                 {group.challanNo}
                               </span>
                             </div>
-                            <div className="flex flex-wrap gap-1.5 items-center mt-0.5">
-                              <label className={`inline-flex items-center gap-1.5 text-xs mr-1 cursor-pointer select-none ${group.isCancelled ? "text-muted-foreground/60 cursor-not-allowed" : "text-slate-700 font-medium"}`}>
-                                <input
-                                  type="checkbox"
-                                  checked={group.isBuilt}
+                            <div className="flex flex-col gap-1 mt-0.5">
+                              <div className="flex items-center gap-1.5">
+                                <Input
+                                  type="text"
+                                  value={currentBillValue}
+                                  onChange={(e) => {
+                                    const val = e.target.value.toUpperCase();
+                                    setBillInputs((prev) => ({ ...prev, [group.challanNo]: val }));
+                                  }}
+                                  onBlur={(e) => {
+                                    const val = e.target.value.toUpperCase().trim();
+                                    handleBillNoSave(group.challanNo, val);
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.preventDefault();
+                                      const val = (e.target as HTMLInputElement).value.toUpperCase().trim();
+                                      handleBillNoSave(group.challanNo, val);
+                                    }
+                                  }}
                                   disabled={group.isCancelled}
-                                  onChange={(e) => handleBuildToggle(group, e.target.checked)}
-                                  className="rounded border-slate-300 text-primary focus:ring-primary h-3.5 w-3.5"
+                                  placeholder="BILL NO"
+                                  className="h-7 w-32 text-xs uppercase font-mono font-bold bg-white border-slate-300 focus-visible:ring-1 focus-visible:ring-primary px-2"
                                 />
-                                <span>Billed</span>
-                              </label>
-                              {group.isPrinted && (
-                                <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-50 text-green-700 border border-green-200">
-                                  <CheckCircle2 className="h-3 w-3" />
-                                  Printed
-                                </span>
-                              )}
-                              {group.isBuilt && (
-                                <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
-                                  <CheckSquare className="h-3 w-3" />
-                                  Billed
-                                </span>
-                              )}
-                              {group.isChallanGenerated && (
-                                <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
-                                  <CheckCircle2 className="h-3 w-3" />
-                                  Generated
-                                </span>
-                              )}
+                              </div>
+                              <div className="flex flex-wrap gap-1.5 items-center mt-0.5">
+                                {group.isPrinted && (
+                                  <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-50 text-green-700 border border-green-200">
+                                    <CheckCircle2 className="h-3 w-3" />
+                                    Printed
+                                  </span>
+                                )}
+                                {group.billNo && (
+                                  <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                                    <CheckCircle2 className="h-3 w-3" />
+                                    Billed
+                                  </span>
+                                )}
+                                {group.isChallanGenerated && (
+                                  <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
+                                    <CheckCircle2 className="h-3 w-3" />
+                                    Generated
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </div>
                         </TableCell>
@@ -677,7 +615,6 @@ export default function ChallanPage() {
                                         </span>
                                       )}
                                     </div>
- 
                                     <div className="text-right flex items-center gap-2">
                                       {itemSale && (
                                         <div className="text-[11px] text-slate-500 font-semibold">
@@ -706,7 +643,6 @@ export default function ChallanPage() {
                                 </div>
                               );
                             })}
-                            {/* Show group-level narration one time only */}
                             {(() => {
                               const firstWithNotes = group.items.find(i => i.notes);
                               if (firstWithNotes && firstWithNotes.notes) {
@@ -720,10 +656,8 @@ export default function ChallanPage() {
                             })()}
                           </div>
                         </TableCell>
- 
                         <TableCell className="border-2 border-slate-300 px-3 py-3.5 text-right align-top shrink-0 w-auto whitespace-nowrap">
                           <div className="flex items-center justify-end gap-1.5 shrink-0 whitespace-nowrap">
-                            {/* When cancelled: show Cancelled icon and Delete button */}
                             {group.isCancelled ? (
                               <div className="inline-flex items-center gap-1.5">
                                 <span className="inline-flex items-center justify-center h-8 w-8 rounded-md bg-red-100 text-red-700 border border-red-200 shadow-2xs" title="Cancelled">
@@ -745,7 +679,7 @@ export default function ChallanPage() {
                               <Button
                                 size="icon"
                                 className="h-8 w-8 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md shadow-2xs shrink-0"
-                                onClick={() => handleDeliver(group)}
+                                onClick={() => handleDeliverClick(group)}
                                 title="Deliver Order"
                               >
                                 <Truck className="h-4 w-4" />
@@ -773,7 +707,6 @@ export default function ChallanPage() {
                             >
                               <FileSpreadsheet className="h-4 w-4" />
                             </Button>
-                            {/* Edit Button - navigates to Sales module */}
                             {group.status !== "Delivered" && !group.isCancelled && (
                               <Button
                                 variant="ghost"
@@ -785,8 +718,6 @@ export default function ChallanPage() {
                                 <Pencil className="h-4 w-4" />
                               </Button>
                             )}
-
-                            {/* Cancel Button */}
                             <Button
                               variant="ghost"
                               size="icon"
@@ -796,8 +727,6 @@ export default function ChallanPage() {
                             >
                               <Ban className="h-4 w-4" />
                             </Button>
-
-                            {/* Delete Button */}
                             <Button
                               variant="ghost"
                               size="icon"
@@ -819,6 +748,68 @@ export default function ChallanPage() {
             </Table>
         </CardContent>
       </Card>
+      <Dialog open={confirmDeliverGroup !== null} onOpenChange={(open) => !open && !isDelivering && setConfirmDeliverGroup(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-slate-900">
+              <Truck className="h-5 w-5 text-emerald-600" />
+              Confirm Order Delivery
+            </DialogTitle>
+            <DialogDescription className="text-slate-600 text-sm">
+              Please confirm delivery for this challan. Stock will be deducted and the order will move to Delivered Orders.
+            </DialogDescription>
+          </DialogHeader>
+          {confirmDeliverGroup && (
+            <div className="bg-slate-50 border border-slate-200 rounded-lg p-3.5 space-y-2.5 text-sm">
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 font-medium">Challan No:</span>
+                <span className="font-mono font-bold text-slate-900 bg-white px-2 py-0.5 rounded border border-slate-200">
+                  {confirmDeliverGroup.challanNo}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 font-medium">Customer:</span>
+                <span className="font-bold text-slate-900">{confirmDeliverGroup.customer}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 font-medium">Bill No:</span>
+                <span className="font-mono font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200 uppercase">
+                  {confirmDeliverGroup.currentBillNo}
+                </span>
+              </div>
+              <div className="pt-2 border-t border-slate-200 text-xs text-slate-600">
+                <span className="font-semibold text-slate-700">Items to Deliver:</span>
+                <div className="mt-1.5 space-y-1 max-h-36 overflow-y-auto pr-1">
+                  {confirmDeliverGroup.items?.map((it: any, idx: number) => (
+                    <div key={idx} className="flex justify-between items-center py-0.5 border-b border-slate-100 last:border-0 text-slate-800">
+                      <span>{it.product} {it.batchNo ? `(Batch: ${it.batchNo})` : ''}</span>
+                      <span className="font-bold text-emerald-700 shrink-0 ml-2">{it.quantity} Qty</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+          <DialogFooter className="gap-2 sm:gap-0 mt-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setConfirmDeliverGroup(null)}
+              disabled={isDelivering}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
+              onClick={executeDeliver}
+              disabled={isDelivering}
+            >
+              {isDelivering ? "Delivering..." : "Yes, Deliver Order"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

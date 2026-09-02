@@ -33,6 +33,9 @@ async function ensureChallanCancelColumns() {
     "ALTER TABLE challans ADD COLUMN IF NOT EXISTS is_built BOOLEAN DEFAULT FALSE",
   );
   await db.query(
+    "ALTER TABLE challans ADD COLUMN IF NOT EXISTS bill_no TEXT",
+  );
+  await db.query(
     "ALTER TABLE challans ADD COLUMN IF NOT EXISTS restored_qty INTEGER",
   );
   await db.query(
@@ -2379,7 +2382,9 @@ app.put("/api/challans/:id", async (req, res) => {
           k !== "is_challan_generated" &&
           k !== "isPrinted" &&
           k !== "isBuilt" &&
-          k !== "isChallanGenerated",
+          k !== "isChallanGenerated" &&
+          k !== "bill_no" &&
+          k !== "billNo",
       );
       if (hasOtherUpdates) {
         return res
@@ -2406,6 +2411,10 @@ app.put("/api/challans/:id", async (req, res) => {
       allowedUpdates.is_printed = fields.is_printed;
     if (fields.is_built !== undefined)
       allowedUpdates.is_built = fields.is_built;
+    if (fields.bill_no !== undefined)
+      allowedUpdates.bill_no = fields.bill_no;
+    if (fields.billNo !== undefined)
+      allowedUpdates.bill_no = fields.billNo;
     if (fields.is_challan_generated !== undefined)
       allowedUpdates.is_challan_generated = fields.is_challan_generated;
 
@@ -3250,6 +3259,22 @@ app.put("/api/challans/group/:challanNumber/deliver", async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     await db.query("ROLLBACK");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update bill_no for an entire challan group
+app.put("/api/challans/group/:challanNumber/bill", async (req, res) => {
+  const { challanNumber } = req.params;
+  const { billNo, bill_no } = req.body;
+  const finalBillNo = (billNo !== undefined ? billNo : bill_no) ?? null;
+  try {
+    await db.query(
+      "UPDATE challans SET bill_no = $1 WHERE challan_no = $2",
+      [finalBillNo, challanNumber],
+    );
+    res.json({ success: true, billNo: finalBillNo });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });

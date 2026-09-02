@@ -185,6 +185,7 @@ async function migrate() {
         is_cancelled BOOLEAN DEFAULT FALSE,
         cancelled_at TIMESTAMP,
         is_built BOOLEAN DEFAULT FALSE,
+        bill_no TEXT,
         restored_qty INTEGER,
         is_challan_generated BOOLEAN DEFAULT FALSE,
         status TEXT DEFAULT 'Delivered'
@@ -325,12 +326,13 @@ async function migrate() {
     }
 
     // 8. Alterations for recent schema additions
-    console.log('Step 8: Adding delivered_at, challan cancel/built fields, sales_returns, display_qty, stock_category, and estimated_delivery_date...');
+    console.log('Step 8: Adding delivered_at, challan cancel/built/bill_no fields, sales_returns, display_qty, stock_category, and estimated_delivery_date...');
     await db.query('ALTER TABLE sales ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP');
     await db.query('ALTER TABLE sales ADD COLUMN IF NOT EXISTS estimated_delivery_date DATE');
     await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS is_cancelled BOOLEAN DEFAULT FALSE');
     await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP');
     await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS is_built BOOLEAN DEFAULT FALSE');
+    await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS bill_no TEXT');
     await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS restored_qty INTEGER');
     await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS is_challan_generated BOOLEAN DEFAULT FALSE');
     await db.query('ALTER TABLE sales ADD COLUMN IF NOT EXISTS damage_qty INTEGER DEFAULT 0');

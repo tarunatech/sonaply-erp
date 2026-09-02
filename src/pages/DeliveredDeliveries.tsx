@@ -71,6 +71,7 @@ export default function DeliveredDeliveries() {
         customer: items[0].customer,
         clientPhone: items[0].clientPhone,
         createdAt: items[0].createdAt,
+        billNo: items.find((i) => i.billNo)?.billNo || "",
         items: items,
         salesId: items[0].salesId,
       }))
@@ -110,7 +111,7 @@ export default function DeliveredDeliveries() {
             <TableHeader className="sticky top-0 bg-slate-100 z-10 shadow-2xs border-b-2 border-slate-300">
               <TableRow className="hover:bg-transparent">
                 <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Date</TableHead>
-                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Challan #</TableHead>
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Challan / Bill No</TableHead>
                 <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Client</TableHead>
                 <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 w-2/5">Items / Quantities</TableHead>
                 <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Status</TableHead>
@@ -127,7 +128,18 @@ export default function DeliveredDeliveries() {
                   return (
                     <TableRow key={group.challanNo} className="hover:bg-slate-50/40">
                       <TableCell className="border-2 border-slate-300 px-4 py-3 text-sm text-slate-700 font-medium whitespace-nowrap">{formatLocalDate(group.createdAt)}</TableCell>
-                      <TableCell className="border-2 border-slate-300 px-4 py-3 font-mono text-xs font-bold text-slate-900">{group.challanNo}</TableCell>
+                      <TableCell className="border-2 border-slate-300 px-4 py-3 font-medium">
+                        <div className="flex flex-col gap-1">
+                          <span className="font-mono text-xs font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 w-fit">
+                            {group.challanNo}
+                          </span>
+                          {group.billNo && (
+                            <span className="font-mono text-[10px] font-bold text-blue-800 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200 w-fit">
+                              Bill: {group.billNo}
+                            </span>
+                          )}
+                        </div>
+                      </TableCell>
                       <TableCell className="border-2 border-slate-300 px-4 py-3 text-sm min-w-[150px] max-w-[220px] break-words">
                         {renderCustomer(group.customer)}
                         <div className="text-[10px] text-muted-foreground mt-1">{group.clientPhone}</div>
