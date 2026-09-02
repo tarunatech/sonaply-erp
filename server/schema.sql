@@ -106,6 +106,7 @@ CREATE TABLE IF NOT EXISTS challans (
   is_cancelled BOOLEAN DEFAULT FALSE,
   cancelled_at TIMESTAMP,
   is_built BOOLEAN DEFAULT FALSE,
+  bill_no TEXT,
   restored_qty INTEGER,
   is_challan_generated BOOLEAN DEFAULT FALSE,
   status TEXT DEFAULT 'Delivered'

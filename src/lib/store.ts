@@ -103,6 +103,7 @@ export interface Challan {
   notes?: string;
   isPrinted?: boolean;
   isBuilt?: boolean;
+  billNo?: string;
   isChallanGenerated?: boolean;
   isCancelled?: boolean;
   cancelledAt?: string;
@@ -241,6 +242,7 @@ const mapChallan = (c: any): Challan => ({
   notes: c.notes,
   isPrinted: c.is_printed,
   isBuilt: c.is_built,
+  billNo: c.bill_no || "",
   isChallanGenerated: c.is_challan_generated,
   isCancelled: c.is_cancelled,
   cancelledAt: c.cancelled_at,
@@ -581,6 +583,7 @@ export const updateChallan = (id: string, updates: Partial<Challan>) => {
   if (updates.notes !== undefined) body.notes = updates.notes;
   if (updates.isPrinted !== undefined) body.is_printed = updates.isPrinted;
   if (updates.isBuilt !== undefined) body.is_built = updates.isBuilt;
+  if (updates.billNo !== undefined) body.bill_no = updates.billNo;
   if (updates.isChallanGenerated !== undefined) body.is_challan_generated = updates.isChallanGenerated;
   if (updates.stockCategory !== undefined)
     body.stock_category = updates.stockCategory;
@@ -630,6 +633,11 @@ export const confirmChallanGroup = (challanNo: string) =>
   request<any>(`/challans/group/${encodeURIComponent(challanNo)}/confirm`, { method: "PUT" });
 export const deliverChallanGroup = (challanNo: string) =>
   request<any>(`/challans/group/${encodeURIComponent(challanNo)}/deliver`, { method: "PUT" });
+export const updateChallanGroupBillNo = (challanNo: string, billNo: string) =>
+  request<any>(`/challans/group/${encodeURIComponent(challanNo)}/bill`, {
+    method: "PUT",
+    body: JSON.stringify({ billNo }),
+  });
 // Users
 export const getUsers = () => request<User[]>("/users");
 export const addUser = (u: Omit<User, "id">) =>

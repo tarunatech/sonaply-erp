@@ -34,34 +34,37 @@ const getBatchStatusInfo = (b?: StockBatch) => {
   if (b.isCancelled) {
     return {
       label: 'Dead Stock',
-      bgClass: 'bg-red-100/90 text-red-950 border-red-300',
-      badgeClass: 'text-[10px] font-bold text-red-700 bg-red-100 px-1.5 py-0.5 rounded border border-red-300',
-      rowClass: 'bg-red-50/80 border-red-200 text-red-950',
-      inputClass: 'bg-red-50/80 border-red-300 text-red-950 focus-visible:ring-red-400 font-semibold',
-      sugClass: 'bg-red-50 hover:bg-red-100 text-red-950 border-red-200',
-      textColor: 'text-red-950 font-bold',
+      bgClass: 'bg-red-200 text-red-950 border-red-400',
+      badgeClass: 'text-[10px] font-bold text-white bg-red-600 px-1.5 py-0.5 rounded shadow-xs tracking-wide',
+      rowClass: 'bg-red-100/90 border-red-300 text-red-950',
+      inputClass: 'bg-red-100 border-red-400 text-red-950 focus-visible:ring-red-500 font-bold',
+      sugClass: 'bg-red-100 hover:bg-red-200 text-red-950 border-red-200',
+      activeSugClass: 'bg-red-200 text-red-950 ring-2 ring-red-400 border-red-300 font-bold',
+      textColor: 'text-red-900 font-bold',
     };
   }
   if (b.isNil) {
     return {
       label: 'Not next Folder',
-      bgClass: 'bg-blue-100/90 text-blue-950 border-blue-300',
-      badgeClass: 'text-[10px] font-bold text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded border border-blue-300',
-      rowClass: 'bg-blue-50/80 border-blue-200 text-blue-950',
-      inputClass: 'bg-blue-50/80 border-blue-300 text-blue-950 focus-visible:ring-blue-400 font-semibold',
-      sugClass: 'bg-blue-50 hover:bg-blue-100 text-blue-950 border-blue-200',
-      textColor: 'text-blue-950 font-bold',
+      bgClass: 'bg-blue-200 text-blue-950 border-blue-400',
+      badgeClass: 'text-[10px] font-bold text-white bg-blue-600 px-1.5 py-0.5 rounded shadow-xs tracking-wide',
+      rowClass: 'bg-blue-100/90 border-blue-300 text-blue-950',
+      inputClass: 'bg-blue-100 border-blue-400 text-blue-950 focus-visible:ring-blue-500 font-bold',
+      sugClass: 'bg-blue-100 hover:bg-blue-200 text-blue-950 border-blue-200',
+      activeSugClass: 'bg-blue-200 text-blue-950 ring-2 ring-blue-400 border-blue-300 font-bold',
+      textColor: 'text-blue-900 font-bold',
     };
   }
   if (b.isDeadStock) {
     return {
       label: 'Nil',
-      bgClass: 'bg-slate-200/90 text-slate-900 border-slate-300',
-      badgeClass: 'text-[10px] font-bold text-slate-700 bg-slate-200 px-1.5 py-0.5 rounded border border-slate-300',
-      rowClass: 'bg-slate-100/80 border-slate-300 text-slate-900',
-      inputClass: 'bg-slate-100/80 border-slate-300 text-slate-900 focus-visible:ring-slate-400 font-semibold',
-      sugClass: 'bg-slate-100 hover:bg-slate-200 text-slate-900 border-slate-300',
-      textColor: 'text-slate-900 font-bold',
+      bgClass: 'bg-slate-300 text-slate-900 border-slate-400',
+      badgeClass: 'text-[10px] font-bold text-white bg-slate-700 px-1.5 py-0.5 rounded shadow-xs tracking-wide',
+      rowClass: 'bg-slate-200/90 border-slate-300 text-slate-900',
+      inputClass: 'bg-slate-200 border-slate-400 text-slate-900 focus-visible:ring-slate-500 font-bold',
+      sugClass: 'bg-slate-200 hover:bg-slate-300 text-slate-900 border-slate-300',
+      activeSugClass: 'bg-slate-300 text-slate-900 ring-2 ring-slate-500 border-slate-400 font-bold',
+      textColor: 'text-slate-950 font-bold',
     };
   }
   return null;
@@ -868,7 +871,16 @@ export default function SalesPage() {
                   const selectedStatusInfo = getBatchStatusInfo(selectedBatch);
 
                   return (
-                    <div key={index} className="grid grid-cols-12 gap-3 items-start relative overflow-visible px-2 py-2 border-b last:border-0">
+                    <div 
+                      key={index} 
+                      className={`grid grid-cols-12 gap-3 items-start relative overflow-visible px-2 py-2 border-b last:border-0 rounded transition-colors ${
+                        selectedStatusInfo ? (
+                          selectedBatch?.isCancelled ? 'bg-red-50/60 border-red-200' :
+                          selectedBatch?.isNil ? 'bg-blue-50/60 border-blue-200' :
+                          selectedBatch?.isDeadStock ? 'bg-slate-100/70 border-slate-300' : ''
+                        ) : ''
+                      }`}
+                    >
                       <div className="col-span-4 relative min-w-0">
                         <Input
                           value={item.productName}
@@ -934,11 +946,14 @@ export default function SalesPage() {
                                   {sugList.map((sug, i) => {
                                     const { batch: b, category, label } = sug;
                                     const statusInfo = getBatchStatusInfo(b);
+                                    const isSelected = selectedSuggestionIndex === i;
                                     return (
                                       <div 
                                         key={`${b.id}-${category}-${i}`} 
-                                        className={`px-3 py-2 cursor-pointer text-sm border-b last:border-0 ${
-                                          selectedSuggestionIndex === i ? 'bg-accent' : statusInfo ? statusInfo.sugClass : 'hover:bg-accent text-popover-foreground'
+                                        className={`px-3 py-2 cursor-pointer text-sm border-b last:border-0 transition-colors ${
+                                          isSelected
+                                            ? (statusInfo ? statusInfo.activeSugClass : 'bg-accent text-popover-foreground')
+                                            : (statusInfo ? statusInfo.sugClass : 'hover:bg-accent text-popover-foreground')
                                         }`}
                                         onMouseDown={(e) => {
                                           e.preventDefault();
@@ -959,7 +974,7 @@ export default function SalesPage() {
                                         }}
                                       >
                                         <div className="flex items-center justify-between gap-1">
-                                          <div className={`font-semibold ${statusInfo ? statusInfo.textColor : 'text-primary'}`}>
+                                          <div className={`font-bold ${statusInfo ? statusInfo.textColor : 'text-primary'}`}>
                                             {b.productName}
                                           </div>
                                           <div className="flex items-center gap-1.5 shrink-0">
@@ -975,18 +990,18 @@ export default function SalesPage() {
                                             )}
                                           </div>
                                         </div>
-                                        <div className="text-xs text-muted-foreground mt-0.5 font-medium">
-                                          Batch: {b.batchNumber} | <span className="text-blue-600 font-bold bg-blue-50 px-1 rounded">{label}</span>
+                                        <div className={`text-xs mt-0.5 font-medium ${statusInfo ? 'text-slate-700' : 'text-muted-foreground'}`}>
+                                          Batch: <span className="font-semibold text-slate-800">{b.batchNumber}</span> | <span className="text-blue-700 font-bold bg-blue-50 px-1 rounded">{label}</span>
                                         </div>
-                                        <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-xs text-muted-foreground mt-1 bg-muted/30 p-1 rounded">
+                                        <div className={`flex flex-wrap gap-x-2 gap-y-0.5 text-xs mt-1 p-1 rounded font-medium ${statusInfo ? 'bg-black/5 text-slate-800' : 'text-muted-foreground bg-muted/30'}`}>
                                           {category === 'Available' && (
-                                            <span>Avail: <span className="font-semibold text-foreground">{b.availableQty}</span></span>
+                                            <span>Avail: <span className="font-bold text-slate-900">{b.availableQty}</span></span>
                                           )}
                                           {category === 'Display' && (
-                                            <span>Disp: <span className="font-semibold text-foreground">{b.displayQty || 0}</span></span>
+                                            <span>Disp: <span className="font-bold text-slate-900">{b.displayQty || 0}</span></span>
                                           )}
                                           {category === 'Damage' && (
-                                            <span>Dmg: <span className="font-semibold text-foreground">{b.damageQty || 0}</span></span>
+                                            <span>Dmg: <span className="font-bold text-slate-900">{b.damageQty || 0}</span></span>
                                           )}
                                         </div>
                                       </div>
@@ -1001,8 +1016,8 @@ export default function SalesPage() {
                           </div>
                         )}
                         {item.isProductSelected && item.productName && (
-                          <div className={`text-[10px] text-muted-foreground mt-1 ml-1 flex flex-col gap-1 p-1.5 rounded-sm border ${
-                            selectedStatusInfo ? selectedStatusInfo.rowClass : 'bg-blue-50/50 border-blue-100/50'
+                          <div className={`text-[10px] mt-1.5 ml-0.5 flex flex-col gap-1 p-2 rounded-md border shadow-2xs ${
+                            selectedStatusInfo ? selectedStatusInfo.rowClass : 'text-muted-foreground bg-blue-50/50 border-blue-100/50'
                           }`}>
                             {(() => {
                               const batch = selectedBatch;
@@ -1023,13 +1038,13 @@ export default function SalesPage() {
                                       )}
                                     </div>
                                     {batch ? (
-                                      <span className="text-blue-700 text-right">
+                                      <span className={`text-right font-bold ${selectedStatusInfo ? 'text-slate-900' : 'text-blue-700'}`}>
                                         Avail: {batch.availableQty} | Disp: {batch.displayQty || 0} | Dmg: {batch.damageQty}
                                       </span>
                                     ) : null}
                                   </div>
                                   {batch?.description && (
-                                    <div className="text-[11px] text-slate-700 font-medium italic bg-white px-2 py-0.5 rounded border border-slate-200 text-left">
+                                    <div className="text-[11px] text-slate-800 font-medium italic bg-white/90 px-2 py-0.5 rounded border border-slate-300 text-left mt-0.5">
                                       Desc: {batch.description}
                                     </div>
                                   )}
