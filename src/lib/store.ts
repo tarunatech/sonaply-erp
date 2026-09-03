@@ -100,6 +100,7 @@ export interface Challan {
   batchNo: string;
   quantity: number;
   createdAt: string;
+  updatedAt?: string;
   notes?: string;
   isPrinted?: boolean;
   isBuilt?: boolean;
@@ -239,6 +240,7 @@ const mapChallan = (c: any): Challan => ({
   batchNo: c.batch_no,
   quantity: Number(c.quantity || 0),
   createdAt: c.created_at,
+  updatedAt: c.updated_at || c.created_at,
   notes: c.notes,
   isPrinted: c.is_printed,
   isBuilt: c.is_built,

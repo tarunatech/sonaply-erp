@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { addSale, addSaleBulk, addClient, getBatches, getClients, getSales, addHold, updateSale, deleteSale, exportCSV, confirmSale, deliverSale, updateChallanGroup, Sale, Client, StockBatch, generateWhatsAppLink, getLocalDateString } from "@/lib/store";
+import { addSale, addSaleBulk, addClient, getBatches, getClients, getSales, addHold, updateSale, deleteSale, deleteChallanGroup, exportCSV, confirmSale, deliverSale, updateChallanGroup, Sale, Client, StockBatch, generateWhatsAppLink, getLocalDateString } from "@/lib/store";
 import { Hand } from "lucide-react";
 
 import { printElement } from "@/lib/print";
@@ -492,7 +492,7 @@ export default function SalesPage() {
 
     const selectedClient = selectedClientId
       ? uniqueClients.find(c => c.id === selectedClientId)
-      : filteredClients.find(c => c.name === clientName);
+      : filteredClients.find(c => c.name.toLowerCase().trim() === clientName.toLowerCase().trim());
     if (!selectedClient) {
       toast({ title: "Please select an existing client from the suggestions", variant: "destructive" }); return;
     }
@@ -509,6 +509,27 @@ export default function SalesPage() {
 
     setIsSubmitting(true);
     try {
+      // If moving an existing challan/order to Hold, delete old sales and challans first
+      if (editingChallanNumber) {
+        const associatedSalesIds = Array.from(
+          new Set(
+            items
+              .map((it) => it.salesId)
+              .concat(
+                sales
+                  .filter((s) => s.orderNo === editingChallanNumber)
+                  .map((s) => s.id)
+              )
+              .filter(Boolean) as string[]
+          )
+        );
+
+        for (const sId of associatedSalesIds) {
+          await deleteSale(sId).catch(() => {});
+        }
+        await deleteChallanGroup(editingChallanNumber).catch(() => {});
+      }
+
       for (const item of validItems) {
         await addHold({
           clientName,
@@ -521,16 +542,30 @@ export default function SalesPage() {
         });
       }
 
-      toast({ title: "Products put on hold!" });
+      toast({
+        title: editingChallanNumber ? "Order moved to Hold!" : "Products put on hold!",
+        description: editingChallanNumber
+          ? `Order ${editingChallanNumber} has been moved to Hold successfully.`
+          : undefined,
+      });
       window.dispatchEvent(new CustomEvent("erp-stock-updated"));
       
       // Reset form
       setClientName('');
       setClientPhone('');
       setItems([{ ...defaultItem }]);
+      setNarration('');
       setSelectedClientId(null);
-      refreshSales(); // To refresh batches
-      refreshClients();
+
+      if (editingChallanNumber) {
+        const dest = returnTo || '/challans';
+        setEditingChallanNumber(null);
+        setReturnTo(null);
+        navigate(dest);
+      } else {
+        refreshSales(); // To refresh batches
+        refreshClients();
+      }
     } catch (err: any) {
       toast({ title: "Hold Failed", description: err.message || "Failed to put on hold", variant: "destructive" });
     } finally {
@@ -1170,6 +1205,23 @@ export default function SalesPage() {
                 <div className="flex justify-end gap-3 shrink-0">
                   <Button type="button" variant="outline" onClick={handleCancelEdit} disabled={isSubmitting}>
                     Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 border-amber-200"
+                    onClick={handleHold}
+                    disabled={isSubmitting}
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Moving to Hold...
+                      </>
+                    ) : (
+                      <>
+                        <Hand className="mr-2 h-4 w-4" /> Move to Hold
+                      </>
+                    )}
                   </Button>
                   <Button type="button" onClick={handleSaveChallanEdit} disabled={isSubmitting} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold shadow-xs">
                     {isSubmitting ? (
