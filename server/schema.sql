@@ -109,7 +109,8 @@ CREATE TABLE IF NOT EXISTS challans (
   bill_no TEXT,
   restored_qty INTEGER,
   is_challan_generated BOOLEAN DEFAULT FALSE,
-  status TEXT DEFAULT 'Delivered'
+  status TEXT DEFAULT 'Delivered',
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
  
 CREATE TABLE IF NOT EXISTS clients (

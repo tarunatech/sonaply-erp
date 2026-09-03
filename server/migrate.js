@@ -188,7 +188,8 @@ async function migrate() {
         bill_no TEXT,
         restored_qty INTEGER,
         is_challan_generated BOOLEAN DEFAULT FALSE,
-        status TEXT DEFAULT 'Delivered'
+        status TEXT DEFAULT 'Delivered',
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
 
@@ -341,6 +342,8 @@ async function migrate() {
     await db.query('ALTER TABLE batches ADD COLUMN IF NOT EXISTS stock_maintain INTEGER DEFAULT 0');
     await db.query("ALTER TABLE sales ADD COLUMN IF NOT EXISTS stock_category TEXT DEFAULT 'Available'");
     await db.query("ALTER TABLE challans ADD COLUMN IF NOT EXISTS stock_category TEXT DEFAULT 'Available'");
+    await db.query("ALTER TABLE challans ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+    await db.query("UPDATE challans SET updated_at = created_at WHERE updated_at IS NULL");
 
     // Ensure default integer / text values for consistency
     await db.query('UPDATE batches SET display_qty = 0 WHERE display_qty IS NULL');

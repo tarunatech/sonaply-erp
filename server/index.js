@@ -41,6 +41,9 @@ async function ensureChallanCancelColumns() {
   await db.query(
     "ALTER TABLE challans ADD COLUMN IF NOT EXISTS is_challan_generated BOOLEAN DEFAULT FALSE",
   );
+  await db.query(
+    "ALTER TABLE challans ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+  );
 }
 
 ensureChallanCancelColumns().catch((err) => {
@@ -595,10 +598,9 @@ app.delete("/api/purchases/:id", async (req, res) => {
 });
 
 // --- Helper for Challan Numbering ---
-async function getNextChallanNumber(prefix) {
+async function getNextChallanNumber(prefix = "CH-") {
   const result = await db.query(
-    `SELECT challan_no FROM challans WHERE challan_no LIKE $1`,
-    [`${prefix}%`],
+    `SELECT challan_no FROM challans WHERE challan_no LIKE 'CH-%' OR challan_no LIKE 'P-%' OR challan_no LIKE 'CH%'`,
   );
   let maxNum = 0;
   for (const row of result.rows) {
@@ -976,7 +978,11 @@ app.post("/api/sales/bulk", async (req, res) => {
       challanNum = await getNextChallanNumber("CH-");
     }
     if (hasP) {
-      pChallanNum = await getNextChallanNumber("P-");
+      if (hasCH && challanNum) {
+        pChallanNum = challanNum.replace(/^CH-?/, "P-");
+      } else {
+        pChallanNum = await getNextChallanNumber("P-");
+      }
     }
 
     const createdSales = [];
@@ -1205,8 +1211,9 @@ app.post("/api/sales", async (req, res) => {
     // 4. Create challan(s) based on stock availability
     //    - fulfillableQty > 0 → CH-xxxx (visible in ChallanPage, ready to confirm+deliver)
     //    - pendingRemaining > 0 → P-xxxx  (visible in PendingDeliveries, needs stock before delivery)
+    let challanNum = null;
     if (fulfillableQty > 0) {
-      const challanNum = await getNextChallanNumber("CH-");
+      challanNum = await getNextChallanNumber("CH-");
       await db.query(
         `INSERT INTO challans 
         (challan_no, sales_id, customer, client_phone, product, batch_no, quantity, status, created_at, notes, stock_category, is_printed, is_built, is_cancelled) 
@@ -1226,7 +1233,9 @@ app.post("/api/sales", async (req, res) => {
     }
 
     if (pendingRemaining > 0) {
-      const pChallanNum = await getNextChallanNumber("P-");
+      const pChallanNum = challanNum
+        ? challanNum.replace(/^CH-?/, "P-")
+        : await getNextChallanNumber("P-");
       await db.query(
         `INSERT INTO challans 
         (challan_no, sales_id, customer, client_phone, product, batch_no, quantity, status, created_at, notes, stock_category, is_printed, is_built, is_cancelled) 
@@ -1313,7 +1322,14 @@ app.put("/api/sales/:id", async (req, res) => {
         updates.status = "Partial";
 
         // Create a P-draft challan for the extra pending quantity
-        const pChallanNum = await getNextChallanNumber("P-");
+        const existingCH = await db.query(
+          "SELECT challan_no FROM challans WHERE sales_id = $1 AND (challan_no LIKE 'CH-%' OR challan_no LIKE 'CH%') AND is_cancelled = FALSE ORDER BY id ASC LIMIT 1",
+          [id],
+        );
+        const pChallanNum =
+          existingCH.rows.length > 0
+            ? existingCH.rows[0].challan_no.replace(/^CH-?/, "P-")
+            : await getNextChallanNumber("P-");
         await db.query(
           `INSERT INTO challans 
           (challan_no, sales_id, customer, client_phone, product, batch_no, quantity, status, created_at, notes, stock_category, is_printed, is_built, is_cancelled) 
@@ -1404,7 +1420,14 @@ app.put("/api/sales/:id", async (req, res) => {
             await db.query("DELETE FROM challans WHERE id = $1", [pChallan.id]);
           }
         } else if (newPending > 0) {
-          const pChallanNum = await getNextChallanNumber("P-");
+          const existingCH = await db.query(
+            "SELECT challan_no FROM challans WHERE sales_id = $1 AND (challan_no LIKE 'CH-%' OR challan_no LIKE 'CH%') AND is_cancelled = FALSE ORDER BY id ASC LIMIT 1",
+            [id],
+          );
+          const pChallanNum =
+            existingCH.rows.length > 0
+              ? existingCH.rows[0].challan_no.replace(/^CH-?/, "P-")
+              : await getNextChallanNumber("P-");
           await db.query(
             `INSERT INTO challans 
             (challan_no, sales_id, customer, client_phone, product, batch_no, quantity, status, created_at, notes, stock_category, is_printed, is_built, is_cancelled) 
@@ -1604,7 +1627,14 @@ app.put("/api/sales/:id", async (req, res) => {
           } else if (remainingQty > 0) {
             // No P-draft exists yet but there is extra qty (e.g. user increased ordered qty above CH fulfilled qty)
             // Create a new P-draft challan for the extra unhandled pending quantity
-            const pChallanNum = await getNextChallanNumber("P-");
+            const existingCH = await db.query(
+              "SELECT challan_no FROM challans WHERE sales_id = $1 AND (challan_no LIKE 'CH-%' OR challan_no LIKE 'CH%') AND is_cancelled = FALSE ORDER BY id ASC LIMIT 1",
+              [id],
+            );
+            const pChallanNum =
+              existingCH.rows.length > 0
+                ? existingCH.rows[0].challan_no.replace(/^CH-?/, "P-")
+                : await getNextChallanNumber("P-");
             await db.query(
               `INSERT INTO challans 
               (challan_no, sales_id, customer, client_phone, product, batch_no, quantity, status, created_at, notes, stock_category, is_printed, is_built, is_cancelled) 
@@ -1818,9 +1848,9 @@ app.put("/api/sales/:id/confirm", async (req, res) => {
       "UPDATE sales SET status = 'Confirmed', updated_at = CURRENT_TIMESTAMP WHERE id = $1",
       [id],
     );
-    // Also update associated pending challans to Confirmed
+    // Also update associated pending challans to Confirmed and refresh updated_at
     await db.query(
-      "UPDATE challans SET status = 'Confirmed' WHERE sales_id = $1 AND status = 'Pending' AND is_cancelled = FALSE",
+      "UPDATE challans SET status = 'Confirmed', updated_at = CURRENT_TIMESTAMP WHERE sales_id = $1 AND status = 'Pending' AND is_cancelled = FALSE",
       [id],
     );
     await db.query("COMMIT");
@@ -2253,8 +2283,20 @@ app.post("/api/challans", async (req, res) => {
     const sale = saleRes.rows[0];
 
     // Generate challan number: CH-xxxx for immediate, P-xxxx for pending
-    const prefix = status === "Pending" ? "P-" : "CH-";
-    const challanNo = await getNextChallanNumber(prefix);
+    let challanNo;
+    if (status === "Pending") {
+      const existingCH = await db.query(
+        "SELECT challan_no FROM challans WHERE sales_id = $1 AND (challan_no LIKE 'CH-%' OR challan_no LIKE 'CH%') AND is_cancelled = FALSE ORDER BY id ASC LIMIT 1",
+        [sales_id],
+      );
+      if (existingCH.rows.length > 0) {
+        challanNo = existingCH.rows[0].challan_no.replace(/^CH-?/, "P-");
+      } else {
+        challanNo = await getNextChallanNumber("P-");
+      }
+    } else {
+      challanNo = await getNextChallanNumber("CH-");
+    }
 
     const result = await db.query(
       `INSERT INTO challans 
@@ -2458,7 +2500,14 @@ app.put("/api/challans/group/:challanNumber", async (req, res) => {
         return res.status(404).json({ error: "Challan or Order not found" });
       }
 
-      const pGroupNum = await getNextChallanNumber("P-");
+      const existingCH = await db.query(
+        "SELECT challan_no FROM challans WHERE sales_id = ANY($1::int[]) AND (challan_no LIKE 'CH-%' OR challan_no LIKE 'CH%') AND is_cancelled = FALSE ORDER BY id ASC LIMIT 1",
+        [salesRes.rows.map((s) => s.id)],
+      );
+      const pGroupNum =
+        existingCH.rows.length > 0
+          ? existingCH.rows[0].challan_no.replace(/^CH-?/, "P-")
+          : await getNextChallanNumber("P-");
       for (const s of salesRes.rows) {
         const unhandledQty = Number(s.pending_qty || s.ordered_qty || 0);
         if (unhandledQty > 0) {
@@ -2725,7 +2774,8 @@ app.put("/api/challans/group/:challanNumber", async (req, res) => {
             quantity = $5, 
             notes = $6, 
             stock_category = $7,
-            created_at = $8
+            created_at = $8,
+            updated_at = CURRENT_TIMESTAMP
            WHERE id = $9`,
           [
             finalCustomer,
@@ -2783,7 +2833,7 @@ app.put("/api/challans/group/:challanNumber", async (req, res) => {
         if (secondaryQty > 0) {
           if (counterRes.rows.length > 0) {
             await db.query(
-              "UPDATE challans SET quantity = $1, customer = $2, client_phone = $3, product = $4, batch_no = $5, stock_category = $6 WHERE id = $7",
+              "UPDATE challans SET quantity = $1, customer = $2, client_phone = $3, product = $4, batch_no = $5, stock_category = $6, updated_at = CURRENT_TIMESTAMP WHERE id = $7",
               [
                 secondaryQty,
                 finalCustomer,
@@ -2795,7 +2845,18 @@ app.put("/api/challans/group/:challanNumber", async (req, res) => {
               ],
             );
           } else {
-            const nextNum = await getNextChallanNumber(targetPrefix);
+            let nextNum;
+            if (targetPrefix === "P-") {
+              nextNum = challanNumber.startsWith("CH-")
+                ? challanNumber.replace("CH-", "P-")
+                : challanNumber.startsWith("CH")
+                  ? challanNumber.replace("CH", "P-")
+                  : await getNextChallanNumber("P-");
+            } else {
+              nextNum = challanNumber.startsWith("P-")
+                ? challanNumber.replace("P-", "CH-")
+                : await getNextChallanNumber("CH-");
+            }
             await db.query(
               `INSERT INTO challans
               (challan_no, sales_id, customer, client_phone, product, batch_no, quantity, status, created_at, notes, stock_category, is_printed, is_built, is_cancelled)
@@ -3118,7 +3179,14 @@ app.post("/api/challans/group/generate-pending", async (req, res) => {
     }
 
     // Generate a single P- draft challan number for all pending items in this order
-    const pGroupNum = await getNextChallanNumber("P-");
+    const existingCH = await db.query(
+      `SELECT challan_no FROM challans WHERE sales_id = ANY($1::int[]) AND (challan_no LIKE 'CH-%' OR challan_no LIKE 'CH%') AND is_cancelled = FALSE ORDER BY id ASC LIMIT 1`,
+      [salesRows.map((s) => s.id)],
+    );
+    const pGroupNum =
+      existingCH.rows.length > 0
+        ? existingCH.rows[0].challan_no.replace(/^CH-?/, "P-")
+        : await getNextChallanNumber("P-");
     const createdChallans = [];
 
     for (const sale of salesRows) {
@@ -3177,18 +3245,18 @@ app.put("/api/challans/group/:challanNumber/confirm", async (req, res) => {
         .status(404)
         .json({ error: "No confirmable challan items found." });
     }
-    // Update all items to Confirmed
+    // Update all items to Confirmed and refresh updated_at
     await db.query(
-      "UPDATE challans SET status = 'Confirmed' WHERE challan_no = $1 AND is_cancelled = FALSE AND status = 'Pending'",
+      "UPDATE challans SET status = 'Confirmed', updated_at = CURRENT_TIMESTAMP WHERE challan_no = $1 AND is_cancelled = FALSE AND status = 'Pending'",
       [challanNumber],
     );
-    // Update related sales to Confirmed (only if currently Pending)
+    // Update related sales to Confirmed (if Pending) and refresh updated_at on all related sales
     const salesIds = [
       ...new Set(challanRes.rows.map((c) => c.sales_id).filter(Boolean)),
     ];
     for (const sid of salesIds) {
       await db.query(
-        "UPDATE sales SET status = 'Confirmed', updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND status = 'Pending'",
+        "UPDATE sales SET status = CASE WHEN status = 'Pending' THEN 'Confirmed' ELSE status END, updated_at = CURRENT_TIMESTAMP WHERE id = $1",
         [sid],
       );
     }
@@ -3791,7 +3859,11 @@ app.delete("/api/holds/:id", async (req, res) => {
         challanNum = await getNextChallanNumber("CH-");
       }
       if (hasP) {
-        pChallanNum = await getNextChallanNumber("P-");
+        if (hasCH && challanNum) {
+          pChallanNum = challanNum.replace(/^CH-?/, "P-");
+        } else {
+          pChallanNum = await getNextChallanNumber("P-");
+        }
       }
 
       for (const details of itemsDetails) {

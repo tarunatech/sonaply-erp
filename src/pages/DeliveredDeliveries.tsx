@@ -76,12 +76,33 @@ export default function DeliveredDeliveries() {
         salesId: items[0].salesId,
       }))
       .sort((a, b) => {
-        const saleA = sales.find(s => s.id === a.salesId);
-        const saleB = sales.find(s => s.id === b.salesId);
-        const dateA = saleA?.updatedAt || a.createdAt || "";
-        const dateB = saleB?.updatedAt || b.createdAt || "";
-        const dateCompare = dateB.localeCompare(dateA);
-        if (dateCompare !== 0) return dateCompare;
+        const getGroupLatestTime = (group: typeof a) => {
+          let maxTime = 0;
+          for (const item of group.items) {
+            if (item.updatedAt) {
+              const t = new Date(item.updatedAt).getTime();
+              if (!isNaN(t) && t > maxTime) maxTime = t;
+            }
+            if (item.createdAt) {
+              const t = new Date(item.createdAt).getTime();
+              if (!isNaN(t) && t > maxTime) maxTime = t;
+            }
+            const sale = sales.find((s) => s.id === item.salesId);
+            if (sale?.updatedAt) {
+              const t = new Date(sale.updatedAt).getTime();
+              if (!isNaN(t) && t > maxTime) maxTime = t;
+            }
+            if (sale?.createdAt) {
+              const t = new Date(sale.createdAt).getTime();
+              if (!isNaN(t) && t > maxTime) maxTime = t;
+            }
+          }
+          return maxTime;
+        };
+
+        const timeA = getGroupLatestTime(a);
+        const timeB = getGroupLatestTime(b);
+        if (timeA !== timeB) return timeB - timeA;
         return b.challanNo.localeCompare(a.challanNo, undefined, { numeric: true, sensitivity: "base" });
       });
   }, [filteredChallans, sales]);
