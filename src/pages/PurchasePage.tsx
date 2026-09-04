@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { addPurchase, getPurchases, updatePurchase, deletePurchase, exportCSV, Purchase, getBatches, StockBatch, getLocalDateString, formatLocalDate } from "@/lib/store";
+import { addPurchase, getPurchases, updatePurchase, deletePurchase, exportCSV, Purchase, getBatches, StockBatch, getProducts, Product, getLocalDateString, formatLocalDate } from "@/lib/store";
 import { printElement } from "@/lib/print";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -86,6 +86,7 @@ export default function PurchasePage() {
   const addProductBtnRef = useRef<HTMLButtonElement>(null);
   const productInputsRef = useRef<(HTMLInputElement | null)[]>([]);
   const [allBatches, setAllBatches] = useState<StockBatch[]>([]);
+  const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [activeBatchIndex, setActiveBatchIndex] = useState<number | null>(null);
   const [selectedBatchSuggestionIndex, setSelectedBatchSuggestionIndex] = useState<number>(-1);
   const batchContainerRef = useRef<HTMLDivElement>(null);
@@ -115,6 +116,7 @@ export default function PurchasePage() {
   const refresh = useCallback(() => {
     getPurchases().then(setPurchases);
     getBatches().then(setAllBatches);
+    getProducts().then(setAllProducts);
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -126,8 +128,9 @@ export default function PurchasePage() {
     const list = new Set<string>();
     purchases.forEach(p => { if (p.productName) list.add(p.productName); });
     allBatches.forEach(b => { if (b.productName) list.add(b.productName); });
+    allProducts.forEach(pr => { if (pr.name) list.add(pr.name); });
     return Array.from(list).sort();
-  }, [purchases, allBatches]);
+  }, [purchases, allBatches, allProducts]);
 
   const filteredPurchases = useMemo(() => {
     return purchases.filter(p => {
@@ -248,14 +251,22 @@ export default function PurchasePage() {
   const updateItem = (index: number, key: keyof PurchaseItem, value: string | number) => {
     const newItems = [...items];
     newItems[index] = { ...newItems[index], [key]: value };
-    if (key === 'productName' && typeof value === 'string' && value.trim()) {
-      const match = allBatches.find(b => b.productName.toLowerCase().trim() === value.toLowerCase().trim());
-      if (match) {
-        if (!newItems[index].category && match.category) {
-          newItems[index].category = match.category;
+    if (key === 'productName' && typeof value === 'string') {
+      const trimmedValue = value.trim();
+      if (trimmedValue) {
+        const lower = trimmedValue.toLowerCase();
+        const matchBatch = allBatches.find(b => b.productName && b.productName.toLowerCase().trim() === lower);
+        const matchProduct = allProducts.find(pr => pr.name && pr.name.toLowerCase().trim() === lower);
+        const matchPurchase = purchases.find(p => p.productName && p.productName.toLowerCase().trim() === lower);
+
+        const foundCategory = matchBatch?.category || matchProduct?.category || matchPurchase?.category;
+        const foundBatch = matchBatch?.batchNumber || matchPurchase?.batchNumber;
+
+        if (foundCategory) {
+          newItems[index].category = foundCategory;
         }
-        if ((!newItems[index].batchNumber || newItems[index].batchNumber === '0') && match.batchNumber) {
-          newItems[index].batchNumber = match.batchNumber;
+        if (foundBatch && (!newItems[index].batchNumber || newItems[index].batchNumber === '0')) {
+          newItems[index].batchNumber = foundBatch;
         }
       }
     }

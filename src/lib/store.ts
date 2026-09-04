@@ -150,6 +150,14 @@ export interface Client {
   priceCategory: string;
   createdAt: string;
 }
+export interface ChallanNote {
+  id: string;
+  note: string;
+  status: "Pending" | "Completed";
+  createdBy?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
 
 const API_URL = "/api";
 
@@ -268,6 +276,15 @@ const mapPurchase = (p: any): Purchase => ({
       ? String(p.batch_number).trim()
       : "0",
   date: p.date,
+});
+
+const mapChallanNote = (n: any): ChallanNote => ({
+  id: n.id,
+  note: n.note,
+  status: n.status,
+  createdBy: n.created_by,
+  createdAt: n.created_at,
+  updatedAt: n.updated_at,
 });
 
 export const getProducts = () => request<Product[]>("/products");
@@ -713,6 +730,34 @@ export const downloadClientTemplate = () => {
   XLSX.utils.book_append_sheet(workbook, worksheet, "Clients Template");
   XLSX.writeFile(workbook, "client_import_template.xlsx");
 };
+
+// Challan Notes
+export const getChallanNotes = (status?: "Pending" | "Completed") => {
+  const query = status ? `?status=${status}` : "";
+  return request<any[]>(`/challan-notes${query}`).then((rows) =>
+    rows.map(mapChallanNote),
+  );
+};
+
+export const addChallanNote = (note: string, createdBy?: string) =>
+  request<any>("/challan-notes", {
+    method: "POST",
+    body: JSON.stringify({ note, createdBy }),
+  }).then(mapChallanNote);
+
+export const updateChallanNoteStatus = (
+  id: string,
+  status: "Pending" | "Completed",
+) =>
+  request<any>(`/challan-notes/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+  }).then(mapChallanNote);
+
+export const deleteChallanNote = (id: string) =>
+  request<{ success: boolean; deleted: any }>(`/challan-notes/${id}`, {
+    method: "DELETE",
+  });
 
 // Auth
 export const login = async (

@@ -234,6 +234,17 @@ async function migrate() {
       )
     `);
 
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS challan_notes (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        note TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'Pending' CHECK (status IN ('Pending', 'Completed')),
+        created_by TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
     // Seed initial admin user if no users exist
     await db.query(`
       INSERT INTO users (name, role, email, password) 
@@ -327,7 +338,7 @@ async function migrate() {
     }
 
     // 8. Alterations for recent schema additions
-    console.log('Step 8: Adding delivered_at, challan cancel/built/bill_no fields, sales_returns, display_qty, stock_category, and estimated_delivery_date...');
+    console.log('Step 8: Adding delivered_at, challan cancel/built/bill_no fields, sales_returns, challan_notes, display_qty, stock_category, and estimated_delivery_date...');
     await db.query('ALTER TABLE sales ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP');
     await db.query('ALTER TABLE sales ADD COLUMN IF NOT EXISTS estimated_delivery_date DATE');
     await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS is_cancelled BOOLEAN DEFAULT FALSE');
@@ -344,6 +355,16 @@ async function migrate() {
     await db.query("ALTER TABLE challans ADD COLUMN IF NOT EXISTS stock_category TEXT DEFAULT 'Available'");
     await db.query("ALTER TABLE challans ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
     await db.query("UPDATE challans SET updated_at = created_at WHERE updated_at IS NULL");
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS challan_notes (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        note TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'Pending' CHECK (status IN ('Pending', 'Completed')),
+        created_by TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
 
     // Ensure default integer / text values for consistency
     await db.query('UPDATE batches SET display_qty = 0 WHERE display_qty IS NULL');
@@ -650,6 +671,8 @@ async function migrate() {
     await db.query(`CREATE INDEX IF NOT EXISTS idx_holds_status ON holds(status)`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_purchases_prod_batch ON purchases(LOWER(TRIM(product_name)), LOWER(TRIM(batch_number)))`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_purchases_date ON purchases(date DESC)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_challan_notes_status ON challan_notes(status)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_challan_notes_created_at ON challan_notes(created_at DESC)`);
 
     // 14. Sync products table from existing batches, purchases, and sales
     console.log('Step 14: Syncing products table from batches, purchases, and sales...');
