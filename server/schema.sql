@@ -135,7 +135,44 @@ CREATE TABLE IF NOT EXISTS holds (
   status TEXT DEFAULT 'Active'
 );
 
+CREATE TABLE IF NOT EXISTS challan_notes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  note TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'Pending' CHECK (status IN ('Pending', 'Completed')),
+  created_by TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Seed initial admin user
 INSERT INTO users (name, role, email, password) 
 VALUES ('Admin', 'Admin', 'admin@erp.com', 'admin123')
 ON CONFLICT (email) DO NOTHING;
+
+-- Indexes for performance
+CREATE INDEX IF NOT EXISTS idx_sales_order_no ON sales(order_no);
+CREATE INDEX IF NOT EXISTS idx_sales_customer ON sales(customer);
+CREATE INDEX IF NOT EXISTS idx_sales_estimated_delivery ON sales(estimated_delivery_date);
+CREATE INDEX IF NOT EXISTS idx_sales_order_date ON sales(order_date);
+CREATE INDEX IF NOT EXISTS idx_sales_status ON sales(status);
+CREATE INDEX IF NOT EXISTS idx_challans_sales_id ON challans(sales_id);
+CREATE INDEX IF NOT EXISTS idx_challans_customer ON challans(customer);
+CREATE INDEX IF NOT EXISTS idx_challans_product ON challans(product);
+CREATE INDEX IF NOT EXISTS idx_challans_cancelled ON challans(is_cancelled);
+CREATE INDEX IF NOT EXISTS idx_challans_challan_no ON challans(challan_no);
+CREATE INDEX IF NOT EXISTS idx_challans_created_at ON challans(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_batches_product_name ON batches(product_name);
+CREATE INDEX IF NOT EXISTS idx_batches_category_lower ON batches(LOWER(category));
+CREATE INDEX IF NOT EXISTS idx_batches_date_desc ON batches(date DESC);
+CREATE INDEX IF NOT EXISTS idx_batches_prod_batch ON batches(LOWER(product_name), LOWER(batch_number));
+CREATE INDEX IF NOT EXISTS idx_products_name_lower ON products(LOWER(TRIM(name)));
+CREATE INDEX IF NOT EXISTS idx_sales_returns_product_name ON sales_returns(LOWER(TRIM(product_name)));
+CREATE INDEX IF NOT EXISTS idx_sales_returns_client_name ON sales_returns(LOWER(TRIM(client_name)));
+CREATE INDEX IF NOT EXISTS idx_clients_name_lower ON clients(LOWER(TRIM(name)));
+CREATE INDEX IF NOT EXISTS idx_clients_phone ON clients(TRIM(phone)) WHERE phone IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_holds_client_name ON holds(LOWER(TRIM(client_name)));
+CREATE INDEX IF NOT EXISTS idx_holds_status ON holds(status);
+CREATE INDEX IF NOT EXISTS idx_purchases_prod_batch ON purchases(LOWER(TRIM(product_name)), LOWER(TRIM(batch_number)));
+CREATE INDEX IF NOT EXISTS idx_purchases_date ON purchases(date DESC);
+CREATE INDEX IF NOT EXISTS idx_challan_notes_status ON challan_notes(status);
+CREATE INDEX IF NOT EXISTS idx_challan_notes_created_at ON challan_notes(created_at DESC);

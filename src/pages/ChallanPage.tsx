@@ -6,25 +6,27 @@ import {
   getBatches,
   getClients,
   updateChallan,
-  updateChallanGroup,
   updateChallanGroupBillNo,
-  deleteChallan,
   deleteChallanGroup,
   cancelChallanGroup,
-  confirmChallanGroup,
   deliverChallanGroup,
   exportCSV,
+  getChallanNotes,
+  addChallanNote,
+  updateChallanNoteStatus,
+  deleteChallanNote,
+  getCurrentUser,
   Challan,
   Sale,
   StockBatch,
   Client,
+  ChallanNote,
 } from "@/lib/store";
 import { printElement } from "@/lib/print";
 import { transliterateToGujarati } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Table,
   TableBody,
@@ -45,6 +47,8 @@ import {
   Search,
   Plus,
   User,
+  Bell,
+  Clock,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -55,13 +59,6 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 
@@ -84,6 +81,11 @@ export default function ChallanPage() {
   const [sales, setSales] = useState<Sale[]>([]);
   const [batches, setBatches] = useState<StockBatch[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
+  const [challanNotes, setChallanNotes] = useState<ChallanNote[]>([]);
+  const [notesModalOpen, setNotesModalOpen] = useState(false);
+  const [newNoteText, setNewNoteText] = useState("");
+  const [isAddingNote, setIsAddingNote] = useState(false);
+  const [isUpdatingNote, setIsUpdatingNote] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [billInputs, setBillInputs] = useState<Record<string, string>>({});
   const [confirmDeliverGroup, setConfirmDeliverGroup] = useState<any | null>(null);
@@ -91,17 +93,70 @@ export default function ChallanPage() {
   const { toast } = useToast();
 
   const refresh = useCallback(() => {
-    Promise.all([getChallans(), getSales(), getBatches(), getClients()]).then(([c, s, b, cl]) => {
+    Promise.all([
+      getChallans(),
+      getSales(),
+      getBatches(),
+      getClients(),
+      getChallanNotes(),
+    ]).then(([c, s, b, cl, cn]) => {
       setChallans(c);
       setSales(s);
       setBatches(b);
       setClients(cl);
+      setChallanNotes(cn);
     });
   }, []);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  const pendingNotes = useMemo(() => {
+    return challanNotes.filter((n) => n.status === "Pending");
+  }, [challanNotes]);
+
+  const pendingNotesCount = pendingNotes.length;
+
+  const handleAddNote = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!newNoteText.trim()) return;
+    setIsAddingNote(true);
+    try {
+      const user = getCurrentUser();
+      const created = await addChallanNote(newNoteText.trim(), user?.name || "Admin");
+      setChallanNotes((prev) => [created, ...prev]);
+      setNewNoteText("");
+      toast({ title: "Note Added", description: "New note saved in Pending status." });
+    } catch (err: any) {
+      toast({ title: "Failed to add note", description: err.message, variant: "destructive" });
+    } finally {
+      setIsAddingNote(false);
+    }
+  };
+
+  const handleCompleteNote = async (id: string) => {
+    setIsUpdatingNote(id);
+    try {
+      const updated = await updateChallanNoteStatus(id, "Completed");
+      setChallanNotes((prev) => prev.map((n) => (n.id === id ? updated : n)));
+      toast({ title: "Note Completed", description: "Note marked as completed and removed from modal." });
+    } catch (err: any) {
+      toast({ title: "Failed to update note", description: err.message, variant: "destructive" });
+    } finally {
+      setIsUpdatingNote(null);
+    }
+  };
+
+  const handleDeleteNote = async (id: string) => {
+    try {
+      await deleteChallanNote(id);
+      setChallanNotes((prev) => prev.filter((n) => n.id !== id));
+      toast({ title: "Note Deleted" });
+    } catch (err: any) {
+      toast({ title: "Failed to delete note", description: err.message, variant: "destructive" });
+    }
+  };
 
   const groupedChallans = useMemo(() => {
     const groups: Record<string, Challan[]> = {};
@@ -492,6 +547,20 @@ export default function ChallanPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold text-primary">Delivery Challans</h1>
         <div className="flex flex-wrap gap-2 items-center">
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => setNotesModalOpen(true)}
+            className="relative h-9 w-9 border-slate-300 hover:bg-slate-100 shadow-2xs shrink-0"
+            title="Challan Notes & Notifications"
+          >
+            <Bell className="h-4 w-4 text-slate-700" />
+            {pendingNotesCount > 0 && (
+              <span className="absolute -top-1.5 -right-1.5 inline-flex items-center justify-center px-1 py-0.5 text-[10px] font-bold leading-none text-white bg-red-600 rounded-full animate-pulse shadow-xs min-w-[18px] h-[18px] text-center border-2 border-white">
+                {pendingNotesCount}
+              </span>
+            )}
+          </Button>
           <div className="relative w-full sm:w-72">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
@@ -827,6 +896,132 @@ export default function ChallanPage() {
               disabled={isDelivering}
             >
               {isDelivering ? "Delivering..." : "Yes, Deliver Order"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Challan Notes & Notifications Modal */}
+      <Dialog open={notesModalOpen} onOpenChange={setNotesModalOpen}>
+        <DialogContent className="sm:max-w-lg max-h-[85vh] flex flex-col p-6">
+          <DialogHeader>
+            <DialogTitle className="flex items-center justify-between gap-2 text-slate-900 pr-6">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-lg bg-amber-50 border border-amber-200">
+                  <Bell className="h-5 w-5 text-amber-600" />
+                </div>
+                <div>
+                  <div className="text-lg font-bold">Challan Notes</div>
+                  <DialogDescription className="text-xs text-slate-500">
+                    Write admin notes & manage pending tasks for delivery challans.
+                  </DialogDescription>
+                </div>
+              </div>
+              {pendingNotesCount > 0 ? (
+                <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-300 font-bold px-2.5 py-0.5">
+                  {pendingNotesCount} Pending
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-300 font-semibold px-2.5 py-0.5">
+                  All Caught Up
+                </Badge>
+              )}
+            </DialogTitle>
+          </DialogHeader>
+
+          {/* Add Note Form */}
+          <form onSubmit={handleAddNote} className="space-y-2 mt-2">
+            <div className="flex gap-2">
+              <Input
+                placeholder="Write a note (e.g., Check driver delivery for CH-102)..."
+                value={newNoteText}
+                onChange={(e) => setNewNoteText(e.target.value)}
+                className="flex-1 text-sm bg-white"
+                disabled={isAddingNote}
+                autoFocus
+              />
+              <Button
+                type="submit"
+                disabled={!newNoteText.trim() || isAddingNote}
+                className="bg-primary hover:bg-primary/90 text-white font-semibold shrink-0"
+              >
+                <Plus className="h-4 w-4 mr-1" />
+                {isAddingNote ? "Adding..." : "Add Note"}
+              </Button>
+            </div>
+          </form>
+
+          {/* Pending Notes List */}
+          <div className="flex-1 overflow-y-auto mt-4 space-y-2.5 pr-1 max-h-[50vh]">
+            <div className="text-xs font-bold text-slate-600 uppercase tracking-wider flex items-center justify-between">
+              <span>Pending Notes ({pendingNotes.length})</span>
+            </div>
+
+            {pendingNotes.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-8 px-4 text-center rounded-lg border-2 border-dashed border-slate-200 bg-slate-50/50">
+                <CheckCircle2 className="h-10 w-10 text-emerald-500/80 mb-2" />
+                <p className="text-sm font-semibold text-slate-700">No pending notes</p>
+                <p className="text-xs text-slate-500 mt-0.5">Write a new note above to track pending items.</p>
+              </div>
+            ) : (
+              pendingNotes.map((n) => (
+                <div
+                  key={n.id}
+                  className="p-3.5 rounded-lg border border-amber-200/80 bg-amber-50/40 hover:bg-amber-50/70 transition-colors shadow-2xs space-y-2"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="text-sm font-medium text-slate-900 break-words flex-1 whitespace-pre-wrap">
+                      {n.note}
+                    </p>
+                    <Badge className="bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-100 font-semibold text-[11px] shrink-0">
+                      Pending
+                    </Badge>
+                  </div>
+                  <div className="flex items-center justify-between pt-1 border-t border-amber-200/50 text-[11px] text-slate-500">
+                    <div className="flex items-center gap-1.5">
+                      <Clock className="h-3 w-3 text-slate-400" />
+                      <span>{n.createdAt ? format(new Date(n.createdAt), "dd MMM yyyy, hh:mm a") : ""}</span>
+                      {n.createdBy && <span className="text-slate-400 font-normal">by {n.createdBy}</span>}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 text-xs text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800 font-semibold px-2 gap-1 rounded"
+                        onClick={() => handleCompleteNote(n.id)}
+                        disabled={isUpdatingNote === n.id}
+                        title="Mark as Completed"
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                        {isUpdatingNote === n.id ? "Completing..." : "Complete"}
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7 text-slate-400 hover:text-destructive hover:bg-red-50 rounded"
+                        onClick={() => handleDeleteNote(n.id)}
+                        title="Delete Note"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          <DialogFooter className="mt-4 pt-3 border-t border-slate-200 flex justify-between items-center sm:justify-between">
+            <span className="text-xs text-slate-500">
+              Completed notes are automatically removed from this pending list.
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setNotesModalOpen(false)}
+            >
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>
