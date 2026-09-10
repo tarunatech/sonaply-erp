@@ -436,14 +436,22 @@ export default function SalesPage() {
       toast({ title: "Please select an existing client from the suggestions", variant: "destructive" }); return;
     }
 
-    const validItems = items.filter(item => item.productName && item.quantity > 0);
-    if (validItems.length === 0) {
-      toast({ title: "Please add at least one valid product", variant: "destructive" }); return;
+    if (items.length === 0) {
+      toast({ title: "Please add at least one product", variant: "destructive" }); return;
     }
 
-    const itemsWithoutBatch = validItems.filter(item => !item.batchNo);
-    if (itemsWithoutBatch.length > 0) {
-      toast({ title: "Please select a batch for all products", variant: "destructive" }); return;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (!item.productName || !item.productName.trim()) {
+        toast({ title: "Product Missing", description: `Please select a product for row #${i + 1}.`, variant: "destructive" }); return;
+      }
+      const q = Number(item.quantity);
+      if (!item.quantity || isNaN(q) || q <= 0) {
+        toast({ title: "Invalid Quantity", description: `Quantity must be greater than 0 for "${item.productName}".`, variant: "destructive" }); return;
+      }
+      if (!item.batchNo) {
+        toast({ title: "Batch Missing", description: `Please select a batch for "${item.productName}".`, variant: "destructive" }); return;
+      }
     }
 
     const valueCategory = 'Standard';
@@ -457,12 +465,12 @@ export default function SalesPage() {
         status,
         remarks: narration,
         category: priceCategory,
-        items: validItems.map(item => ({
+        items: items.map(item => ({
           productName: item.productName,
-          quantity: item.quantity,
+          quantity: Number(item.quantity),
           batchNo: item.batchNo,
           stockCategory: item.stockCategory,
-          damageQty: item.stockCategory === 'Damage' ? item.quantity : 0,
+          damageQty: item.stockCategory === 'Damage' ? Number(item.quantity) : 0,
         }))
       });
 
@@ -497,14 +505,22 @@ export default function SalesPage() {
       toast({ title: "Please select an existing client from the suggestions", variant: "destructive" }); return;
     }
 
-    const validItems = items.filter(item => item.productName && item.quantity > 0);
-    if (validItems.length === 0) {
-      toast({ title: "Please add at least one valid product", variant: "destructive" }); return;
+    if (items.length === 0) {
+      toast({ title: "Please add at least one product", variant: "destructive" }); return;
     }
 
-    const itemsWithoutBatch = validItems.filter(item => !item.batchNo);
-    if (itemsWithoutBatch.length > 0) {
-      toast({ title: "Please select a batch for all products", variant: "destructive" }); return;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (!item.productName || !item.productName.trim()) {
+        toast({ title: "Product Missing", description: `Please select a product for row #${i + 1}.`, variant: "destructive" }); return;
+      }
+      const q = Number(item.quantity);
+      if (!item.quantity || isNaN(q) || q <= 0) {
+        toast({ title: "Invalid Quantity", description: `Quantity must be greater than 0 for "${item.productName}".`, variant: "destructive" }); return;
+      }
+      if (!item.batchNo) {
+        toast({ title: "Batch Missing", description: `Please select a batch for "${item.productName}".`, variant: "destructive" }); return;
+      }
     }
 
     setIsSubmitting(true);
@@ -530,13 +546,13 @@ export default function SalesPage() {
         await deleteChallanGroup(editingChallanNumber).catch(() => {});
       }
 
-      for (const item of validItems) {
+      for (const item of items) {
         await addHold({
           clientName,
           clientPhone,
           productName: item.productName,
           category: priceCategory,
-          quantity: item.quantity,
+          quantity: Number(item.quantity),
           batchNo: item.batchNo || '',
           holdDate: orderDate
         });
@@ -593,24 +609,41 @@ export default function SalesPage() {
       return;
     }
 
-    const validItems = items.filter(
-      (item) => item.productName && item.quantity > 0
-    );
-    if (validItems.length === 0) {
+    if (items.length === 0) {
       toast({
-        title: "Please add at least one valid product with quantity > 0",
+        title: "Please add at least one product",
         variant: "destructive",
       });
       return;
     }
 
-    const itemsWithoutBatch = validItems.filter((item) => !item.batchNo);
-    if (itemsWithoutBatch.length > 0) {
-      toast({
-        title: "Please select a batch for all products",
-        variant: "destructive",
-      });
-      return;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (!item.productName || !item.productName.trim()) {
+        toast({
+          title: "Product Missing",
+          description: `Please select a product for row #${i + 1}.`,
+          variant: "destructive",
+        });
+        return;
+      }
+      const q = Number(item.quantity);
+      if (!item.quantity || isNaN(q) || q <= 0) {
+        toast({
+          title: "Invalid Quantity",
+          description: `Quantity must be greater than 0 for "${item.productName}". If you wish to remove this product, please delete the row using the trash icon.`,
+          variant: "destructive",
+        });
+        return;
+      }
+      if (!item.batchNo) {
+        toast({
+          title: "Batch Missing",
+          description: `Please select a batch for "${item.productName}".`,
+          variant: "destructive",
+        });
+        return;
+      }
     }
 
     setIsSubmitting(true);
@@ -620,11 +653,11 @@ export default function SalesPage() {
         clientName,
         clientPhone,
         date: orderDate,
-        items: validItems.map((item) => ({
+        items: items.map((item) => ({
           id: item.id,
           salesId: item.salesId,
           productName: item.productName,
-          quantity: item.quantity,
+          quantity: Number(item.quantity),
           batchNo: item.batchNo,
           notes: narration,
           stockCategory: item.stockCategory || "Available",
