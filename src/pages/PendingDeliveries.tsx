@@ -103,11 +103,12 @@ export default function PendingDeliveries() {
       );
       if (hasPendingPChallan) return true;
 
-      // Calculate quantity already covered by CH-xxxx challans or Confirmed/Delivered P-xxxx challans
+      // Calculate quantity already covered by active non-delivered CH-xxxx challans or Confirmed P-xxxx challans
       const coveredQty = saleChallans.reduce((sum, ch) => {
+        if (ch.status === "Delivered") return sum;
         const isCH = ch.challanNo.startsWith("CH-") || ch.challanNo.startsWith("CH");
-        const isConfirmedOrDelivered = ch.status === "Confirmed" || ch.status === "Delivered";
-        if (isCH || isConfirmedOrDelivered) {
+        const isConfirmed = ch.status === "Confirmed";
+        if (isCH || isConfirmed) {
           return sum + Number(ch.quantity || 0);
         }
         return sum;
@@ -142,9 +143,10 @@ export default function PendingDeliveries() {
     if (pendingP) return Number(pendingP.quantity || 0);
 
     const coveredQty = saleChallans.reduce((sum, ch) => {
+      if (ch.status === "Delivered") return sum;
       const isCH = ch.challanNo.startsWith("CH-") || ch.challanNo.startsWith("CH");
-      const isConfirmedOrDelivered = ch.status === "Confirmed" || ch.status === "Delivered";
-      if (isCH || isConfirmedOrDelivered) {
+      const isConfirmed = ch.status === "Confirmed";
+      if (isCH || isConfirmed) {
         return sum + Number(ch.quantity || 0);
       }
       return sum;
@@ -296,8 +298,9 @@ export default function PendingDeliveries() {
         toast({ title: "Validation Error", description: `Product name is required for item #${i + 1}.`, variant: "destructive" });
         return;
       }
-      if (item.orderedQty <= 0) {
-        toast({ title: "Validation Error", description: `Ordered quantity must be greater than 0 for item #${i + 1}.`, variant: "destructive" });
+      const q = Number(item.orderedQty);
+      if (!item.orderedQty || isNaN(q) || q <= 0) {
+        toast({ title: "Validation Error", description: `Quantity must be greater than 0 for "${item.product}". If you wish to remove this product, please delete the row.`, variant: "destructive" });
         return;
       }
     }

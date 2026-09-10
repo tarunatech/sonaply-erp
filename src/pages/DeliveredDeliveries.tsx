@@ -29,8 +29,8 @@ export default function DeliveredDeliveries() {
 
   const refresh = useCallback(async () => {
     const [c, s, b] = await Promise.all([getChallans(), getSales(), getBatches()]);
-    // Only include non-cancelled Delivered challans
-    setChallans(c.filter(challan => challan.status === "Delivered" && !challan.isCancelled));
+    // Only include non-cancelled Delivered challans with quantity > 0
+    setChallans(c.filter(challan => challan.status === "Delivered" && !challan.isCancelled && Number(challan.quantity) > 0));
     setSales(s);
     setBatches(b);
   }, []);
@@ -62,10 +62,12 @@ export default function DeliveredDeliveries() {
   const groupedChallans = useMemo(() => {
     const groups: Record<string, Challan[]> = {};
     filteredChallans.forEach((c) => {
+      if (Number(c.quantity) <= 0) return;
       if (!groups[c.challanNo]) groups[c.challanNo] = [];
       groups[c.challanNo].push(c);
     });
     return Object.entries(groups)
+      .filter(([_, items]) => items.length > 0)
       .map(([challanNo, items]) => ({
         challanNo,
         customer: items[0].customer,

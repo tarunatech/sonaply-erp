@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "migrate": "node server/migrate.js",
+    "update-gujarati-clients": "node server/migrate_clients_gujarati.js --force",
     "server": "nodemon server/index.js"
   },
   "dependencies": {

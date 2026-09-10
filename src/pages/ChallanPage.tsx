@@ -159,8 +159,13 @@ export default function ChallanPage() {
   };
 
   const groupedChallans = useMemo(() => {
+    // Only group active (non-delivered, non-cancelled) challans
+    const activeChallans = challans.filter(
+      (c) => c.status !== "Delivered" && !c.isCancelled && Number(c.quantity) > 0
+    );
+
     const groups: Record<string, Challan[]> = {};
-    challans.forEach((c) => {
+    activeChallans.forEach((c) => {
       if (!groups[c.challanNo]) groups[c.challanNo] = [];
       groups[c.challanNo].push(c);
     });
@@ -180,7 +185,6 @@ export default function ChallanPage() {
         id: items[0].id,
       }))
       .filter((g) => {
-        if (g.status === "Delivered") return false;
         const isCH = g.challanNo.startsWith("CH-") || g.challanNo.startsWith("CH");
         const isP = g.challanNo.startsWith("P-");
         if (isCH) return true;
@@ -441,7 +445,9 @@ export default function ChallanPage() {
       }
     }
 
-    const itemsHtml = group.items.map((item: any) => {
+    const itemsHtml = group.items
+      .filter((item: any) => Number(item.quantity || 0) > 0)
+      .map((item: any) => {
       const itemSale = sales.find((s: Sale) => s.id === item.salesId);
       const itemBatches = batches.filter((b: StockBatch) => b.productName === item.product);
       const currentBatch = item.batchNo
