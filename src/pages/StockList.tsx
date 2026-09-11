@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   getBatches,
   getBatchesPaginated,
+  getDistinctColumnValues,
   exportCSV,
   deleteBatch,
   updateBatch,
@@ -23,6 +24,7 @@ import { printElement } from "@/lib/print";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -46,6 +48,11 @@ import {
   DialogTrigger,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
+} from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import {
@@ -60,8 +67,515 @@ import {
   Loader2,
   ChevronLeft,
   ChevronRight,
+  Filter,
+  X,
+  Check,
+  RotateCcw,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+
+// --- Column Filter Helper Components ---
+
+function TextColumnFilter({
+  title,
+  columnName,
+  value,
+  onChange,
+  placeholder = "Search...",
+}: {
+  title: string;
+  columnName?: "product_name" | "batch_number" | "description";
+  value: string;
+  onChange: (val: string) => void;
+  placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState(value || "");
+  const [suggestions, setSuggestions] = useState<{ value: string; count: number }[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setSearchQuery(value || "");
+      if (columnName) {
+        setLoading(true);
+        getDistinctColumnValues(columnName, "")
+          .then((list) => setSuggestions(list))
+          .catch(() => setSuggestions([]))
+          .finally(() => setLoading(false));
+      }
+    }
+  }, [open, value, columnName]);
+
+  // Debounce search in suggestions
+  useEffect(() => {
+    if (!open || !columnName) return;
+    const timer = setTimeout(() => {
+      getDistinctColumnValues(columnName, searchQuery)
+        .then((list) => setSuggestions(list))
+        .catch(() => {});
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [searchQuery, open, columnName]);
+
+  const handleApply = (valToApply?: string) => {
+    const finalVal = valToApply !== undefined ? valToApply : searchQuery.trim();
+    onChange(finalVal);
+    setOpen(false);
+  };
+
+  const handleClear = () => {
+    setSearchQuery("");
+    onChange("");
+    setOpen(false);
+  };
+
+  const isActive = Boolean(value && value.trim());
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={`inline-flex items-center justify-center h-6 w-6 rounded p-0 transition-colors cursor-pointer ${
+            isActive
+              ? "bg-blue-600 text-white hover:bg-blue-700 shadow-2xs"
+              : "text-slate-400 hover:text-slate-700 hover:bg-slate-200/80"
+          }`}
+          title={`Filter ${title}`}
+        >
+          <Filter className={`h-3.5 w-3.5 ${isActive ? "fill-current" : ""}`} />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-72 p-3 z-50 bg-white" align="start">
+        <div className="space-y-3">
+          <div className="flex items-center justify-between border-b pb-2">
+            <span className="text-xs font-bold text-slate-900">Filter by {title}</span>
+            {isActive && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-1.5 text-[11px] text-red-600 hover:bg-red-50 hover:text-red-700"
+                onClick={handleClear}
+              >
+                Clear
+              </Button>
+            )}
+          </div>
+
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleApply();
+                }
+              }}
+              placeholder={placeholder}
+              className="h-8 pl-8 pr-8 text-xs"
+              autoFocus
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+
+          {columnName && (
+            <div className="space-y-1">
+              <div className="text-[11px] font-semibold text-slate-500">
+                {loading ? "Loading options..." : "Select or search:"}
+              </div>
+              <div className="max-h-36 overflow-y-auto space-y-0.5 pr-1 border rounded p-1 bg-slate-50/50">
+                {suggestions.length === 0 ? (
+                  <div className="text-[11px] text-muted-foreground py-2 text-center">
+                    {loading ? "Loading..." : "No matching items"}
+                  </div>
+                ) : (
+                  suggestions.map((item) => {
+                    const isSelected = value.toLowerCase() === item.value.toLowerCase();
+                    return (
+                      <button
+                        key={item.value}
+                        type="button"
+                        onClick={() => handleApply(item.value)}
+                        className={`w-full text-left px-2 py-1 rounded text-xs flex items-center justify-between transition-colors cursor-pointer ${
+                          isSelected
+                            ? "bg-blue-100 text-blue-900 font-semibold"
+                            : "hover:bg-slate-200/70 text-slate-700"
+                        }`}
+                      >
+                        <span className="truncate pr-1">{item.value}</span>
+                        <span className="text-[10px] text-slate-400 shrink-0">({item.count})</span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button size="sm" className="h-7 text-xs bg-blue-600 hover:bg-blue-700" onClick={() => handleApply()}>
+              Apply
+            </Button>
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function CategoryColumnFilter({
+  categories,
+  value,
+  onChange,
+}: {
+  categories: string[];
+  value: string;
+  onChange: (val: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const filteredCategories = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return categories;
+    return categories.filter((c) => c.toLowerCase().includes(q));
+  }, [categories, searchQuery]);
+
+  const handleSelect = (cat: string) => {
+    onChange(cat === value ? "" : cat);
+    setOpen(false);
+  };
+
+  const handleClear = () => {
+    onChange("");
+    setOpen(false);
+  };
+
+  const isActive = Boolean(value && value !== "all" && value.trim());
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={`inline-flex items-center justify-center h-6 w-6 rounded p-0 transition-colors cursor-pointer ${
+            isActive
+              ? "bg-blue-600 text-white hover:bg-blue-700 shadow-2xs"
+              : "text-slate-400 hover:text-slate-700 hover:bg-slate-200/80"
+          }`}
+          title="Filter Category"
+        >
+          <Filter className={`h-3.5 w-3.5 ${isActive ? "fill-current" : ""}`} />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-64 p-3 z-50 bg-white" align="start">
+        <div className="space-y-3">
+          <div className="flex items-center justify-between border-b pb-2">
+            <span className="text-xs font-bold text-slate-900">Filter Category</span>
+            {isActive && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-1.5 text-[11px] text-red-600 hover:bg-red-50 hover:text-red-700"
+                onClick={handleClear}
+              >
+                Clear
+              </Button>
+            )}
+          </div>
+
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search category..."
+              className="h-8 pl-8 pr-8 text-xs"
+              autoFocus
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+
+          <div className="max-h-44 overflow-y-auto space-y-0.5 border rounded p-1 bg-slate-50/50">
+            <button
+              type="button"
+              onClick={handleClear}
+              className={`w-full text-left px-2 py-1.5 rounded text-xs flex items-center justify-between transition-colors cursor-pointer ${
+                !isActive
+                  ? "bg-blue-100 text-blue-900 font-semibold"
+                  : "hover:bg-slate-200/70 text-slate-700"
+              }`}
+            >
+              <span>All Categories</span>
+              {!isActive && <Check className="h-3.5 w-3.5 text-blue-700" />}
+            </button>
+            {filteredCategories.map((c) => {
+              const isSelected = value.toLowerCase() === c.toLowerCase();
+              return (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => handleSelect(c)}
+                  className={`w-full text-left px-2 py-1.5 rounded text-xs flex items-center justify-between transition-colors cursor-pointer ${
+                    isSelected
+                      ? "bg-blue-100 text-blue-900 font-semibold"
+                      : "hover:bg-slate-200/70 text-slate-700"
+                  }`}
+                >
+                  <span className="truncate">{c}</span>
+                  {isSelected && <Check className="h-3.5 w-3.5 text-blue-700" />}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function NumericColumnFilter({
+  title,
+  filterType,
+  minValue,
+  maxValue,
+  onChange,
+}: {
+  title: string;
+  filterType: string;
+  minValue: string;
+  maxValue: string;
+  onChange: (type: string, min: string, max: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [type, setType] = useState(filterType || "all");
+  const [min, setMin] = useState(minValue || "");
+  const [max, setMax] = useState(maxValue || "");
+
+  useEffect(() => {
+    if (open) {
+      setType(filterType || "all");
+      setMin(minValue || "");
+      setMax(maxValue || "");
+    }
+  }, [open, filterType, minValue, maxValue]);
+
+  const handleApply = (newType = type, newMin = min, newMax = max) => {
+    onChange(newType, newMin, newMax);
+    setOpen(false);
+  };
+
+  const handleClear = () => {
+    setType("all");
+    setMin("");
+    setMax("");
+    onChange("all", "", "");
+    setOpen(false);
+  };
+
+  const isActive = (filterType && filterType !== "all") || Boolean(minValue || maxValue);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={`inline-flex items-center justify-center h-6 w-6 rounded p-0 transition-colors cursor-pointer ${
+            isActive
+              ? "bg-blue-600 text-white hover:bg-blue-700 shadow-2xs"
+              : "text-slate-400 hover:text-slate-700 hover:bg-slate-200/80"
+          }`}
+          title={`Filter ${title}`}
+        >
+          <Filter className={`h-3.5 w-3.5 ${isActive ? "fill-current" : ""}`} />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-64 p-3 z-50 bg-white" align="end">
+        <div className="space-y-3">
+          <div className="flex items-center justify-between border-b pb-2">
+            <span className="text-xs font-bold text-slate-900">Filter {title}</span>
+            {isActive && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-1.5 text-[11px] text-red-600 hover:bg-red-50 hover:text-red-700"
+                onClick={handleClear}
+              >
+                Clear
+              </Button>
+            )}
+          </div>
+
+          {/* Quick Presets */}
+          <div className="grid grid-cols-3 gap-1.5">
+            <Button
+              type="button"
+              variant={type === "all" ? "default" : "outline"}
+              size="sm"
+              className={`h-7 text-xs ${type === "all" ? "bg-slate-800" : ""}`}
+              onClick={() => {
+                setType("all");
+                setMin("");
+                setMax("");
+                handleApply("all", "", "");
+              }}
+            >
+              All
+            </Button>
+            <Button
+              type="button"
+              variant={type === ">0" ? "default" : "outline"}
+              size="sm"
+              className={`h-7 text-xs font-semibold ${type === ">0" ? "bg-emerald-600 hover:bg-emerald-700 text-white" : "text-emerald-700"}`}
+              onClick={() => {
+                setType(">0");
+                setMin("");
+                setMax("");
+                handleApply(">0", "", "");
+              }}
+            >
+              &gt; 0
+            </Button>
+            <Button
+              type="button"
+              variant={type === "=0" ? "default" : "outline"}
+              size="sm"
+              className={`h-7 text-xs font-semibold ${type === "=0" ? "bg-slate-700 hover:bg-slate-800 text-white" : "text-slate-700"}`}
+              onClick={() => {
+                setType("=0");
+                setMin("");
+                setMax("");
+                handleApply("=0", "", "");
+              }}
+            >
+              = 0
+            </Button>
+          </div>
+
+          {/* Custom Range */}
+          <div className="space-y-1.5 pt-1 border-t">
+            <div className="text-[11px] font-semibold text-slate-600">Custom Value / Range:</div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="text-[10px] text-slate-500">Min Qty</Label>
+                <Input
+                  type="number"
+                  placeholder="Min"
+                  value={min}
+                  onChange={(e) => {
+                    setMin(e.target.value);
+                    setType("custom");
+                  }}
+                  className="h-7 text-xs"
+                />
+              </div>
+              <div>
+                <Label className="text-[10px] text-slate-500">Max Qty</Label>
+                <Input
+                  type="number"
+                  placeholder="Max"
+                  value={max}
+                  onChange={(e) => {
+                    setMax(e.target.value);
+                    setType("custom");
+                  }}
+                  className="h-7 text-xs"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="h-7 text-xs bg-blue-600 hover:bg-blue-700"
+              onClick={() => handleApply(type === "all" && (min || max) ? "custom" : type, min, max)}
+            >
+              Apply
+            </Button>
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+interface StockColumnFilters {
+  product: string;
+  category: string;
+  batch: string;
+  soldType: string;
+  minSold: string;
+  maxSold: string;
+  availableType: string;
+  minAvailable: string;
+  maxAvailable: string;
+  stockMaintainType: string;
+  minStockMaintain: string;
+  maxStockMaintain: string;
+  holdType: string;
+  minHold: string;
+  maxHold: string;
+  displayType: string;
+  minDisplay: string;
+  maxDisplay: string;
+  damageType: string;
+  minDamage: string;
+  maxDamage: string;
+  description: string;
+  updatedDate: string;
+}
+
+const initialFilters: StockColumnFilters = {
+  product: "",
+  category: "",
+  batch: "",
+  soldType: "all",
+  minSold: "",
+  maxSold: "",
+  availableType: "all",
+  minAvailable: "",
+  maxAvailable: "",
+  stockMaintainType: "all",
+  minStockMaintain: "",
+  maxStockMaintain: "",
+  holdType: "all",
+  minHold: "",
+  maxHold: "",
+  displayType: "all",
+  minDisplay: "",
+  maxDisplay: "",
+  damageType: "all",
+  minDamage: "",
+  maxDamage: "",
+  description: "",
+  updatedDate: "",
+};
 
 export default function StockList() {
   const navigate = useNavigate();
@@ -69,6 +583,8 @@ export default function StockList() {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
+  const [selectedStatus, setSelectedStatus] = useState<string>("all");
+  const [columnFilters, setColumnFilters] = useState<StockColumnFilters>(initialFilters);
   const [page, setPage] = useState<number>(1);
   const limit = 50;
   const [batches, setBatches] = useState<StockBatch[]>([]);
@@ -96,6 +612,30 @@ export default function StockList() {
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const { toast } = useToast();
+
+  const setColumnFilter = useCallback((key: keyof StockColumnFilters, value: any) => {
+    setColumnFilters((prev) => ({ ...prev, [key]: value }));
+    setPage(1);
+  }, []);
+
+  const setNumericColumnFilter = useCallback((prefix: string, type: string, min: string, max: string) => {
+    setColumnFilters((prev) => ({
+      ...prev,
+      [`${prefix}Type`]: type,
+      [`min${prefix.charAt(0).toUpperCase() + prefix.slice(1)}`]: min,
+      [`max${prefix.charAt(0).toUpperCase() + prefix.slice(1)}`]: max,
+    }));
+    setPage(1);
+  }, []);
+
+  const clearAllFilters = useCallback(() => {
+    setSearch("");
+    setDebouncedSearch("");
+    setSelectedCategory("all");
+    setSelectedStatus("all");
+    setColumnFilters(initialFilters);
+    setPage(1);
+  }, []);
 
   // Debounce search string by 300ms
   useEffect(() => {
@@ -132,7 +672,30 @@ export default function StockList() {
           page,
           limit,
           search: debouncedSearch,
-          category: selectedCategory,
+          category: columnFilters.category || (selectedCategory !== "all" ? selectedCategory : undefined),
+          stockStatus: selectedStatus !== "all" ? selectedStatus : undefined,
+          product: columnFilters.product,
+          batch: columnFilters.batch,
+          soldType: columnFilters.soldType !== "all" ? columnFilters.soldType : undefined,
+          minSold: columnFilters.minSold,
+          maxSold: columnFilters.maxSold,
+          availableType: columnFilters.availableType !== "all" ? columnFilters.availableType : undefined,
+          minAvailable: columnFilters.minAvailable,
+          maxAvailable: columnFilters.maxAvailable,
+          stockMaintainType: columnFilters.stockMaintainType !== "all" ? columnFilters.stockMaintainType : undefined,
+          minStockMaintain: columnFilters.minStockMaintain,
+          maxStockMaintain: columnFilters.maxStockMaintain,
+          holdType: columnFilters.holdType !== "all" ? columnFilters.holdType : undefined,
+          minHold: columnFilters.minHold,
+          maxHold: columnFilters.maxHold,
+          displayType: columnFilters.displayType !== "all" ? columnFilters.displayType : undefined,
+          minDisplay: columnFilters.minDisplay,
+          maxDisplay: columnFilters.maxDisplay,
+          damageType: columnFilters.damageType !== "all" ? columnFilters.damageType : undefined,
+          minDamage: columnFilters.minDamage,
+          maxDamage: columnFilters.maxDamage,
+          description: columnFilters.description,
+          updatedDate: columnFilters.updatedDate,
         }),
         getSales(),
       ]);
@@ -155,7 +718,7 @@ export default function StockList() {
     } finally {
       setIsLoading(false);
     }
-  }, [page, limit, debouncedSearch, selectedCategory]);
+  }, [page, limit, debouncedSearch, selectedCategory, selectedStatus, columnFilters]);
 
   useEffect(() => {
     refreshData();
@@ -680,6 +1243,128 @@ export default function StockList() {
     });
   };
 
+  const activeFilterPills = useMemo(() => {
+    const pills: { key: string; label: string; onRemove: () => void }[] = [];
+    if (columnFilters.product) {
+      pills.push({
+        key: "product",
+        label: `Product: "${columnFilters.product}"`,
+        onRemove: () => setColumnFilter("product", ""),
+      });
+    }
+    if (columnFilters.category && columnFilters.category !== "all") {
+      pills.push({
+        key: "category",
+        label: `Category: ${columnFilters.category}`,
+        onRemove: () => {
+          setColumnFilter("category", "");
+          setSelectedCategory("all");
+        },
+      });
+    }
+    if (columnFilters.batch) {
+      pills.push({
+        key: "batch",
+        label: `Batch: "${columnFilters.batch}"`,
+        onRemove: () => setColumnFilter("batch", ""),
+      });
+    }
+    if (columnFilters.soldType === ">0") {
+      pills.push({ key: "sold", label: "Sold: > 0", onRemove: () => setNumericColumnFilter("sold", "all", "", "") });
+    } else if (columnFilters.soldType === "=0") {
+      pills.push({ key: "sold", label: "Sold: = 0", onRemove: () => setNumericColumnFilter("sold", "all", "", "") });
+    } else if (columnFilters.minSold || columnFilters.maxSold) {
+      pills.push({
+        key: "sold",
+        label: `Sold: ${columnFilters.minSold || "0"} - ${columnFilters.maxSold || "∞"}`,
+        onRemove: () => setNumericColumnFilter("sold", "all", "", ""),
+      });
+    }
+    if (columnFilters.availableType === ">0") {
+      pills.push({ key: "available", label: "Available: > 0", onRemove: () => setNumericColumnFilter("available", "all", "", "") });
+    } else if (columnFilters.availableType === "=0") {
+      pills.push({ key: "available", label: "Available: = 0", onRemove: () => setNumericColumnFilter("available", "all", "", "") });
+    } else if (columnFilters.minAvailable || columnFilters.maxAvailable) {
+      pills.push({
+        key: "available",
+        label: `Available: ${columnFilters.minAvailable || "0"} - ${columnFilters.maxAvailable || "∞"}`,
+        onRemove: () => setNumericColumnFilter("available", "all", "", ""),
+      });
+    }
+    if (columnFilters.stockMaintainType === ">0") {
+      pills.push({ key: "stockMaintain", label: "Stock Maintain: > 0", onRemove: () => setNumericColumnFilter("stockMaintain", "all", "", "") });
+    } else if (columnFilters.stockMaintainType === "=0") {
+      pills.push({ key: "stockMaintain", label: "Stock Maintain: = 0", onRemove: () => setNumericColumnFilter("stockMaintain", "all", "", "") });
+    } else if (columnFilters.minStockMaintain || columnFilters.maxStockMaintain) {
+      pills.push({
+        key: "stockMaintain",
+        label: `Stock Maintain: ${columnFilters.minStockMaintain || "0"} - ${columnFilters.maxStockMaintain || "∞"}`,
+        onRemove: () => setNumericColumnFilter("stockMaintain", "all", "", ""),
+      });
+    }
+    if (columnFilters.holdType === ">0") {
+      pills.push({ key: "hold", label: "Hold: > 0", onRemove: () => setNumericColumnFilter("hold", "all", "", "") });
+    } else if (columnFilters.holdType === "=0") {
+      pills.push({ key: "hold", label: "Hold: = 0", onRemove: () => setNumericColumnFilter("hold", "all", "", "") });
+    } else if (columnFilters.minHold || columnFilters.maxHold) {
+      pills.push({
+        key: "hold",
+        label: `Hold: ${columnFilters.minHold || "0"} - ${columnFilters.maxHold || "∞"}`,
+        onRemove: () => setNumericColumnFilter("hold", "all", "", ""),
+      });
+    }
+    if (columnFilters.displayType === ">0") {
+      pills.push({ key: "display", label: "Display: > 0", onRemove: () => setNumericColumnFilter("display", "all", "", "") });
+    } else if (columnFilters.displayType === "=0") {
+      pills.push({ key: "display", label: "Display: = 0", onRemove: () => setNumericColumnFilter("display", "all", "", "") });
+    } else if (columnFilters.minDisplay || columnFilters.maxDisplay) {
+      pills.push({
+        key: "display",
+        label: `Display: ${columnFilters.minDisplay || "0"} - ${columnFilters.maxDisplay || "∞"}`,
+        onRemove: () => setNumericColumnFilter("display", "all", "", ""),
+      });
+    }
+    if (columnFilters.damageType === ">0") {
+      pills.push({ key: "damage", label: "Damaged: > 0", onRemove: () => setNumericColumnFilter("damage", "all", "", "") });
+    } else if (columnFilters.damageType === "=0") {
+      pills.push({ key: "damage", label: "Damaged: = 0", onRemove: () => setNumericColumnFilter("damage", "all", "", "") });
+    } else if (columnFilters.minDamage || columnFilters.maxDamage) {
+      pills.push({
+        key: "damage",
+        label: `Damaged: ${columnFilters.minDamage || "0"} - ${columnFilters.maxDamage || "∞"}`,
+        onRemove: () => setNumericColumnFilter("damage", "all", "", ""),
+      });
+    }
+    if (columnFilters.description) {
+      pills.push({
+        key: "description",
+        label: `Description: "${columnFilters.description}"`,
+        onRemove: () => setColumnFilter("description", ""),
+      });
+    }
+    if (columnFilters.updatedDate) {
+      pills.push({
+        key: "updatedDate",
+        label: `Updated: "${columnFilters.updatedDate}"`,
+        onRemove: () => setColumnFilter("updatedDate", ""),
+      });
+    }
+    if (selectedStatus && selectedStatus !== "all") {
+      const statusLabels: Record<string, string> = {
+        not_in_next_folder: "Not in Next Folder",
+        dead_stock: "Dead Stock",
+        nil: "Nil Stock",
+        regular: "Regular Stock Only",
+      };
+      pills.push({
+        key: "status",
+        label: `Status: ${statusLabels[selectedStatus] || selectedStatus}`,
+        onRemove: () => setSelectedStatus("all"),
+      });
+    }
+    return pills;
+  }, [columnFilters, selectedStatus, setColumnFilter, setNumericColumnFilter]);
+
   return (
     <div className="relative space-y-4">
       {/* Full-page loading overlay shown during CSV import */}
@@ -931,55 +1616,257 @@ export default function StockList() {
         </Card>
       </div>
 
-      <div className="flex flex-wrap gap-3 items-center">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            className="pl-9"
-            placeholder="Search product, category or batch..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
-        <div className="w-full sm:w-[220px]">
-          <Select
-            value={selectedCategory}
-            onValueChange={(val) => {
-              setSelectedCategory(val);
-              setPage(1);
-            }}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="All Categories" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Categories</SelectItem>
-              {allCategories.map((c) => (
-                <SelectItem key={c} value={c}>
-                  {c}
+      <div className="space-y-2">
+        <div className="flex flex-wrap gap-3 items-center">
+          <div className="relative flex-1 min-w-[200px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              className="pl-9 h-9"
+              placeholder="Global Search (product, category, batch, supplier)..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          <div className="w-full sm:w-[220px]">
+            <Select
+              value={columnFilters.category || selectedCategory}
+              onValueChange={(val) => {
+                setSelectedCategory(val);
+                setColumnFilter("category", val === "all" ? "" : val);
+              }}
+            >
+              <SelectTrigger className="h-9">
+                <SelectValue placeholder="All Categories" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Categories</SelectItem>
+                {allCategories.map((c) => (
+                  <SelectItem key={c} value={c}>
+                    {c}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="w-full sm:w-[210px]">
+            <Select
+              value={selectedStatus}
+              onValueChange={(val) => {
+                setSelectedStatus(val);
+                setPage(1);
+              }}
+            >
+              <SelectTrigger className="h-9">
+                <SelectValue placeholder="All Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Stock Status</SelectItem>
+                <SelectItem value="not_in_next_folder">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500"></span>
+                    <span>Not in next folder</span>
+                  </div>
                 </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+                <SelectItem value="dead_stock">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-slate-500"></span>
+                    <span>Dead Stock</span>
+                  </div>
+                </SelectItem>
+                <SelectItem value="nil">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-blue-500"></span>
+                    <span>Nil Stock</span>
+                  </div>
+                </SelectItem>
+                <SelectItem value="regular">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                    <span>Regular Stock Only</span>
+                  </div>
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {activeFilterPills.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={clearAllFilters}
+              className="h-9 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 gap-1.5"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              Clear All ({activeFilterPills.length})
+            </Button>
+          )}
         </div>
+
+        {/* Active Filter Pills Bar */}
+        {activeFilterPills.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+            <span className="text-xs font-semibold text-slate-500 mr-1">Active Filters:</span>
+            {activeFilterPills.map((pill) => (
+              <Badge
+                key={pill.key}
+                variant="secondary"
+                className="pl-2 pr-1 py-0.5 text-xs bg-blue-50 text-blue-900 border border-blue-200 flex items-center gap-1 hover:bg-blue-100 transition-colors"
+              >
+                <span>{pill.label}</span>
+                <button
+                  type="button"
+                  onClick={pill.onRemove}
+                  className="rounded-full p-0.5 hover:bg-blue-200/80 text-blue-700 hover:text-blue-950 transition-colors"
+                  title="Remove filter"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </Badge>
+            ))}
+          </div>
+        )}
       </div>
+
       <Card>
         <CardContent className="p-0" id="stock-table">
           <Table className="border-collapse border-2 border-slate-300" wrapperClassName="max-h-[calc(100vh-250px)]">
             <TableHeader className="sticky top-0 bg-slate-100 z-10 shadow-2xs border-b-2 border-slate-300">
               <TableRow>
-                <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-slate-800">Product</TableHead>
-                <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-slate-800">Category</TableHead>
-                <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-slate-800">Batch</TableHead>
-                <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-slate-800 text-right">Sold</TableHead>
-                <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-slate-800 text-right">Available</TableHead>
-                <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-indigo-800 text-right">Stock Maintain</TableHead>
-                <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-amber-700 text-right">Hold</TableHead>
-                <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-slate-800 text-right">Display</TableHead>
-                <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-slate-800 text-right">Damaged</TableHead>
-                <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-slate-800">Description</TableHead>
-                <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-slate-800">Updated</TableHead>
-                <TableHead className="border-2 border-slate-300 px-4 py-3 font-bold text-slate-800 text-right no-print">Actions</TableHead>
+                <TableHead className="border-2 border-slate-300 px-3 py-2.5 font-bold text-slate-800">
+                  <div className="flex items-center justify-between gap-1.5 min-w-[120px]">
+                    <span>Product</span>
+                    <TextColumnFilter
+                      title="Product"
+                      columnName="product_name"
+                      value={columnFilters.product}
+                      onChange={(val) => setColumnFilter("product", val)}
+                      placeholder="Search product..."
+                    />
+                  </div>
+                </TableHead>
+                <TableHead className="border-2 border-slate-300 px-3 py-2.5 font-bold text-slate-800">
+                  <div className="flex items-center justify-between gap-1.5 min-w-[110px]">
+                    <span>Category</span>
+                    <CategoryColumnFilter
+                      categories={allCategories}
+                      value={columnFilters.category || (selectedCategory !== "all" ? selectedCategory : "")}
+                      onChange={(val) => {
+                        setColumnFilter("category", val);
+                        if (val) setSelectedCategory(val);
+                        else setSelectedCategory("all");
+                      }}
+                    />
+                  </div>
+                </TableHead>
+                <TableHead className="border-2 border-slate-300 px-3 py-2.5 font-bold text-slate-800">
+                  <div className="flex items-center justify-between gap-1.5 min-w-[90px]">
+                    <span>Batch</span>
+                    <TextColumnFilter
+                      title="Batch"
+                      columnName="batch_number"
+                      value={columnFilters.batch}
+                      onChange={(val) => setColumnFilter("batch", val)}
+                      placeholder="Search batch..."
+                    />
+                  </div>
+                </TableHead>
+                <TableHead className="border-2 border-slate-300 px-3 py-2.5 font-bold text-slate-800 text-right">
+                  <div className="flex items-center justify-end gap-1.5">
+                    <NumericColumnFilter
+                      title="Sold"
+                      filterType={columnFilters.soldType}
+                      minValue={columnFilters.minSold}
+                      maxValue={columnFilters.maxSold}
+                      onChange={(type, min, max) => setNumericColumnFilter("sold", type, min, max)}
+                    />
+                    <span>Sold</span>
+                  </div>
+                </TableHead>
+                <TableHead className="border-2 border-slate-300 px-3 py-2.5 font-bold text-slate-800 text-right">
+                  <div className="flex items-center justify-end gap-1.5">
+                    <NumericColumnFilter
+                      title="Available"
+                      filterType={columnFilters.availableType}
+                      minValue={columnFilters.minAvailable}
+                      maxValue={columnFilters.maxAvailable}
+                      onChange={(type, min, max) => setNumericColumnFilter("available", type, min, max)}
+                    />
+                    <span>Available</span>
+                  </div>
+                </TableHead>
+                <TableHead className="border-2 border-slate-300 px-3 py-2.5 font-bold text-indigo-800 text-right">
+                  <div className="flex items-center justify-end gap-1.5">
+                    <NumericColumnFilter
+                      title="Stock Maintain"
+                      filterType={columnFilters.stockMaintainType}
+                      minValue={columnFilters.minStockMaintain}
+                      maxValue={columnFilters.maxStockMaintain}
+                      onChange={(type, min, max) => setNumericColumnFilter("stockMaintain", type, min, max)}
+                    />
+                    <span className="whitespace-nowrap">Stock Maintain</span>
+                  </div>
+                </TableHead>
+                <TableHead className="border-2 border-slate-300 px-3 py-2.5 font-bold text-amber-700 text-right">
+                  <div className="flex items-center justify-end gap-1.5">
+                    <NumericColumnFilter
+                      title="Hold"
+                      filterType={columnFilters.holdType}
+                      minValue={columnFilters.minHold}
+                      maxValue={columnFilters.maxHold}
+                      onChange={(type, min, max) => setNumericColumnFilter("hold", type, min, max)}
+                    />
+                    <span>Hold</span>
+                  </div>
+                </TableHead>
+                <TableHead className="border-2 border-slate-300 px-3 py-2.5 font-bold text-slate-800 text-right">
+                  <div className="flex items-center justify-end gap-1.5">
+                    <NumericColumnFilter
+                      title="Display"
+                      filterType={columnFilters.displayType}
+                      minValue={columnFilters.minDisplay}
+                      maxValue={columnFilters.maxDisplay}
+                      onChange={(type, min, max) => setNumericColumnFilter("display", type, min, max)}
+                    />
+                    <span>Display</span>
+                  </div>
+                </TableHead>
+                <TableHead className="border-2 border-slate-300 px-3 py-2.5 font-bold text-slate-800 text-right">
+                  <div className="flex items-center justify-end gap-1.5">
+                    <NumericColumnFilter
+                      title="Damaged"
+                      filterType={columnFilters.damageType}
+                      minValue={columnFilters.minDamage}
+                      maxValue={columnFilters.maxDamage}
+                      onChange={(type, min, max) => setNumericColumnFilter("damage", type, min, max)}
+                    />
+                    <span>Damaged</span>
+                  </div>
+                </TableHead>
+                <TableHead className="border-2 border-slate-300 px-3 py-2.5 font-bold text-slate-800">
+                  <div className="flex items-center justify-between gap-1.5 min-w-[120px]">
+                    <span>Description</span>
+                    <TextColumnFilter
+                      title="Description"
+                      columnName="description"
+                      value={columnFilters.description}
+                      onChange={(val) => setColumnFilter("description", val)}
+                      placeholder="Search description..."
+                    />
+                  </div>
+                </TableHead>
+                <TableHead className="border-2 border-slate-300 px-3 py-2.5 font-bold text-slate-800">
+                  <div className="flex items-center justify-between gap-1.5 min-w-[100px]">
+                    <span>Updated</span>
+                    <TextColumnFilter
+                      title="Updated Date"
+                      value={columnFilters.updatedDate}
+                      onChange={(val) => setColumnFilter("updatedDate", val)}
+                      placeholder="Search date..."
+                    />
+                  </div>
+                </TableHead>
+                <TableHead className="border-2 border-slate-300 px-3 py-2.5 font-bold text-slate-800 text-right no-print">
+                  Actions
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

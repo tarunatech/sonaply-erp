@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Download, Printer, Search, FilePlus2, CheckCircle2, Trash2, CalendarIcon, X, Pencil, User, Package, Plus } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -46,6 +47,14 @@ export default function PendingDeliveries() {
   const [currentSale, setCurrentSale] = useState<Sale | null>(null);
   const [challanForm, setChallanForm] = useState({ quantity: 0, batchNo: "", notes: "", stockCategory: "Available" });
   const [batches, setBatches] = useState<StockBatch[]>([]);
+  const [orderClassifiedRows, setOrderClassifiedRows] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem("erp_pending_order_classified");
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
 
   // Edit dialog state
   interface EditItemForm {
@@ -346,12 +355,16 @@ export default function PendingDeliveries() {
       base = base.filter(s => s.estimatedDeliveryDate === selectedEstDate);
     }
     if (filter) {
-      const f = filter.toLowerCase();
-      base = base.filter(s =>
-        (s.customer || '').toLowerCase().includes(f) ||
-        (s.product || '').toLowerCase().includes(f) ||
-        (s.orderNo || '').toLowerCase().includes(f)
-      );
+      const f = filter.toLowerCase().trim();
+      base = base.filter(s => {
+        const pendingChallan = getPendingChallanForSale(s.id);
+        return (
+          (s.customer || '').toLowerCase().includes(f) ||
+          (s.product || '').toLowerCase().includes(f) ||
+          (s.orderNo || '').toLowerCase().includes(f) ||
+          (pendingChallan?.challanNo || '').toLowerCase().includes(f)
+        );
+      });
     }
     return base.sort((a, b) => {
       const dateA = a.updatedAt || a.createdAt || a.orderDate || "";
@@ -360,7 +373,7 @@ export default function PendingDeliveries() {
       if (dateCompare !== 0) return dateCompare;
       return (b.orderNo || '').localeCompare(a.orderNo || '', undefined, { numeric: true, sensitivity: "base" });
     });
-  }, [sales, filter, selectedEstDate]);
+  }, [sales, filter, selectedEstDate, challans]);
 
   const currentProductBatches = useMemo(() => currentSale ? batches.filter(b => b.productName === currentSale.product) : [], [currentSale, batches]);
 
@@ -376,7 +389,7 @@ export default function PendingDeliveries() {
     if (!q) return clients;
     return clients.filter(c =>
       (c.name || '').toLowerCase().includes(q) ||
-      (c.phone || '').toLowerCase().includes(q)
+      (c.phone || '').toLowerCase().includes(q)     
     );
   }, [clients, editForm.customer]);
 
@@ -420,7 +433,8 @@ export default function PendingDeliveries() {
 
     filteredSales.forEach(s => {
       const pendingChallan = getPendingChallanForSale(s.id);
-      const orderKey = s.orderNo || `ORDER-${s.id}`;
+      // Group by pending draft challan number first, then orderNo, then unique fallback
+      const groupKey = (pendingChallan && pendingChallan.challanNo) || s.orderNo || `ORDER-${s.id}`;
 
       const displayPendingQty = getUnhandledPendingQty(s);
 
@@ -438,9 +452,9 @@ export default function PendingDeliveries() {
           return acc + Number(col || 0);
         }, 0);
 
-      if (!groups[orderKey]) {
-        groups[orderKey] = {
-          groupKey: pendingChallan ? pendingChallan.challanNo : orderKey,
+      if (!groups[groupKey]) {
+        groups[groupKey] = {
+          groupKey: groupKey,
           orderNo: s.orderNo,
           challanNo: pendingChallan ? pendingChallan.challanNo : null,
           customer: s.customer,
@@ -452,13 +466,12 @@ export default function PendingDeliveries() {
         };
       }
 
-      if (pendingChallan && (!groups[orderKey].challanNo || !groups[orderKey].challanNo.startsWith("P-"))) {
-        groups[orderKey].challanNo = pendingChallan.challanNo;
-        groups[orderKey].groupKey = pendingChallan.challanNo;
-        groups[orderKey].createdAt = pendingChallan.createdAt || groups[orderKey].createdAt;
+      if (pendingChallan && (!groups[groupKey].challanNo || !groups[groupKey].challanNo.startsWith("P-"))) {
+        groups[groupKey].challanNo = pendingChallan.challanNo;
+        groups[groupKey].createdAt = pendingChallan.createdAt || groups[groupKey].createdAt;
       }
 
-      groups[orderKey].salesItems.push({
+      groups[groupKey].salesItems.push({
         sale: s,
         pendingChallan,
         displayPendingQty,
@@ -473,17 +486,23 @@ export default function PendingDeliveries() {
     if (groupedPendingDeliveries.length > 0) {
       const missingChallans = groupedPendingDeliveries.filter(g => !g.challanNo && g.salesItems.length > 0);
       if (missingChallans.length > 0) {
-        Promise.all(
-          missingChallans.map(g =>
-            generatePendingGroupChallan(g.orderNo, g.salesItems.map(si => si.sale.id))
-          )
-        ).then(results => {
-          if (results.some(res => res && res.length > 0)) {
+        let isCancelled = false;
+        (async () => {
+          let hasUpdated = false;
+          for (const g of missingChallans) {
+            if (isCancelled) break;
+            try {
+              const res = await generatePendingGroupChallan(g.orderNo, g.salesItems.map(si => si.sale.id));
+              if (res && res.length > 0) hasUpdated = true;
+            } catch (err) {
+              console.error("Auto-generate pending challans error:", err);
+            }
+          }
+          if (hasUpdated && !isCancelled) {
             refresh();
           }
-        }).catch(err => {
-          console.error("Auto-generate pending challans error:", err);
-        });
+        })();
+        return () => { isCancelled = true; };
       }
     }
   }, [groupedPendingDeliveries, refresh]);
@@ -589,11 +608,38 @@ export default function PendingDeliveries() {
                   const estDate = group.salesItems.find(i => i.sale.estimatedDeliveryDate)?.sale.estimatedDeliveryDate || null;
                   const isRawOrderNo = group.orderNo.startsWith("ORD-");
                   const displayChallanNo = group.challanNo || (isRawOrderNo ? "P--" : group.orderNo);
+                  const isOrderClassified = !!orderClassifiedRows[group.groupKey];
 
                   return (
                     <TableRow key={group.groupKey} className="hover:bg-slate-50/40">
                       <TableCell className="border-2 border-slate-300 px-4 py-3 text-sm text-slate-700 font-medium whitespace-nowrap">
-                        <div className="font-semibold text-slate-900">{formatLocalDate(group.createdAt || group.orderDate)}</div>
+                        <div className="flex items-start gap-2">
+                          <Checkbox
+                            id={`order-chk-${group.groupKey}`}
+                            checked={isOrderClassified}
+                            onCheckedChange={(checked) => {
+                              setOrderClassifiedRows((prev) => {
+                                const next = { ...prev, [group.groupKey]: !!checked };
+                                try {
+                                  localStorage.setItem("erp_pending_order_classified", JSON.stringify(next));
+                                } catch {}
+                                return next;
+                              });
+                            }}
+                            className="h-4 w-4 rounded border-slate-400 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600 mt-0.5 shrink-0"
+                            title="Classify as Order (reference purpose)"
+                          />
+                          <div>
+                            <div className="font-semibold text-slate-900">{formatLocalDate(group.createdAt || group.orderDate)}</div>
+                            {isOrderClassified && (
+                              <div className="mt-0.5">
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs">
+                                  Order
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
                         <div className="mt-1.5">
                           <Popover>
                             <PopoverTrigger asChild>

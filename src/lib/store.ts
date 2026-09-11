@@ -297,6 +297,32 @@ export interface GetBatchesParams {
   limit?: number;
   search?: string;
   category?: string;
+  stockStatus?: string;
+  isCancelled?: boolean | string;
+  isDeadStock?: boolean | string;
+  isNil?: boolean | string;
+  product?: string;
+  batch?: string;
+  minSold?: number | string;
+  maxSold?: number | string;
+  soldType?: string;
+  minAvailable?: number | string;
+  maxAvailable?: number | string;
+  availableType?: string;
+  minStockMaintain?: number | string;
+  maxStockMaintain?: number | string;
+  stockMaintainType?: string;
+  minHold?: number | string;
+  maxHold?: number | string;
+  holdType?: string;
+  minDisplay?: number | string;
+  maxDisplay?: number | string;
+  displayType?: string;
+  minDamage?: number | string;
+  maxDamage?: number | string;
+  damageType?: string;
+  description?: string;
+  updatedDate?: string;
 }
 
 export interface StockStats {
@@ -320,6 +346,16 @@ export const getBatches = async (): Promise<StockBatch[]> => {
   return data.map(mapBatch);
 };
 
+export const getDistinctColumnValues = async (
+  column: "product_name" | "category" | "batch_number" | "supplier" | "description",
+  search?: string,
+): Promise<{ value: string; count: number }[]> => {
+  const query = new URLSearchParams();
+  query.set("column", column);
+  if (search) query.set("search", search);
+  return request<any[]>(`/batches/distinct-column-values?${query.toString()}`);
+};
+
 export const getBatchesPaginated = async (
   params: GetBatchesParams = {},
 ): Promise<PaginatedBatchesResponse> => {
@@ -329,6 +365,48 @@ export const getBatchesPaginated = async (
   if (params.search) query.set("search", params.search);
   if (params.category && params.category !== "all")
     query.set("category", params.category);
+  if (params.stockStatus && params.stockStatus !== "all")
+    query.set("stockStatus", params.stockStatus);
+  if (params.isCancelled !== undefined)
+    query.set("isCancelled", String(params.isCancelled));
+  if (params.isDeadStock !== undefined)
+    query.set("isDeadStock", String(params.isDeadStock));
+  if (params.isNil !== undefined)
+    query.set("isNil", String(params.isNil));
+  if (params.product) query.set("product", params.product);
+  if (params.batch) query.set("batch", params.batch);
+  if (params.minSold !== undefined && params.minSold !== "")
+    query.set("minSold", String(params.minSold));
+  if (params.maxSold !== undefined && params.maxSold !== "")
+    query.set("maxSold", String(params.maxSold));
+  if (params.soldType) query.set("soldType", params.soldType);
+  if (params.minAvailable !== undefined && params.minAvailable !== "")
+    query.set("minAvailable", String(params.minAvailable));
+  if (params.maxAvailable !== undefined && params.maxAvailable !== "")
+    query.set("maxAvailable", String(params.maxAvailable));
+  if (params.availableType) query.set("availableType", params.availableType);
+  if (params.minStockMaintain !== undefined && params.minStockMaintain !== "")
+    query.set("minStockMaintain", String(params.minStockMaintain));
+  if (params.maxStockMaintain !== undefined && params.maxStockMaintain !== "")
+    query.set("maxStockMaintain", String(params.maxStockMaintain));
+  if (params.stockMaintainType) query.set("stockMaintainType", params.stockMaintainType);
+  if (params.minHold !== undefined && params.minHold !== "")
+    query.set("minHold", String(params.minHold));
+  if (params.maxHold !== undefined && params.maxHold !== "")
+    query.set("maxHold", String(params.maxHold));
+  if (params.holdType) query.set("holdType", params.holdType);
+  if (params.minDisplay !== undefined && params.minDisplay !== "")
+    query.set("minDisplay", String(params.minDisplay));
+  if (params.maxDisplay !== undefined && params.maxDisplay !== "")
+    query.set("maxDisplay", String(params.maxDisplay));
+  if (params.displayType) query.set("displayType", params.displayType);
+  if (params.minDamage !== undefined && params.minDamage !== "")
+    query.set("minDamage", String(params.minDamage));
+  if (params.maxDamage !== undefined && params.maxDamage !== "")
+    query.set("maxDamage", String(params.maxDamage));
+  if (params.damageType) query.set("damageType", params.damageType);
+  if (params.description) query.set("description", params.description);
+  if (params.updatedDate) query.set("updatedDate", params.updatedDate);
 
   const res = await request<any>(`/batches?${query.toString()}`);
   return {
