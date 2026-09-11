@@ -398,9 +398,61 @@ app.post("/api/products", async (req, res) => {
 });
 
 // --- Batches ---
+app.get("/api/batches/distinct-column-values", async (req, res) => {
+  try {
+    const { column, search } = req.query;
+    const allowed = ["product_name", "category", "batch_number", "supplier", "description"];
+    if (!allowed.includes(column)) {
+      return res.status(400).json({ error: "Invalid column" });
+    }
+    const values = [];
+    let query = `SELECT ${column} as value, COUNT(*) as count FROM batches WHERE ${column} IS NOT NULL AND TRIM(${column}) != ''`;
+    if (search && search.trim()) {
+      values.push(`%${search.trim().toLowerCase()}%`);
+      query += ` AND LOWER(${column}) LIKE $1`;
+    }
+    query += ` GROUP BY ${column} ORDER BY ${column} ASC LIMIT 100`;
+    const result = await db.query(query, values);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/api/batches", async (req, res) => {
   try {
-    const { page, limit = 50, search, category } = req.query;
+    const {
+      page,
+      limit = 50,
+      search,
+      category,
+      product,
+      batch,
+      minSold,
+      maxSold,
+      soldType,
+      minAvailable,
+      maxAvailable,
+      availableType,
+      minStockMaintain,
+      maxStockMaintain,
+      stockMaintainType,
+      minHold,
+      maxHold,
+      holdType,
+      minDisplay,
+      maxDisplay,
+      displayType,
+      minDamage,
+      maxDamage,
+      damageType,
+      description,
+      updatedDate,
+      stockStatus,
+      isCancelled,
+      isDeadStock,
+      isNil,
+    } = req.query;
 
     if (!page) {
       const result = await db.query(
@@ -416,11 +468,13 @@ app.get("/api/batches", async (req, res) => {
     const conditions = [];
     const values = [];
 
+    // Global category filter
     if (category && category !== "all") {
       values.push(category);
       conditions.push(`LOWER(category) = LOWER($${values.length})`);
     }
 
+    // Global search filter
     if (search && search.trim()) {
       const tokens = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
       tokens.forEach((token) => {
@@ -430,6 +484,142 @@ app.get("/api/batches", async (req, res) => {
           `(LOWER(COALESCE(product_name, '')) LIKE $${idx} OR LOWER(COALESCE(product_code, '')) LIKE $${idx} OR LOWER(COALESCE(batch_number, '')) LIKE $${idx} OR LOWER(COALESCE(category, '')) LIKE $${idx} OR LOWER(COALESCE(supplier, '')) LIKE $${idx} OR LOWER(COALESCE(description, '')) LIKE $${idx})`
         );
       });
+    }
+
+    // Column Filters
+    // 1. Product Name filter
+    if (product && product.trim()) {
+      values.push(`%${product.trim().toLowerCase()}%`);
+      conditions.push(`LOWER(COALESCE(product_name, '')) LIKE $${values.length}`);
+    }
+
+    // 2. Batch Number filter
+    if (batch && batch.trim()) {
+      values.push(`%${batch.trim().toLowerCase()}%`);
+      conditions.push(`LOWER(COALESCE(batch_number, '')) LIKE $${values.length}`);
+    }
+
+    // 3. Sold quantity filter
+    const soldFormula = "GREATEST(0, quantity - available_qty - COALESCE(display_qty, 0) - COALESCE(damage_qty, 0) - COALESCE(hold_qty, 0))";
+    if (soldType === ">0") {
+      conditions.push(`${soldFormula} > 0`);
+    } else if (soldType === "=0") {
+      conditions.push(`${soldFormula} = 0`);
+    } else {
+      if (minSold !== undefined && minSold !== "") {
+        values.push(Number(minSold) || 0);
+        conditions.push(`${soldFormula} >= $${values.length}`);
+      }
+      if (maxSold !== undefined && maxSold !== "") {
+        values.push(Number(maxSold) || 0);
+        conditions.push(`${soldFormula} <= $${values.length}`);
+      }
+    }
+
+    // 4. Available quantity filter
+    if (availableType === ">0") {
+      conditions.push(`available_qty > 0`);
+    } else if (availableType === "=0") {
+      conditions.push(`available_qty = 0`);
+    } else {
+      if (minAvailable !== undefined && minAvailable !== "") {
+        values.push(Number(minAvailable) || 0);
+        conditions.push(`available_qty >= $${values.length}`);
+      }
+      if (maxAvailable !== undefined && maxAvailable !== "") {
+        values.push(Number(maxAvailable) || 0);
+        conditions.push(`available_qty <= $${values.length}`);
+      }
+    }
+
+    // 5. Stock Maintain filter
+    if (stockMaintainType === ">0") {
+      conditions.push(`COALESCE(stock_maintain, 0) > 0`);
+    } else if (stockMaintainType === "=0") {
+      conditions.push(`COALESCE(stock_maintain, 0) = 0`);
+    } else {
+      if (minStockMaintain !== undefined && minStockMaintain !== "") {
+        values.push(Number(minStockMaintain) || 0);
+        conditions.push(`COALESCE(stock_maintain, 0) >= $${values.length}`);
+      }
+      if (maxStockMaintain !== undefined && maxStockMaintain !== "") {
+        values.push(Number(maxStockMaintain) || 0);
+        conditions.push(`COALESCE(stock_maintain, 0) <= $${values.length}`);
+      }
+    }
+
+    // 6. Hold quantity filter
+    if (holdType === ">0") {
+      conditions.push(`COALESCE(hold_qty, 0) > 0`);
+    } else if (holdType === "=0") {
+      conditions.push(`COALESCE(hold_qty, 0) = 0`);
+    } else {
+      if (minHold !== undefined && minHold !== "") {
+        values.push(Number(minHold) || 0);
+        conditions.push(`COALESCE(hold_qty, 0) >= $${values.length}`);
+      }
+      if (maxHold !== undefined && maxHold !== "") {
+        values.push(Number(maxHold) || 0);
+        conditions.push(`COALESCE(hold_qty, 0) <= $${values.length}`);
+      }
+    }
+
+    // 7. Display quantity filter
+    if (displayType === ">0") {
+      conditions.push(`COALESCE(display_qty, 0) > 0`);
+    } else if (displayType === "=0") {
+      conditions.push(`COALESCE(display_qty, 0) = 0`);
+    } else {
+      if (minDisplay !== undefined && minDisplay !== "") {
+        values.push(Number(minDisplay) || 0);
+        conditions.push(`COALESCE(display_qty, 0) >= $${values.length}`);
+      }
+      if (maxDisplay !== undefined && maxDisplay !== "") {
+        values.push(Number(maxDisplay) || 0);
+        conditions.push(`COALESCE(display_qty, 0) <= $${values.length}`);
+      }
+    }
+
+    // 8. Damage quantity filter
+    if (damageType === ">0") {
+      conditions.push(`COALESCE(damage_qty, 0) > 0`);
+    } else if (damageType === "=0") {
+      conditions.push(`COALESCE(damage_qty, 0) = 0`);
+    } else {
+      if (minDamage !== undefined && minDamage !== "") {
+        values.push(Number(minDamage) || 0);
+        conditions.push(`COALESCE(damage_qty, 0) >= $${values.length}`);
+      }
+      if (maxDamage !== undefined && maxDamage !== "") {
+        values.push(Number(maxDamage) || 0);
+        conditions.push(`COALESCE(damage_qty, 0) <= $${values.length}`);
+      }
+    }
+
+    // 9. Description filter
+    if (description && description.trim()) {
+      values.push(`%${description.trim().toLowerCase()}%`);
+      conditions.push(`LOWER(COALESCE(description, '')) LIKE $${values.length}`);
+    }
+
+    // 10. Updated Date filter
+    if (updatedDate && updatedDate.trim()) {
+      values.push(`%${updatedDate.trim().toLowerCase()}%`);
+      const idx = values.length;
+      conditions.push(
+        `(TO_CHAR(date, 'YYYY-MM-DD') LIKE $${idx} OR TO_CHAR(date, 'DD Mon YYYY') ILIKE $${idx} OR TO_CHAR(date, 'DD-MM-YYYY') LIKE $${idx})`
+      );
+    }
+
+    // 11. Status flags (Not in Next Folder, Dead Stock, Nil, Regular)
+    if (stockStatus === "not_in_next_folder" || isCancelled === "true" || isCancelled === true) {
+      conditions.push(`is_cancelled = TRUE`);
+    } else if (stockStatus === "dead_stock" || isDeadStock === "true" || isDeadStock === true) {
+      conditions.push(`is_dead_stock = TRUE`);
+    } else if (stockStatus === "nil" || isNil === "true" || isNil === true) {
+      conditions.push(`is_nil = TRUE`);
+    } else if (stockStatus === "regular") {
+      conditions.push(`COALESCE(is_cancelled, FALSE) = FALSE AND COALESCE(is_dead_stock, FALSE) = FALSE AND COALESCE(is_nil, FALSE) = FALSE`);
     }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -783,6 +973,11 @@ app.delete("/api/purchases/:id", async (req, res) => {
 
 // --- Helper for Challan Numbering ---
 async function getNextChallanNumber(prefix = "CH-") {
+  try {
+    await db.query("SELECT pg_advisory_xact_lock(987654321)");
+  } catch (e) {
+    // Continue if advisory lock is not supported or outside transaction
+  }
   const result = await db.query(
     `SELECT challan_no FROM challans WHERE challan_no LIKE 'CH-%' OR challan_no LIKE 'P-%' OR challan_no LIKE 'CH%'`,
   );

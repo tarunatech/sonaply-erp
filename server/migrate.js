@@ -784,6 +784,27 @@ async function migrate() {
       GROUP BY TRIM(s.product)
     `);
 
+    // 15. Reconcile pending delivery challans and clean up zero-qty records
+    console.log('Step 15: Reconciling pending draft challans and zero-quantity records...');
+    await db.query("DELETE FROM challans WHERE quantity <= 0");
+
+    const duplicateP = await db.query(`
+      SELECT sales_id, COUNT(*) as cnt
+      FROM challans
+      WHERE challan_no LIKE 'P-%' AND status = 'Pending' AND is_cancelled = FALSE AND sales_id IS NOT NULL
+      GROUP BY sales_id
+      HAVING COUNT(*) > 1
+    `);
+    for (const row of duplicateP.rows) {
+      const pRows = await db.query(
+        "SELECT id FROM challans WHERE sales_id = $1 AND challan_no LIKE 'P-%' AND status = 'Pending' AND is_cancelled = FALSE ORDER BY created_at ASC, id ASC",
+        [row.sales_id]
+      );
+      for (let i = 1; i < pRows.rows.length; i++) {
+        await db.query("DELETE FROM challans WHERE id = $1", [pRows.rows[i].id]);
+      }
+    }
+
     console.log('✅ All migrations applied successfully!');
   } catch (err) {
     console.error('❌ Database migration failed:', err);

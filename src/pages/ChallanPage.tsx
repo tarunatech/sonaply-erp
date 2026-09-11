@@ -492,6 +492,7 @@ export default function ChallanPage() {
   .meta .label{ display:inline-block; width: 28mm; font-weight:700; font-size: 15.5px; }
   .meta .client-name{ font-size: 18px; font-weight: 700; }
   .col-head{ display: grid; grid-template-columns: 24mm 1fr 12mm; gap: 4.5mm; align-items: flex-end; font-weight: 700; font-size: 16px; border-bottom: 2px solid #000; padding-bottom: 1.5mm; margin-bottom: 2.5mm; }
+  .col-head .c-qty{ text-align: right; }
   .item{ padding-bottom: 2.5mm; margin-bottom: 2.5mm; border-bottom: 1px dashed #666; }
   .item:last-child{ border-bottom: none; margin-bottom: 0; }
   .item .row-data{ display: grid; grid-template-columns: 24mm 1fr 12mm; gap: 4.5mm; align-items: flex-start; }
@@ -500,8 +501,10 @@ export default function ChallanPage() {
   .item .c-qty{ text-align: right; font-size: 16px; font-weight: 700; }
   .item .sub-batch{ font-size: 13.5px; font-weight: 700; color: #111; margin-top: 1px; }
   .item .sub-desc{ font-size: 14px; font-weight: 500; color: #222; margin-top: 2px; }
-  .totals .row{ font-size: 16px; font-weight: 700; margin: 1mm 0; }
+  .totals .row{ display: grid; grid-template-columns: 24mm 1fr 12mm; gap: 4.5mm; align-items: center; font-size: 16px; font-weight: 700; margin: 1mm 0; }
   .totals .grand{ font-weight:700; font-size: 18px; }
+  .totals .total-label{ grid-column: span 2; font-size: 17px; font-weight: 700; }
+  .totals .total-qty{ text-align: right; font-size: 18px; font-weight: 700; }
   .narration-text{ font-size: 15.5px; font-weight: 700; }
   @media print{ body{ background:#fff; } .print-btn-wrap{ display:none; } }
 </style>
@@ -523,7 +526,7 @@ export default function ChallanPage() {
   <div id="items">${itemsHtml}</div>
   <div class="dashed"></div>
   <div class="totals">
-    <div class="row grand bold"><span>Total Qty</span><span>${totalQty}</span></div>
+    <div class="row grand bold"><span class="total-label">Total Qty</span><span class="total-qty">${totalQty}</span></div>
   </div>
   ${printableNarration ? `
     <div class="dashed-light"></div>
