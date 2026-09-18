@@ -680,12 +680,61 @@ app.get("/api/batches", async (req, res) => {
     const total = parseInt(countResult.rows[0].total, 10) || 0;
     const totalPages = Math.ceil(total / limitNum) || 1;
 
-    const dataValues = [...values, limitNum, offset];
-    const limitIdx = values.length + 1;
-    const offsetIdx = values.length + 2;
+    let orderByClause = "ORDER BY LOWER(product_name) ASC, LOWER(batch_number) ASC, date DESC, id DESC";
+    const dataValues = [...values];
+
+    const searchTarget = (search && search.trim()) || (product && product.trim());
+
+    if (searchTarget) {
+      const sLower = searchTarget.trim().toLowerCase();
+      const sCompact = sLower.replace(/\s+/g, "");
+      const sTokens = sLower.split(/\s+/).filter(Boolean);
+
+      dataValues.push(sLower);
+      const exactIdx = dataValues.length;
+
+      dataValues.push(sCompact);
+      const compactIdx = dataValues.length;
+
+      dataValues.push(`${sLower}%`);
+      const prefixIdx = dataValues.length;
+
+      dataValues.push(`${sCompact}%`);
+      const compactPrefixIdx = dataValues.length;
+
+      dataValues.push(`%${sLower}%`);
+      const containsIdx = dataValues.length;
+
+      dataValues.push(`%${sCompact}%`);
+      const compactContainsIdx = dataValues.length;
+
+      // Token conditions for product_name
+      const tokenConditions = sTokens.map((tok) => {
+        dataValues.push(`%${tok}%`);
+        return `LOWER(COALESCE(product_name, '')) LIKE $${dataValues.length}`;
+      });
+      const tokensInProdCondition = tokenConditions.length > 0 ? tokenConditions.join(" AND ") : "FALSE";
+
+      orderByClause = `ORDER BY 
+        CASE 
+          WHEN LOWER(TRIM(COALESCE(product_name, ''))) = $${exactIdx} OR REPLACE(LOWER(COALESCE(product_name, '')), ' ', '') = $${compactIdx} THEN 1
+          WHEN LOWER(COALESCE(product_name, '')) LIKE $${prefixIdx} OR REPLACE(LOWER(COALESCE(product_name, '')), ' ', '') LIKE $${compactPrefixIdx} THEN 2
+          WHEN LOWER(COALESCE(product_name, '')) LIKE $${containsIdx} OR REPLACE(LOWER(COALESCE(product_name, '')), ' ', '') LIKE $${compactContainsIdx} THEN 3
+          WHEN ${tokensInProdCondition} THEN 4
+          WHEN LOWER(TRIM(COALESCE(batch_number, ''))) = $${exactIdx} OR LOWER(TRIM(COALESCE(product_code, ''))) = $${exactIdx} THEN 5
+          WHEN LOWER(COALESCE(batch_number, '')) LIKE $${prefixIdx} OR LOWER(COALESCE(product_code, '')) LIKE $${prefixIdx} THEN 6
+          ELSE 7
+        END ASC, LOWER(product_name) ASC, LOWER(batch_number) ASC, date DESC, id DESC`;
+    }
+
+    dataValues.push(limitNum);
+    const limitIdx = dataValues.length;
+
+    dataValues.push(offset);
+    const offsetIdx = dataValues.length;
 
     const dataResult = await db.query(
-      `SELECT * FROM batches ${whereClause} ORDER BY LOWER(product_name) ASC, LOWER(batch_number) ASC, date DESC, id DESC LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+      `SELECT * FROM batches ${whereClause} ${orderByClause} LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
       dataValues
     );
 
