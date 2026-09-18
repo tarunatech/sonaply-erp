@@ -712,12 +712,38 @@ export const updateChallanGroup = (
       })),
     }),
   });
+export const updateDeliveredOrderGroup = (
+  challanNumber: string,
+  payload: ChallanGroupUpdate,
+) =>
+  request<any>(`/delivered-orders/group/${encodeURIComponent(challanNumber)}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      customer: payload.customer || payload.clientName,
+      client_phone: payload.client_phone || payload.clientPhone,
+      date: payload.date,
+      items: payload.items.map((item) => ({
+        id: item.id,
+        salesId: item.salesId,
+        product: item.productName || item.product,
+        quantity: item.quantity,
+        batch_no: item.batchNo,
+        notes: item.notes,
+        stock_category:
+          item.stockCategory || item.stock_category || "Available",
+      })),
+    }),
+  });
 export const deleteChallan = (id: string) =>
   request(`/challans/${id}`, { method: "DELETE" });
 export const deleteChallanGroup = (challanNumber: string) =>
   request(`/challans/group/${encodeURIComponent(challanNumber)}`, { method: "DELETE" });
 export const cancelChallanGroup = (challanNumber: string) =>
   request<any>(`/challans/cancel/${encodeURIComponent(challanNumber)}`, {
+    method: "PUT",
+  });
+export const cancelPendingDeliveryGroup = (groupKey: string) =>
+  request<any>(`/pending-orders/group/${encodeURIComponent(groupKey)}/cancel`, {
     method: "PUT",
   });
 export const deliverPendingChallan = (id: string) =>

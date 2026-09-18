@@ -1,12 +1,13 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
-import { getChallans, getSales, exportCSV, getBatches, Challan, Sale, StockBatch, formatLocalDate } from "@/lib/store";
+import { useNavigate } from "react-router-dom";
+import { getChallans, getSales, exportCSV, getBatches, Challan, Sale, StockBatch, formatLocalDate, getLocalDateString } from "@/lib/store";
 import { format } from "date-fns";
 import { printElement } from "@/lib/print";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Download, Printer, Search } from "lucide-react";
+import { Download, Printer, Search, Pencil } from "lucide-react";
 
 const renderCustomer = (customerName: string) => {
   const match = customerName.match(/(.*?)\s*\(([^)]+)\)$/);
@@ -22,6 +23,7 @@ const renderCustomer = (customerName: string) => {
 };
 
 export default function DeliveredDeliveries() {
+  const navigate = useNavigate();
   const [challans, setChallans] = useState<Challan[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [batches, setBatches] = useState<StockBatch[]>([]);
@@ -138,12 +140,13 @@ export default function DeliveredDeliveries() {
                 <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Client</TableHead>
                 <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 w-2/5">Items / Quantities</TableHead>
                 <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Status</TableHead>
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right">Action</TableHead>
               </TableRow>
             </TableHeader>
               <TableBody>
                 {groupedChallans.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="border-2 border-slate-300 text-center text-muted-foreground py-8">
+                    <TableCell colSpan={6} className="border-2 border-slate-300 text-center text-muted-foreground py-8">
                       No delivered orders found.
                     </TableCell>
                   </TableRow>
@@ -216,6 +219,43 @@ export default function DeliveredDeliveries() {
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-800">
                           🚚 Delivered
                         </span>
+                      </TableCell>
+                      <TableCell className="border-2 border-slate-300 px-4 py-3 text-right align-middle no-print">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 text-xs font-semibold text-blue-600 border-blue-200 hover:bg-blue-50 hover:text-blue-700 gap-1.5 shadow-2xs"
+                          onClick={() => {
+                            const parentSale = sales.find(s => s.id === group.salesId);
+                            navigate("/sales", {
+                              state: {
+                                editDeliveredOrder: {
+                                  challanNumber: group.challanNo,
+                                  orderNo: parentSale?.orderNo || group.challanNo,
+                                  customer: group.customer,
+                                  clientPhone: group.clientPhone,
+                                  category: parentSale?.category || "Regular",
+                                  orderDate: group.createdAt ? (typeof group.createdAt === 'string' ? group.createdAt.slice(0, 10) : format(new Date(group.createdAt), "yyyy-MM-dd")) : getLocalDateString(),
+                                  notes: group.items.find(i => i.notes)?.notes || parentSale?.remarks || "",
+                                  items: group.items.map(i => ({
+                                    id: i.id,
+                                    salesId: i.salesId,
+                                    productName: i.product,
+                                    quantity: Number(i.quantity),
+                                    batchNo: i.batchNo || "0",
+                                    stockCategory: i.stockCategory || "Available",
+                                    notes: i.notes || "",
+                                  })),
+                                  returnTo: "/delivered-orders",
+                                },
+                              },
+                            });
+                          }}
+                          title="Edit delivered products (replace product/quantity)"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                          Edit
+                        </Button>
                       </TableCell>
                     </TableRow>
                   );

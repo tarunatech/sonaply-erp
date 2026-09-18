@@ -429,12 +429,12 @@ function NumericColumnFilter({
           </div>
 
           {/* Quick Presets */}
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className="grid grid-cols-4 gap-1">
             <Button
               type="button"
               variant={type === "all" ? "default" : "outline"}
               size="sm"
-              className={`h-7 text-xs ${type === "all" ? "bg-slate-800" : ""}`}
+              className={`h-7 px-1 text-xs ${type === "all" ? "bg-slate-800 text-white" : ""}`}
               onClick={() => {
                 setType("all");
                 setMin("");
@@ -448,7 +448,7 @@ function NumericColumnFilter({
               type="button"
               variant={type === ">0" ? "default" : "outline"}
               size="sm"
-              className={`h-7 text-xs font-semibold ${type === ">0" ? "bg-emerald-600 hover:bg-emerald-700 text-white" : "text-emerald-700"}`}
+              className={`h-7 px-1 text-xs font-semibold ${type === ">0" ? "bg-emerald-600 hover:bg-emerald-700 text-white" : "text-emerald-700"}`}
               onClick={() => {
                 setType(">0");
                 setMin("");
@@ -462,7 +462,7 @@ function NumericColumnFilter({
               type="button"
               variant={type === "=0" ? "default" : "outline"}
               size="sm"
-              className={`h-7 text-xs font-semibold ${type === "=0" ? "bg-slate-700 hover:bg-slate-800 text-white" : "text-slate-700"}`}
+              className={`h-7 px-1 text-xs font-semibold ${type === "=0" ? "bg-slate-700 hover:bg-slate-800 text-white" : "text-slate-700"}`}
               onClick={() => {
                 setType("=0");
                 setMin("");
@@ -471,6 +471,21 @@ function NumericColumnFilter({
               }}
             >
               = 0
+            </Button>
+            <Button
+              type="button"
+              variant={type === "<0" ? "default" : "outline"}
+              size="sm"
+              className={`h-7 px-1 text-xs font-semibold ${type === "<0" ? "bg-red-600 hover:bg-red-700 text-white" : "text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"}`}
+              onClick={() => {
+                setType("<0");
+                setMin("");
+                setMax("");
+                handleApply("<0", "", "");
+              }}
+              title="Less than 0 (Negative stock)"
+            >
+              &lt; 0
             </Button>
           </div>
 
@@ -1273,6 +1288,8 @@ export default function StockList() {
       pills.push({ key: "sold", label: "Sold: > 0", onRemove: () => setNumericColumnFilter("sold", "all", "", "") });
     } else if (columnFilters.soldType === "=0") {
       pills.push({ key: "sold", label: "Sold: = 0", onRemove: () => setNumericColumnFilter("sold", "all", "", "") });
+    } else if (columnFilters.soldType === "<0") {
+      pills.push({ key: "sold", label: "Sold: < 0", onRemove: () => setNumericColumnFilter("sold", "all", "", "") });
     } else if (columnFilters.minSold || columnFilters.maxSold) {
       pills.push({
         key: "sold",
@@ -1284,6 +1301,8 @@ export default function StockList() {
       pills.push({ key: "available", label: "Available: > 0", onRemove: () => setNumericColumnFilter("available", "all", "", "") });
     } else if (columnFilters.availableType === "=0") {
       pills.push({ key: "available", label: "Available: = 0", onRemove: () => setNumericColumnFilter("available", "all", "", "") });
+    } else if (columnFilters.availableType === "<0") {
+      pills.push({ key: "available", label: "Available: < 0 (Negative)", onRemove: () => setNumericColumnFilter("available", "all", "", "") });
     } else if (columnFilters.minAvailable || columnFilters.maxAvailable) {
       pills.push({
         key: "available",
@@ -1295,6 +1314,8 @@ export default function StockList() {
       pills.push({ key: "stockMaintain", label: "Stock Maintain: > 0", onRemove: () => setNumericColumnFilter("stockMaintain", "all", "", "") });
     } else if (columnFilters.stockMaintainType === "=0") {
       pills.push({ key: "stockMaintain", label: "Stock Maintain: = 0", onRemove: () => setNumericColumnFilter("stockMaintain", "all", "", "") });
+    } else if (columnFilters.stockMaintainType === "<0") {
+      pills.push({ key: "stockMaintain", label: "Stock Maintain: < 0", onRemove: () => setNumericColumnFilter("stockMaintain", "all", "", "") });
     } else if (columnFilters.minStockMaintain || columnFilters.maxStockMaintain) {
       pills.push({
         key: "stockMaintain",
@@ -1306,6 +1327,8 @@ export default function StockList() {
       pills.push({ key: "hold", label: "Hold: > 0", onRemove: () => setNumericColumnFilter("hold", "all", "", "") });
     } else if (columnFilters.holdType === "=0") {
       pills.push({ key: "hold", label: "Hold: = 0", onRemove: () => setNumericColumnFilter("hold", "all", "", "") });
+    } else if (columnFilters.holdType === "<0") {
+      pills.push({ key: "hold", label: "Hold: < 0", onRemove: () => setNumericColumnFilter("hold", "all", "", "") });
     } else if (columnFilters.minHold || columnFilters.maxHold) {
       pills.push({
         key: "hold",
@@ -1317,6 +1340,8 @@ export default function StockList() {
       pills.push({ key: "display", label: "Display: > 0", onRemove: () => setNumericColumnFilter("display", "all", "", "") });
     } else if (columnFilters.displayType === "=0") {
       pills.push({ key: "display", label: "Display: = 0", onRemove: () => setNumericColumnFilter("display", "all", "", "") });
+    } else if (columnFilters.displayType === "<0") {
+      pills.push({ key: "display", label: "Display: < 0", onRemove: () => setNumericColumnFilter("display", "all", "", "") });
     } else if (columnFilters.minDisplay || columnFilters.maxDisplay) {
       pills.push({
         key: "display",
@@ -1328,6 +1353,8 @@ export default function StockList() {
       pills.push({ key: "damage", label: "Damaged: > 0", onRemove: () => setNumericColumnFilter("damage", "all", "", "") });
     } else if (columnFilters.damageType === "=0") {
       pills.push({ key: "damage", label: "Damaged: = 0", onRemove: () => setNumericColumnFilter("damage", "all", "", "") });
+    } else if (columnFilters.damageType === "<0") {
+      pills.push({ key: "damage", label: "Damaged: < 0", onRemove: () => setNumericColumnFilter("damage", "all", "", "") });
     } else if (columnFilters.minDamage || columnFilters.maxDamage) {
       pills.push({
         key: "damage",

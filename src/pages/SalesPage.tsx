@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { addSale, addSaleBulk, addClient, getBatches, getClients, getSales, addHold, updateSale, deleteSale, deleteChallanGroup, exportCSV, confirmSale, deliverSale, updateChallanGroup, Sale, Client, StockBatch, generateWhatsAppLink, getLocalDateString } from "@/lib/store";
+import { addSale, addSaleBulk, addClient, getBatches, getClients, getSales, addHold, cancelHold, updateSale, deleteSale, deleteChallanGroup, exportCSV, confirmSale, deliverSale, updateChallanGroup, updateDeliveredOrderGroup, Sale, Client, StockBatch, generateWhatsAppLink, getLocalDateString } from "@/lib/store";
 import { Hand } from "lucide-react";
 
 import { printElement } from "@/lib/print";
@@ -98,6 +98,9 @@ export default function SalesPage() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('new');
   const [editingChallanNumber, setEditingChallanNumber] = useState<string | null>(null);
+  const [isEditingDeliveredOrder, setIsEditingDeliveredOrder] = useState(false);
+  const [isEditingHold, setIsEditingHold] = useState(false);
+  const [editingHoldId, setEditingHoldId] = useState<string | null>(null);
   const [returnTo, setReturnTo] = useState<string | null>(null);
   const [clientName, setClientName] = useState('');
   const [clientPhone, setClientPhone] = useState('');
@@ -119,10 +122,13 @@ export default function SalesPage() {
   useEffect(() => {
     if (items.length > 1) {
       const lastIndex = items.length - 1;
-      const lastInput = productInputsRef.current[lastIndex];
-      if (lastInput && !lastInput.value) {
-        lastInput.focus();
-      }
+      const timer = setTimeout(() => {
+        const lastInput = productInputsRef.current[lastIndex];
+        if (lastInput && !lastInput.value) {
+          lastInput.focus();
+        }
+      }, 50);
+      return () => clearTimeout(timer);
     }
   }, [items.length]);
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
@@ -151,8 +157,100 @@ export default function SalesPage() {
   const refreshClients = useCallback(() => getClients().then(setAllClients), []);
 
   useEffect(() => {
+    if (location.state?.editHold) {
+      const { editHold } = location.state;
+      setIsEditingHold(true);
+      setIsEditingDeliveredOrder(false);
+      setEditingHoldId(editHold.id);
+      setEditingChallanNumber(null);
+      setClientName(editHold.clientName || '');
+      setClientPhone(editHold.clientPhone || '');
+      setPriceCategory(editHold.category || 'Regular');
+      setOrderDate(editHold.orderDate || getLocalDateString());
+      setNarration(editHold.notes || '');
+      if (editHold.items && editHold.items.length > 0) {
+        setItems(
+          editHold.items.map((it: any) => ({
+            id: it.id,
+            productName: it.productName || it.product || '',
+            quantity: Number(it.quantity || 0),
+            stockCategory: it.stockCategory || 'Available',
+            batchNo: it.batchNo || '0',
+            isProductSelected: true,
+          }))
+        );
+      }
+      setReturnTo(editHold.returnTo || '/holds');
+      setActiveTab('new');
+
+      if (allClients.length > 0 && editHold.clientName) {
+        const matching = allClients.find(
+          (c) => c.name.toLowerCase().trim() === editHold.clientName.toLowerCase().trim()
+        );
+        if (matching) setSelectedClientId(matching.id);
+      }
+
+      window.history.replaceState({}, document.title);
+
+      setTimeout(() => {
+        if (clientInputRef.current) {
+          clientInputRef.current.focus();
+          clientInputRef.current.select();
+        }
+      }, 100);
+      return;
+    }
+
+    if (location.state?.editDeliveredOrder) {
+      const { editDeliveredOrder } = location.state;
+      setIsEditingDeliveredOrder(true);
+      setIsEditingHold(false);
+      setEditingHoldId(null);
+      setClientName(editDeliveredOrder.customer || '');
+      setClientPhone(editDeliveredOrder.clientPhone || '');
+      setPriceCategory(editDeliveredOrder.category || 'Regular');
+      setOrderDate(editDeliveredOrder.orderDate || getLocalDateString());
+      setNarration(editDeliveredOrder.notes || '');
+      if (editDeliveredOrder.items && editDeliveredOrder.items.length > 0) {
+        setItems(
+          editDeliveredOrder.items.map((it: any) => ({
+            id: it.id,
+            salesId: it.salesId,
+            productName: it.productName || it.product || '',
+            quantity: Number(it.quantity || 0),
+            stockCategory: it.stockCategory || 'Available',
+            batchNo: it.batchNo || '0',
+            isProductSelected: true,
+          }))
+        );
+      }
+      setEditingChallanNumber(editDeliveredOrder.challanNumber);
+      setReturnTo(editDeliveredOrder.returnTo || '/delivered-deliveries');
+      setActiveTab('new');
+
+      if (allClients.length > 0 && editDeliveredOrder.customer) {
+        const matching = allClients.find(
+          (c) => c.name.toLowerCase().trim() === editDeliveredOrder.customer.toLowerCase().trim()
+        );
+        if (matching) setSelectedClientId(matching.id);
+      }
+
+      window.history.replaceState({}, document.title);
+
+      setTimeout(() => {
+        if (clientInputRef.current) {
+          clientInputRef.current.focus();
+          clientInputRef.current.select();
+        }
+      }, 100);
+      return;
+    }
+
     if (location.state?.editChallan) {
       const { editChallan } = location.state;
+      setIsEditingDeliveredOrder(false);
+      setIsEditingHold(false);
+      setEditingHoldId(null);
       setClientName(editChallan.customer || '');
       setClientPhone(editChallan.clientPhone || '');
       setPriceCategory(editChallan.category || 'Regular');
@@ -278,12 +376,29 @@ export default function SalesPage() {
     });
     return Object.entries(groups)
       .map(([orderNo, items]) => {
+        const totalDelivered = items.reduce((sum, i) => sum + (Number(i.deliveredQty) || 0), 0);
+        const totalPending = items.reduce((sum, i) => sum + (Number(i.pendingQty) || 0), 0);
+        const allCancelled = items.every(i => i.status === 'Cancelled');
+
+        let status = items[0].status;
+        if (allCancelled) {
+          status = 'Cancelled';
+        } else if (totalDelivered > 0 && totalPending === 0) {
+          status = 'Delivered';
+        } else if (totalDelivered > 0 && totalPending > 0) {
+          status = 'Partial';
+        } else if (items.some(i => i.status === 'Confirmed')) {
+          status = 'Confirmed';
+        } else if (items.some(i => i.status === 'Pending')) {
+          status = 'Pending';
+        }
+
         return {
           orderNo,
           customer: items[0].customer,
           clientPhone: items[0].clientPhone,
           orderDate: items[0].orderDate,
-          status: items[0].status,
+          status,
           id: items[0].id,
           items,
         };
@@ -305,7 +420,15 @@ export default function SalesPage() {
     }
   }, [selectedSuggestionIndex]);
 
-  const addItem = useCallback(() => setItems(prev => [...prev, { ...defaultItem }]), []);
+  const addItem = useCallback(() => {
+    setItems(prev => {
+      const nextIdx = prev.length;
+      setTimeout(() => {
+        productInputsRef.current[nextIdx]?.focus();
+      }, 50);
+      return [...prev, { ...defaultItem }];
+    });
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -321,6 +444,15 @@ export default function SalesPage() {
   const removeItem = (index: number) => {
     if (items.length > 1) {
       setItems(items.filter((_, i) => i !== index));
+      const targetIndex = Math.max(0, index - 1);
+      setTimeout(() => {
+        productInputsRef.current[targetIndex]?.focus();
+      }, 50);
+    } else {
+      setItems([{ ...defaultItem }]);
+      setTimeout(() => {
+        productInputsRef.current[0]?.focus();
+      }, 50);
     }
   };
 
@@ -458,6 +590,10 @@ export default function SalesPage() {
 
     setIsSubmitting(true);
     try {
+      if (isEditingHold && editingHoldId) {
+        await cancelHold(editingHoldId);
+      }
+
       await addSaleBulk({
         customer: clientName,
         clientPhone,
@@ -474,17 +610,30 @@ export default function SalesPage() {
         }))
       });
 
-      toast({ title: "Sale recorded!", description: "Stock deducted and/or pending order created." });
+      toast({ 
+        title: isEditingHold ? "Sale recorded from Hold!" : "Sale recorded!", 
+        description: "Stock deducted and/or pending order created." 
+      });
       window.dispatchEvent(new CustomEvent("erp-stock-updated"));
       
+      const dest = isEditingHold ? (returnTo || '/holds') : null;
+
       // Reset form
       setClientName('');
       setClientPhone('');
       setItems([{ ...defaultItem }]);
       setNarration('');
       setSelectedClientId(null);
-      refreshSales();
-      refreshClients();
+      setIsEditingHold(false);
+      setEditingHoldId(null);
+      setReturnTo(null);
+
+      if (dest) {
+        navigate(dest);
+      } else {
+        refreshSales();
+        refreshClients();
+      }
     } catch (err: any) {
       toast({ title: "Error", description: err.message || "Failed to record sale", variant: "destructive" });
     } finally {
@@ -525,8 +674,10 @@ export default function SalesPage() {
 
     setIsSubmitting(true);
     try {
-      // If moving an existing challan/order to Hold, delete old sales and challans first
-      if (editingChallanNumber) {
+      if (isEditingHold && editingHoldId) {
+        await cancelHold(editingHoldId);
+      } else if (editingChallanNumber) {
+        // If moving an existing challan/order to Hold, delete old sales and challans first
         const associatedSalesIds = Array.from(
           new Set(
             items
@@ -559,24 +710,33 @@ export default function SalesPage() {
       }
 
       toast({
-        title: editingChallanNumber ? "Order moved to Hold!" : "Products put on hold!",
-        description: editingChallanNumber
+        title: isEditingHold 
+          ? "Hold updated!" 
+          : editingChallanNumber 
+          ? "Order moved to Hold!" 
+          : "Products put on hold!",
+        description: isEditingHold
+          ? "Hold order has been updated successfully."
+          : editingChallanNumber
           ? `Order ${editingChallanNumber} has been moved to Hold successfully.`
           : undefined,
       });
       window.dispatchEvent(new CustomEvent("erp-stock-updated"));
       
+      const dest = isEditingHold ? (returnTo || '/holds') : editingChallanNumber ? (returnTo || '/challans') : null;
+
       // Reset form
       setClientName('');
       setClientPhone('');
       setItems([{ ...defaultItem }]);
       setNarration('');
       setSelectedClientId(null);
+      setIsEditingHold(false);
+      setEditingHoldId(null);
+      setEditingChallanNumber(null);
+      setReturnTo(null);
 
-      if (editingChallanNumber) {
-        const dest = returnTo || '/challans';
-        setEditingChallanNumber(null);
-        setReturnTo(null);
+      if (dest) {
         navigate(dest);
       } else {
         refreshSales(); // To refresh batches
@@ -648,6 +808,44 @@ export default function SalesPage() {
 
     setIsSubmitting(true);
     try {
+      if (isEditingDeliveredOrder) {
+        await updateDeliveredOrderGroup(editingChallanNumber!, {
+          challanNumber: editingChallanNumber!,
+          clientName,
+          clientPhone,
+          date: orderDate,
+          items: items.map((item) => ({
+            id: item.id,
+            salesId: item.salesId,
+            productName: item.productName,
+            quantity: Number(item.quantity),
+            batchNo: item.batchNo || "0",
+            notes: narration,
+            stockCategory: item.stockCategory || "Available",
+          })),
+        });
+
+        toast({
+          title: "Delivered Order Updated!",
+          description: `Product replaced and stock adjusted for ${editingChallanNumber}.`,
+        });
+        window.dispatchEvent(new CustomEvent("erp-stock-updated"));
+
+        // Reset form
+        setClientName("");
+        setClientPhone("");
+        setItems([{ ...defaultItem }]);
+        setNarration("");
+        setSelectedClientId(null);
+        setEditingChallanNumber(null);
+        setIsEditingDeliveredOrder(false);
+
+        const dest = returnTo || "/delivered-deliveries";
+        setReturnTo(null);
+        navigate(dest);
+        return;
+      }
+
       await updateChallanGroup(editingChallanNumber!, {
         challanNumber: editingChallanNumber!,
         clientName,
@@ -677,6 +875,7 @@ export default function SalesPage() {
       setNarration("");
       setSelectedClientId(null);
       setEditingChallanNumber(null);
+      setIsEditingDeliveredOrder(false);
 
       const dest = returnTo || "/challans";
       setReturnTo(null);
@@ -693,13 +892,16 @@ export default function SalesPage() {
   };
 
   const handleCancelEdit = () => {
+    const dest = returnTo || (isEditingDeliveredOrder ? "/delivered-deliveries" : isEditingHold ? "/holds" : "/challans");
     setClientName("");
     setClientPhone("");
     setItems([{ ...defaultItem }]);
     setNarration("");
     setSelectedClientId(null);
     setEditingChallanNumber(null);
-    const dest = returnTo || "/challans";
+    setIsEditingDeliveredOrder(false);
+    setIsEditingHold(false);
+    setEditingHoldId(null);
     setReturnTo(null);
     navigate(dest);
   };
@@ -737,24 +939,29 @@ export default function SalesPage() {
     <div className="space-y-4">
       <h1 className="text-2xl font-bold">Sales Module</h1>
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList><TabsTrigger value="new">New Sale</TabsTrigger><TabsTrigger value="history">History</TabsTrigger></TabsList>
+        <TabsList>
+          <TabsTrigger value="new">
+            {isEditingHold ? "Edit Hold" : editingChallanNumber ? (isEditingDeliveredOrder ? "Edit Delivered Order" : "Edit Order") : "New Sale"}
+          </TabsTrigger>
+          <TabsTrigger value="history">History</TabsTrigger>
+        </TabsList>
         <TabsContent value="new">
           <Card><CardContent className="space-y-6 pt-6">
-            {editingChallanNumber && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3.5 flex items-center justify-between shadow-2xs">
+            {isEditingHold ? (
+              <div className="bg-amber-50 border-2 border-amber-300 rounded-lg p-3.5 flex items-center justify-between shadow-2xs">
                 <div className="flex items-center gap-3">
-                  <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold shrink-0">
-                    <Pencil className="h-4 w-4" />
+                  <div className="h-9 w-9 rounded-full bg-amber-200 flex items-center justify-center text-amber-900 font-bold shrink-0 text-base">
+                    <Hand className="h-5 w-5" />
                   </div>
                   <div>
-                    <div className="font-bold text-blue-950 text-sm flex items-center gap-2">
-                      <span>Editing Order / Challan:</span>
-                      <span className="font-mono bg-blue-100 text-blue-800 px-2 py-0.5 rounded text-xs">
-                        {editingChallanNumber}
+                    <div className="font-bold text-amber-950 text-sm flex items-center gap-2">
+                      <span>Editing Hold Order</span>
+                      <span className="text-[11px] bg-amber-100 text-amber-900 font-semibold px-2 py-0.5 rounded border border-amber-200">
+                        Hold Edit Mode
                       </span>
                     </div>
-                    <div className="text-xs text-blue-700 mt-0.5">
-                      Client: <span className="font-medium">{clientName || "N/A"}</span>
+                    <div className="text-xs text-amber-800 mt-0.5">
+                      Client: <span className="font-semibold">{clientName || "N/A"}</span> &bull; Edit quantity, add/remove products, or save as Hold / Sale.
                     </div>
                   </div>
                 </div>
@@ -762,12 +969,73 @@ export default function SalesPage() {
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="text-xs text-blue-700 border-blue-300 hover:bg-blue-100 h-8 gap-1.5"
+                  className="text-xs text-amber-900 border-amber-300 hover:bg-amber-100 h-8 gap-1.5 font-semibold"
                   onClick={handleCancelEdit}
                 >
                   <X className="h-3.5 w-3.5" /> Cancel Edit
                 </Button>
               </div>
+            ) : editingChallanNumber && (
+              isEditingDeliveredOrder ? (
+                <div className="bg-amber-50 border-2 border-amber-300 rounded-lg p-3.5 flex items-center justify-between shadow-2xs">
+                  <div className="flex items-center gap-3">
+                    <div className="h-9 w-9 rounded-full bg-amber-200 flex items-center justify-center text-amber-900 font-bold shrink-0 text-base">
+                      🚚
+                    </div>
+                    <div>
+                      <div className="font-bold text-amber-950 text-sm flex items-center gap-2">
+                        <span>Editing Delivered Order:</span>
+                        <span className="font-mono bg-amber-200/90 text-amber-900 px-2 py-0.5 rounded text-xs font-bold border border-amber-300">
+                          {editingChallanNumber}
+                        </span>
+                        <span className="text-[11px] bg-amber-100 text-amber-900 font-semibold px-2 py-0.5 rounded border border-amber-200">
+                          Product Replacement Mode
+                        </span>
+                      </div>
+                      <div className="text-xs text-amber-800 mt-0.5">
+                        Client: <span className="font-semibold">{clientName || "N/A"}</span> &bull; Replace existing product or adjust quantity. Stock will be auto-updated upon saving.
+                      </div>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="text-xs text-amber-900 border-amber-300 hover:bg-amber-100 h-8 gap-1.5 font-semibold"
+                    onClick={handleCancelEdit}
+                  >
+                    <X className="h-3.5 w-3.5" /> Cancel Edit
+                  </Button>
+                </div>
+              ) : (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3.5 flex items-center justify-between shadow-2xs">
+                  <div className="flex items-center gap-3">
+                    <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold shrink-0">
+                      <Pencil className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <div className="font-bold text-blue-950 text-sm flex items-center gap-2">
+                        <span>Editing Order / Challan:</span>
+                        <span className="font-mono bg-blue-100 text-blue-800 px-2 py-0.5 rounded text-xs">
+                          {editingChallanNumber}
+                        </span>
+                      </div>
+                      <div className="text-xs text-blue-700 mt-0.5">
+                        Client: <span className="font-medium">{clientName || "N/A"}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="text-xs text-blue-700 border-blue-300 hover:bg-blue-100 h-8 gap-1.5"
+                    onClick={handleCancelEdit}
+                  >
+                    <X className="h-3.5 w-3.5" /> Cancel Edit
+                  </Button>
+                </div>
+              )
             )}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pb-4 border-b">
               <div className="relative">
@@ -1155,7 +1423,11 @@ export default function SalesPage() {
                             if (e.key === 'Enter') {
                               e.preventDefault();
                               if (index === items.length - 1) {
+                                const nextIdx = items.length;
                                 addItem();
+                                setTimeout(() => {
+                                  productInputsRef.current[nextIdx]?.focus();
+                                }, 50);
                               } else {
                                 const nextInput = productInputsRef.current[index + 1];
                                 if (nextInput) {
@@ -1184,14 +1456,42 @@ export default function SalesPage() {
                         </Select>
                       </div>
                       <div className="col-span-1 flex justify-end gap-1 items-center">
-                        {index === items.length - 1 && (
-                          <Button variant="outline" size="sm" onClick={addItem} className="h-9 px-2 shrink-0">
+                        {!isEditingDeliveredOrder && index === items.length - 1 && (
+                          <Button 
+                            type="button" 
+                            variant="outline" 
+                            size="sm" 
+                            onClick={addItem} 
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                addItem();
+                              }
+                            }}
+                            className="h-9 px-2 shrink-0 focus-visible:ring-2 focus-visible:ring-primary" 
+                            title="Add another product"
+                          >
                             <Plus className="h-3 w-3" />
                           </Button>
                         )}
-                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10 shrink-0 h-9 w-9" onClick={() => removeItem(index)} disabled={items.length === 1}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        {!isEditingDeliveredOrder && (
+                          <Button 
+                            type="button" 
+                            variant="ghost" 
+                            size="icon" 
+                            className="text-destructive hover:text-destructive hover:bg-destructive/10 shrink-0 h-9 w-9 focus-visible:ring-2 focus-visible:ring-destructive" 
+                            onClick={() => removeItem(index)} 
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                removeItem(index);
+                              }
+                            }}
+                            title="Delete / Clear row"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
                       </div>
                     </div>
                   );
@@ -1234,7 +1534,7 @@ export default function SalesPage() {
                   </Button>
                 </div>
               </div>
-              {editingChallanNumber ? (
+              {isEditingHold ? (
                 <div className="flex justify-end gap-3 shrink-0">
                   <Button type="button" variant="outline" onClick={handleCancelEdit} disabled={isSubmitting}>
                     Cancel
@@ -1242,24 +1542,74 @@ export default function SalesPage() {
                   <Button
                     type="button"
                     variant="outline"
-                    className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 border-amber-200"
+                    className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 border-amber-200 font-semibold"
                     onClick={handleHold}
                     disabled={isSubmitting}
                   >
                     {isSubmitting ? (
                       <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Moving to Hold...
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Updating Hold...
                       </>
                     ) : (
                       <>
-                        <Hand className="mr-2 h-4 w-4" /> Move to Hold
+                        <Hand className="mr-2 h-4 w-4" /> Save as Hold
                       </>
                     )}
                   </Button>
-                  <Button type="button" onClick={handleSaveChallanEdit} disabled={isSubmitting} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold shadow-xs">
+                  <Button 
+                    type="button" 
+                    onClick={handleSubmit} 
+                    disabled={isSubmitting}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-semibold shadow-xs"
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Processing...
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="mr-2 h-4 w-4" /> Record Sale & Save
+                      </>
+                    )}
+                  </Button>
+                </div>
+              ) : editingChallanNumber ? (
+                <div className="flex justify-end gap-3 shrink-0">
+                  <Button type="button" variant="outline" onClick={handleCancelEdit} disabled={isSubmitting}>
+                    Cancel
+                  </Button>
+                  {!isEditingDeliveredOrder && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 border-amber-200"
+                      onClick={handleHold}
+                      disabled={isSubmitting}
+                    >
+                      {isSubmitting ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Moving to Hold...
+                        </>
+                      ) : (
+                        <>
+                          <Hand className="mr-2 h-4 w-4" /> Move to Hold
+                        </>
+                      )}
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    onClick={handleSaveChallanEdit}
+                    disabled={isSubmitting}
+                    className={`${isEditingDeliveredOrder ? "bg-amber-600 hover:bg-amber-700" : "bg-blue-600 hover:bg-blue-700"} text-white font-semibold shadow-xs`}
+                  >
                     {isSubmitting ? (
                       <>
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving Changes...
+                      </>
+                    ) : isEditingDeliveredOrder ? (
+                      <>
+                        <Check className="mr-2 h-4 w-4" /> Save Delivered Order (Replace Product)
                       </>
                     ) : (
                       <>

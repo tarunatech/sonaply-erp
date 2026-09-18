@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
-import { getSales, getChallans, exportCSV, addChallan, generatePendingGroupChallan, getBatches, getProducts, getClients, confirmChallanGroup, deleteChallanGroup, updateChallanGroup, updateSale, Sale, StockBatch, Challan, Product, Client, formatLocalDate, getLocalDateString } from "@/lib/store";
+import { getSales, getChallans, exportCSV, addChallan, generatePendingGroupChallan, getBatches, getProducts, getClients, confirmChallanGroup, deleteChallanGroup, updateChallanGroup, updateSale, cancelPendingDeliveryGroup, Sale, StockBatch, Challan, Product, Client, formatLocalDate, getLocalDateString } from "@/lib/store";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
@@ -183,6 +183,22 @@ export default function PendingDeliveries() {
       refresh();
     } catch (err: any) {
       toast({ title: "Failed", description: err.message, variant: "destructive" });
+    }
+  };
+
+  const handleCancelPendingGroup = async (group: any) => {
+    const targetKey = group.challanNo || group.orderNo;
+    const ok = window.confirm(
+      `Cancel pending delivery for ${group.customer} (${targetKey})? Any previously delivered items will remain delivered, and pending quantities will be cancelled and restored to stock.`
+    );
+    if (!ok) return;
+    try {
+      await cancelPendingDeliveryGroup(targetKey);
+      toast({ title: "Pending Order Cancelled", description: `Pending items for ${group.customer} cancelled and stock updated.` });
+      window.dispatchEvent(new CustomEvent("erp-stock-updated"));
+      refresh();
+    } catch (err: any) {
+      toast({ title: "Failed to cancel pending order", description: err.message, variant: "destructive" });
     }
   };
 
@@ -581,18 +597,18 @@ export default function PendingDeliveries() {
 
       <Card>
         <CardContent className="p-0" id="pending-table">
-          <Table className="border-collapse border-2 border-slate-300 w-full" wrapperClassName="max-h-[calc(100vh-130px)]">
+          <Table className="border-collapse border-2 border-slate-300 w-full" wrapperClassName="max-h-[calc(100vh-130px)] overflow-x-auto">
             <TableHeader className="sticky top-0 bg-slate-100 z-10 shadow-2xs border-b-2 border-slate-300">
               <TableRow className="hover:bg-transparent">
-                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 whitespace-nowrap">Date</TableHead>
-                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 whitespace-nowrap">Challan #</TableHead>
-                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 whitespace-nowrap">Client</TableHead>
-                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 whitespace-nowrap">Product</TableHead>
-                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right whitespace-nowrap">Ordered</TableHead>
-                <TableHead className="border-2 border-slate-300 text-xs font-bold text-green-600 px-4 py-3 text-right whitespace-nowrap">Delivered</TableHead>
-                <TableHead className="border-2 border-slate-300 text-xs font-bold text-red-600 px-4 py-3 text-right whitespace-nowrap">Pending Qty</TableHead>
-                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 whitespace-nowrap">Status</TableHead>
-                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right whitespace-nowrap">Action</TableHead>
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-2.5 py-2.5 whitespace-nowrap">Date</TableHead>
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-2.5 py-2.5 whitespace-nowrap">Challan #</TableHead>
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-2.5 py-2.5 whitespace-nowrap">Client</TableHead>
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-2.5 py-2.5">Product</TableHead>
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-2 py-2.5 text-right whitespace-nowrap">Ordered</TableHead>
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-green-600 px-2 py-2.5 text-right whitespace-nowrap">Delivered</TableHead>
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-red-600 px-2 py-2.5 text-right whitespace-nowrap">Pending Qty</TableHead>
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-2 py-2.5 whitespace-nowrap">Status</TableHead>
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-2.5 py-2.5 text-right whitespace-nowrap">Action</TableHead>
               </TableRow>
             </TableHeader>
               <TableBody>
@@ -612,7 +628,7 @@ export default function PendingDeliveries() {
 
                   return (
                     <TableRow key={group.groupKey} className="hover:bg-slate-50/40">
-                      <TableCell className="border-2 border-slate-300 px-4 py-3 text-sm text-slate-700 font-medium whitespace-nowrap">
+                      <TableCell className="border-2 border-slate-300 px-2.5 py-2 text-sm text-slate-700 font-medium whitespace-nowrap">
                         <div className="flex items-start gap-2">
                           <Checkbox
                             id={`order-chk-${group.groupKey}`}
@@ -646,12 +662,12 @@ export default function PendingDeliveries() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                className={`h-7 text-xs px-2 gap-1.5 border-dashed transition-all ${estDate
+                                className={`h-6 text-[11px] px-1.5 gap-1 border-dashed transition-all ${estDate
                                   ? "border-blue-500 bg-blue-50 text-blue-950 font-bold hover:bg-blue-100"
                                   : "border-slate-300 bg-background text-slate-500 hover:text-slate-900 hover:border-slate-400"
                                   }`}
                               >
-                                <CalendarIcon className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+                                <CalendarIcon className="h-3 w-3 shrink-0 text-blue-600" />
                                 {estDate
                                   ? `Est: ${format(parseLocalDate(estDate), "dd-MM-yyyy")}`
                                   : "Est. Delivery"}
@@ -672,44 +688,44 @@ export default function PendingDeliveries() {
                           </Popover>
                         </div>
                       </TableCell>
-                      <TableCell className="border-2 border-slate-300 px-4 py-3 font-mono text-xs text-slate-700 whitespace-nowrap">
-                        <div className="text-base font-extrabold text-orange-600 bg-orange-50/90 border border-orange-200 px-2 py-1 rounded w-fit shadow-2xs whitespace-nowrap">
+                      <TableCell className="border-2 border-slate-300 px-2.5 py-2 font-mono text-xs text-slate-700 whitespace-nowrap">
+                        <div className="text-sm font-extrabold text-orange-600 bg-orange-50/90 border border-orange-200 px-2 py-0.5 rounded w-fit shadow-2xs whitespace-nowrap">
                           {displayChallanNo}
                         </div>
                         {!isRawOrderNo && group.orderNo !== displayChallanNo && (
                           <div className="text-[11px] text-slate-500 mt-1 font-medium whitespace-nowrap">{group.orderNo}</div>
                         )}
                       </TableCell>
-                      <TableCell className="border-2 border-slate-300 px-4 py-3 text-sm min-w-[150px] max-w-[220px] break-words">
+                      <TableCell className="border-2 border-slate-300 px-2.5 py-2 text-sm min-w-[120px] max-w-[180px] break-words">
                         {renderCustomer(group.customer)}
-                        <div className="text-[10px] text-muted-foreground mt-1">{group.clientPhone}</div>
+                        <div className="text-[10px] text-muted-foreground mt-0.5">{group.clientPhone}</div>
                       </TableCell>
-                      <TableCell className="border-2 border-slate-300 px-4 py-1">
+                      <TableCell className="border-2 border-slate-300 px-2.5 py-1">
                         <div className="space-y-0">
                           {group.salesItems.map((item, idx) => (
-                            <div key={idx} className="py-1.5 border-b border-slate-100 last:border-0 flex flex-col justify-center min-h-[50px]">
-                              <div className="font-semibold text-slate-900">{item.sale.product}</div>
-                              <div className="flex flex-wrap gap-1 items-center mt-1">
+                            <div key={idx} className="py-1 border-b border-slate-100 last:border-0 flex flex-col justify-center min-h-[44px]">
+                              <div className="font-semibold text-slate-900 text-xs sm:text-sm">{item.sale.product}</div>
+                              <div className="flex flex-wrap gap-1 items-center mt-0.5">
                                 {(() => {
                                   const prodCat = products.find(p => p.name.trim().toLowerCase() === item.sale.product.trim().toLowerCase())?.category || batches.find(b => b.productName.trim().toLowerCase() === item.sale.product.trim().toLowerCase())?.category || item.sale.category || "";
                                   return prodCat && prodCat !== "Regular" ? (
-                                    <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                                    <span className="text-[10px] px-1.5 py-0.2 rounded font-bold bg-blue-50 text-blue-700 border border-blue-200">
                                       Cat: {prodCat}
                                     </span>
                                   ) : null;
                                 })()}
                                 {item.sale.batchNo && (
-                                  <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                                  <span className="text-[10px] px-1.5 py-0.2 rounded font-bold bg-slate-100 text-slate-600 border border-slate-200">
                                     Batch: {item.sale.batchNo}
                                   </span>
                                 )}
                                 {item.totalStock >= 0 ? (
-                                  <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-green-50 text-green-800 border border-green-200">
-                                    Stock: Ready ({item.totalStock} extra, {item.sale.stockCategory || "Available"})
+                                  <span className="text-[10px] px-1.5 py-0.2 rounded font-bold bg-green-50 text-green-800 border border-green-200">
+                                    Stock: Ready ({item.totalStock} extra)
                                   </span>
                                 ) : (
-                                  <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-red-50 text-red-800 border border-red-200">
-                                    Stock: Shortage (Need {Math.abs(item.totalStock)}, {item.sale.stockCategory || "Available"})
+                                  <span className="text-[10px] px-1.5 py-0.2 rounded font-bold bg-red-50 text-red-800 border border-red-200">
+                                    Stock: Shortage ({Math.abs(item.totalStock)})
                                   </span>
                                 )}
                               </div>
@@ -721,7 +737,7 @@ export default function PendingDeliveries() {
                             const notesText = firstWithNotes?.pendingChallan?.notes || firstWithNotes?.sale.remarks;
                             if (notesText) {
                               return (
-                                <div className="text-[10px] text-orange-600 font-semibold mt-2 bg-orange-50 px-2 py-1 rounded border border-orange-100 w-fit">
+                                <div className="text-[10px] text-orange-600 font-semibold mt-1 bg-orange-50 px-2 py-0.5 rounded border border-orange-100 w-fit">
                                   Narration: {notesText}
                                 </div>
                               );
@@ -730,68 +746,79 @@ export default function PendingDeliveries() {
                           })()}
                         </div>
                       </TableCell>
-                      <TableCell className="border-2 border-slate-300 px-4 py-1 text-right">
+                      <TableCell className="border-2 border-slate-300 px-2 py-1 text-right">
                         <div className="space-y-0">
                           {group.salesItems.map((item, idx) => (
-                            <div key={idx} className="py-1.5 border-b border-slate-100 last:border-0 flex items-center justify-end min-h-[50px] font-semibold text-slate-700">
+                            <div key={idx} className="py-1 border-b border-slate-100 last:border-0 flex items-center justify-end min-h-[44px] font-semibold text-slate-700 text-xs sm:text-sm">
                               {item.sale.orderedQty}
                             </div>
                           ))}
                         </div>
                       </TableCell>
-                      <TableCell className="border-2 border-slate-300 px-4 py-1 text-right">
+                      <TableCell className="border-2 border-slate-300 px-2 py-1 text-right">
                         <div className="space-y-0">
                           {group.salesItems.map((item, idx) => (
-                            <div key={idx} className="py-1.5 border-b border-slate-100 last:border-0 flex items-center justify-end min-h-[50px] font-semibold text-green-600">
+                            <div key={idx} className="py-1 border-b border-slate-100 last:border-0 flex items-center justify-end min-h-[44px] font-semibold text-green-600 text-xs sm:text-sm">
                               {item.sale.deliveredQty}
                             </div>
                           ))}
                         </div>
                       </TableCell>
-                      <TableCell className="border-2 border-slate-300 px-4 py-1 text-right">
+                      <TableCell className="border-2 border-slate-300 px-2 py-1 text-right">
                         <div className="space-y-0">
                           {group.salesItems.map((item, idx) => (
-                            <div key={idx} className="py-1.5 border-b border-slate-100 last:border-0 flex items-center justify-end min-h-[50px] font-black text-red-600 text-lg">
+                            <div key={idx} className="py-1 border-b border-slate-100 last:border-0 flex items-center justify-end min-h-[44px] font-black text-red-600 text-base sm:text-lg">
                               {item.displayPendingQty}
                             </div>
                           ))}
                         </div>
                       </TableCell>
-                      <TableCell className="border-2 border-slate-300 px-4 py-3 align-middle">
+                      <TableCell className="border-2 border-slate-300 px-2 py-2 align-middle">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${group.status === "Confirmed" ? "bg-blue-100 text-blue-800" :
                           group.status === "Partial" ? "bg-amber-100 text-amber-800" :
                             "bg-red-100 text-red-800"
                           }`}>{group.status}</span>
                       </TableCell>
-                      <TableCell className="border-2 border-slate-300 px-4 py-1 text-right align-middle">
+                      <TableCell className="border-2 border-slate-300 px-2 py-1 text-right align-middle">
                         <div className="space-y-0">
                           {group.salesItems.map((item, idx) => (
-                            <div key={idx} className="py-1.5 border-b border-slate-100 last:border-0 flex items-center justify-end gap-1.5 min-h-[50px]">
+                            <div key={idx} className="py-1 border-b border-slate-100 last:border-0 flex items-center justify-end gap-1 min-h-[44px] flex-nowrap">
                               {group.challanNo ? (
                                 idx === 0 && (
-                                  <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-xs" onClick={() => handleConfirmChallan(group.salesItems[0].pendingChallan!)}>
-                                    <CheckCircle2 className="mr-1 h-3.5 w-3.5" /> Confirm {group.challanNo}
+                                  <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-xs h-7 px-2.5 font-semibold shadow-2xs" onClick={() => handleConfirmChallan(group.salesItems[0].pendingChallan!)}>
+                                    <CheckCircle2 className="mr-1 h-3.5 w-3.5" /> Confirm
                                   </Button>
                                 )
                               ) : (
-                                <Button size="sm" className="bg-green-600 hover:bg-green-700 text-[10px] h-7 px-2" onClick={() => {
+                                <Button size="sm" className="bg-green-600 hover:bg-green-700 text-xs h-7 px-2 font-semibold shadow-2xs" onClick={() => {
                                   setCurrentSale(item.sale);
                                   setChallanForm({ quantity: item.displayPendingQty, batchNo: item.sale.batchNo || "0", notes: "", stockCategory: item.sale.stockCategory || "Available" });
                                   setShowChallanDialog(true);
                                 }}>
-                                  <FilePlus2 className="mr-1 h-3 w-3" /> Generate
+                                  <FilePlus2 className="mr-1 h-3.5 w-3.5" /> Generate
                                 </Button>
                               )}
                               {idx === 0 && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-7 px-2 text-xs border-slate-300 text-slate-700 hover:bg-slate-100 hover:text-slate-900"
-                                  onClick={() => handleOpenEditGroupModal(group)}
-                                  title="Edit Order / Pending Delivery Details"
-                                >
-                                  <Pencil className="h-3.5 w-3.5 mr-1 text-slate-600" /> Edit Order
-                                </Button>
+                                <>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 px-2 text-xs border-slate-300 text-slate-700 hover:bg-slate-100 hover:text-slate-900 font-medium shrink-0"
+                                    onClick={() => handleOpenEditGroupModal(group)}
+                                    title="Edit Order / Pending Delivery Details"
+                                  >
+                                    <Pencil className="h-3.5 w-3.5 mr-1 text-slate-600" /> Edit
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 px-2 text-xs border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 font-medium shrink-0"
+                                    onClick={() => handleCancelPendingGroup(group)}
+                                    title="Cancel Remaining Pending Quantity"
+                                  >
+                                    <X className="h-3.5 w-3.5 mr-1 text-red-600" /> Cancel
+                                  </Button>
+                                </>
                               )}
                             </div>
                           ))}

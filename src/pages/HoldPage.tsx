@@ -1,12 +1,12 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { getHolds, releaseHold, cancelHold, Hold, exportCSV, formatLocalDate } from "@/lib/store";
+import { getHolds, releaseHold, cancelHold, Hold, exportCSV, formatLocalDate, getLocalDateString } from "@/lib/store";
 import { printElement } from "@/lib/print";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Search, Download, Printer } from "lucide-react";
+import { Search, Download, Printer, Pencil } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 
@@ -68,6 +68,29 @@ export default function HoldPage() {
     }
   };
 
+  const handleEditHold = (group: any) => {
+    navigate("/sales", {
+      state: {
+        editHold: {
+          id: group.id,
+          clientName: group.clientName,
+          clientPhone: group.clientPhone || "",
+          category: group.category || "Regular",
+          orderDate: group.holdDate || getLocalDateString(),
+          items: group.items.map((it: Hold) => ({
+            id: it.id,
+            productName: it.productName,
+            quantity: it.quantity,
+            batchNo: it.batchNo || "0",
+            stockCategory: "Available",
+            isProductSelected: true,
+          })),
+          returnTo: "/holds",
+        },
+      },
+    });
+  };
+
   const groupedHolds = useMemo(() => {
     const groups: Record<string, Hold[]> = {};
     holds.forEach((h) => {
@@ -80,6 +103,7 @@ export default function HoldPage() {
       clientName: items[0].clientName,
       clientPhone: items[0].clientPhone,
       holdDate: items[0].holdDate,
+      category: items[0].category || "Regular",
       quantity: items.reduce((sum, item) => sum + item.quantity, 0),
       items: items,
     }));
@@ -180,6 +204,15 @@ export default function HoldPage() {
                       </TableCell>
                       <TableCell className="border-2 border-slate-300 px-4 py-3 text-right no-print">
                         <div className="flex items-center justify-end gap-2">
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            onClick={() => handleEditHold(h)} 
+                            className="text-blue-600 border-blue-200 hover:bg-blue-50 hover:text-blue-700 h-8 gap-1.5 font-medium"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                            Edit
+                          </Button>
                           <Button 
                             variant="outline" 
                             size="sm" 
