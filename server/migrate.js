@@ -805,6 +805,26 @@ async function migrate() {
       }
     }
 
+    const activeCHs = await db.query(`
+      SELECT sales_id, SUM(quantity) as ch_sum 
+      FROM challans 
+      WHERE (challan_no LIKE 'CH-%' OR challan_no LIKE 'CH%') AND is_cancelled = FALSE AND status != 'Delivered'
+      GROUP BY sales_id
+    `);
+    for (const chRow of activeCHs.rows) {
+      const saleRes = await db.query("SELECT * FROM sales WHERE id = $1", [chRow.sales_id]);
+      if (saleRes.rows.length > 0) {
+        const sale = saleRes.rows[0];
+        const salePending = Number(sale.pending_qty !== undefined ? sale.pending_qty : (Number(sale.ordered_qty || 0) - Number(sale.delivered_qty || 0)));
+        const expectedShortage = Math.max(0, salePending - Number(chRow.ch_sum || 0));
+        if (expectedShortage === 0) {
+          await db.query("DELETE FROM challans WHERE sales_id = $1 AND challan_no LIKE 'P-%' AND status != 'Delivered'", [chRow.sales_id]);
+        } else {
+          await db.query("UPDATE challans SET quantity = $1 WHERE sales_id = $2 AND challan_no LIKE 'P-%' AND status = 'Pending' AND is_cancelled = FALSE", [expectedShortage, chRow.sales_id]);
+        }
+      }
+    }
+
     console.log('✅ All migrations applied successfully!');
   } catch (err) {
     console.error('❌ Database migration failed:', err);
