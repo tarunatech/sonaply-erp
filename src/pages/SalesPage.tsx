@@ -466,29 +466,70 @@ export default function SalesPage() {
 
   const getSuggestionsList = useCallback((query: string) => {
     const q = query.toLowerCase().trim();
-    const tokens = q.split(/\s+/).filter(Boolean);
-    let filtered = allBatches;
-    if (tokens.length > 0) {
-      filtered = allBatches.filter(b => {
-        const fullText = `${b.productName || ''} ${b.productCode || ''} ${b.category || ''} ${b.batchNumber || ''}`.toLowerCase();
-        return tokens.every(token => fullText.includes(token));
-      });
+    if (!q) {
+      const sorted = [...allBatches].sort((a, b) => (b.availableQty || 0) - (a.availableQty || 0));
+      const list: { batch: StockBatch; category: 'Available' | 'Display' | 'Damage'; label: string }[] = [];
+      for (const b of sorted) {
+        list.push({ batch: b, category: 'Available', label: 'Available' });
+        if ((b.displayQty || 0) > 0) {
+          list.push({ batch: b, category: 'Display', label: 'Display' });
+        }
+        if ((b.damageQty || 0) > 0) {
+          list.push({ batch: b, category: 'Damage', label: 'Damage' });
+        }
+        if (list.length >= 50) break;
+      }
+      return list;
     }
 
-    const sorted = [...filtered].sort((a, b) => (b.availableQty || 0) - (a.availableQty || 0));
+    const tokens = q.split(/\s+/).filter(Boolean);
+    const qCompact = q.replace(/\s+/g, '');
+
+    // Search strictly based on product name
+    const scoredBatches: { batch: StockBatch; score: number }[] = [];
+
+    for (const b of allBatches) {
+      const prodName = (b.productName || '').toLowerCase().trim();
+      if (!prodName) continue;
+
+      const prodNameCompact = prodName.replace(/\s+/g, '');
+
+      let score = -1;
+      if (prodName === q || prodNameCompact === qCompact) {
+        score = 0; // Exact match
+      } else if (prodName.startsWith(q) || prodNameCompact.startsWith(qCompact)) {
+        score = 1; // Starts with query
+      } else if (prodName.includes(q)) {
+        score = 2; // Contains full query string
+      } else if (tokens.every(token => prodName.includes(token))) {
+        score = 3; // Contains all query tokens
+      } else if (prodNameCompact.includes(qCompact)) {
+        score = 4; // Contains query ignoring whitespace
+      }
+
+      if (score >= 0) {
+        scoredBatches.push({ batch: b, score });
+      }
+    }
+
+    scoredBatches.sort((a, b) => {
+      if (a.score !== b.score) {
+        return a.score - b.score;
+      }
+      return (b.batch.availableQty || 0) - (a.batch.availableQty || 0);
+    });
 
     const list: { batch: StockBatch; category: 'Available' | 'Display' | 'Damage'; label: string }[] = [];
-    for (const b of sorted) {
-      if ((b.availableQty || 0) > 0 || list.length < 10) {
-        list.push({ batch: b, category: 'Available', label: 'Available' });
-      }
+    for (const item of scoredBatches) {
+      const b = item.batch;
+      list.push({ batch: b, category: 'Available', label: 'Available' });
       if ((b.displayQty || 0) > 0) {
         list.push({ batch: b, category: 'Display', label: 'Display' });
       }
       if ((b.damageQty || 0) > 0) {
         list.push({ batch: b, category: 'Damage', label: 'Damage' });
       }
-      if (list.length >= 30) break;
+      if (list.length >= 60) break;
     }
     return list;
   }, [allBatches]);
