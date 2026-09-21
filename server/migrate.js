@@ -235,6 +235,7 @@ async function migrate() {
         damage_qty INTEGER DEFAULT 0,
         delivered_at TIMESTAMP,
         estimated_delivery_date DATE,
+        is_order BOOLEAN DEFAULT FALSE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
@@ -260,6 +261,7 @@ async function migrate() {
         bill_no TEXT,
         restored_qty INTEGER,
         is_challan_generated BOOLEAN DEFAULT FALSE,
+        is_order BOOLEAN DEFAULT FALSE,
         status TEXT DEFAULT 'Delivered',
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
@@ -410,15 +412,21 @@ async function migrate() {
     }
 
     // 8. Alterations for recent schema additions
-    console.log('Step 8: Adding delivered_at, challan cancel/built/bill_no fields, sales_returns, challan_notes, display_qty, stock_category, and estimated_delivery_date...');
+    console.log('Step 8: Adding delivered_at, challan cancel/built/bill_no fields, is_order, sales_returns, challan_notes, display_qty, stock_category, and estimated_delivery_date...');
     await db.query('ALTER TABLE sales ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP');
     await db.query('ALTER TABLE sales ADD COLUMN IF NOT EXISTS estimated_delivery_date DATE');
+    await db.query('ALTER TABLE sales ADD COLUMN IF NOT EXISTS is_order BOOLEAN DEFAULT FALSE');
+    await db.query('UPDATE sales SET is_order = FALSE WHERE is_order IS NULL');
+    await db.query('ALTER TABLE sales ALTER COLUMN is_order SET DEFAULT FALSE');
     await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS is_cancelled BOOLEAN DEFAULT FALSE');
     await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP');
     await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS is_built BOOLEAN DEFAULT FALSE');
     await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS bill_no TEXT');
     await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS restored_qty INTEGER');
     await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS is_challan_generated BOOLEAN DEFAULT FALSE');
+    await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS is_order BOOLEAN DEFAULT FALSE');
+    await db.query('UPDATE challans SET is_order = FALSE WHERE is_order IS NULL');
+    await db.query('ALTER TABLE challans ALTER COLUMN is_order SET DEFAULT FALSE');
     await db.query('ALTER TABLE sales ADD COLUMN IF NOT EXISTS damage_qty INTEGER DEFAULT 0');
     await db.query('ALTER TABLE holds ADD COLUMN IF NOT EXISTS held_qty INTEGER');
     await db.query('ALTER TABLE batches ADD COLUMN IF NOT EXISTS display_qty INTEGER DEFAULT 0');
@@ -472,6 +480,7 @@ async function migrate() {
     await addColumnIfNotExist('sales', 'order_no TEXT');
     await addColumnIfNotExist('sales', '"GST" NUMERIC DEFAULT 0');
     await addColumnIfNotExist('sales', 'status TEXT DEFAULT \'Pending\'');
+    await addColumnIfNotExist('sales', 'is_order BOOLEAN DEFAULT FALSE');
     await addColumnIfNotExist('sales', 'created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
     await addColumnIfNotExist('sales', 'updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
 
@@ -482,6 +491,7 @@ async function migrate() {
 
     await addColumnIfNotExist('challans', 'sales_id UUID REFERENCES sales(id)');
     await addColumnIfNotExist('challans', 'status TEXT DEFAULT \'Delivered\'');
+    await addColumnIfNotExist('challans', 'is_order BOOLEAN DEFAULT FALSE');
 
     await db.query(`UPDATE challans SET status = 'Cancelled' WHERE is_cancelled = TRUE AND (status IS NULL OR status = 'Delivered')`);
     await db.query(`UPDATE challans SET status = 'Delivered' WHERE status IS NULL`);

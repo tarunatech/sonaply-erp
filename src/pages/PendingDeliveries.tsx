@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
-import { getSales, getChallans, exportCSV, addChallan, generatePendingGroupChallan, getBatches, getProducts, getClients, confirmChallanGroup, deleteChallanGroup, updateChallanGroup, updateSale, cancelPendingDeliveryGroup, Sale, StockBatch, Challan, Product, Client, formatLocalDate, getLocalDateString } from "@/lib/store";
+import { getSales, getChallans, exportCSV, addChallan, generatePendingGroupChallan, classifyPendingOrder, getBatches, getProducts, getClients, confirmChallanGroup, deleteChallanGroup, updateChallanGroup, updateSale, cancelPendingDeliveryGroup, Sale, StockBatch, Challan, Product, Client, formatLocalDate, getLocalDateString } from "@/lib/store";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
@@ -220,6 +220,55 @@ export default function PendingDeliveries() {
         description: err.message || "Could not save estimated delivery date.",
         variant: "destructive",
       });
+    }
+  };
+
+  const handleToggleClassifyOrder = async (group: any, checked: boolean) => {
+    const saleIds = group.salesItems.map((si: any) => si.sale.id);
+
+    // Optimistic UI updates
+    setSales(prev => prev.map(s => {
+      if (saleIds.includes(s.id) || (group.orderNo && s.orderNo === group.orderNo)) {
+        return { ...s, isOrder: checked };
+      }
+      return s;
+    }));
+    setChallans(prev => prev.map(c => {
+      if ((group.challanNo && c.challanNo === group.challanNo) || saleIds.includes(c.salesId)) {
+        return { ...c, isOrder: checked };
+      }
+      return c;
+    }));
+
+    setOrderClassifiedRows(prev => {
+      const next = { ...prev };
+      if (group.groupKey) next[group.groupKey] = checked;
+      if (group.orderNo) next[group.orderNo] = checked;
+      if (group.challanNo) next[group.challanNo] = checked;
+      try {
+        localStorage.setItem("erp_pending_order_classified", JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    try {
+      await classifyPendingOrder({
+        orderNo: group.orderNo,
+        challanNo: group.challanNo || undefined,
+        salesIds: saleIds,
+        isOrder: checked,
+      });
+      toast({
+        title: checked ? "Marked as Order" : "Unmarked as Order",
+        description: `${group.challanNo || group.orderNo} is ${checked ? "now marked as Order" : "no longer marked as Order"}.`,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Update Failed",
+        description: err.message || "Could not save order classification.",
+        variant: "destructive",
+      });
+      refresh();
     }
   };
 
@@ -523,6 +572,27 @@ export default function PendingDeliveries() {
     }
   }, [groupedPendingDeliveries, refresh]);
 
+  // Migrate any previous localStorage order-classified records to database
+  useEffect(() => {
+    if (sales.length > 0 && Object.keys(orderClassifiedRows).length > 0) {
+      const unmigratedGroups = groupedPendingDeliveries.filter(g => {
+        const isDb = g.salesItems.some(i => i.sale.isOrder || i.pendingChallan?.isOrder);
+        const isLocal = !!(orderClassifiedRows[g.groupKey] || (g.challanNo && orderClassifiedRows[g.challanNo]) || (g.orderNo && orderClassifiedRows[g.orderNo]));
+        return isLocal && !isDb;
+      });
+      if (unmigratedGroups.length > 0) {
+        unmigratedGroups.forEach(g => {
+          classifyPendingOrder({
+            orderNo: g.orderNo,
+            challanNo: g.challanNo || undefined,
+            salesIds: g.salesItems.map(si => si.sale.id),
+            isOrder: true,
+          }).catch(() => {});
+        });
+      }
+    }
+  }, [sales, groupedPendingDeliveries, orderClassifiedRows]);
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -624,7 +694,13 @@ export default function PendingDeliveries() {
                   const estDate = group.salesItems.find(i => i.sale.estimatedDeliveryDate)?.sale.estimatedDeliveryDate || null;
                   const isRawOrderNo = group.orderNo.startsWith("ORD-");
                   const displayChallanNo = group.challanNo || (isRawOrderNo ? "P--" : group.orderNo);
-                  const isOrderClassified = !!orderClassifiedRows[group.groupKey];
+                  const isDbClassified = group.salesItems.some(i => i.sale.isOrder || i.pendingChallan?.isOrder);
+                  const isLocalClassified = !!(
+                    orderClassifiedRows[group.groupKey] ||
+                    (group.challanNo && orderClassifiedRows[group.challanNo]) ||
+                    (group.orderNo && orderClassifiedRows[group.orderNo])
+                  );
+                  const isOrderClassified = isDbClassified || isLocalClassified;
 
                   return (
                     <TableRow key={group.groupKey} className="hover:bg-slate-50/40">
@@ -633,15 +709,7 @@ export default function PendingDeliveries() {
                           <Checkbox
                             id={`order-chk-${group.groupKey}`}
                             checked={isOrderClassified}
-                            onCheckedChange={(checked) => {
-                              setOrderClassifiedRows((prev) => {
-                                const next = { ...prev, [group.groupKey]: !!checked };
-                                try {
-                                  localStorage.setItem("erp_pending_order_classified", JSON.stringify(next));
-                                } catch {}
-                                return next;
-                              });
-                            }}
+                            onCheckedChange={(checked) => handleToggleClassifyOrder(group, !!checked)}
                             className="h-4 w-4 rounded border-slate-400 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600 mt-0.5 shrink-0"
                             title="Classify as Order (reference purpose)"
                           />
