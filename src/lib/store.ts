@@ -77,6 +77,7 @@ export interface Sale {
   createdAt?: string;
   updatedAt?: string;
   estimatedDeliveryDate?: string;
+  isOrder?: boolean;
 }
 export interface SaleReturn {
   id: string;
@@ -111,6 +112,7 @@ export interface Challan {
   stockCategory?: "Available" | "Display" | "Damage";
   returnedQty?: number;
   restoredQty?: number;
+  isOrder?: boolean;
   status: "Pending" | "Confirmed" | "Delivered" | "Cancelled";
 }
 
@@ -223,6 +225,7 @@ const mapSale = (s: any): Sale => ({
   createdAt: s.created_at,
   updatedAt: s.updated_at,
   estimatedDeliveryDate: s.estimated_delivery_date ? String(s.estimated_delivery_date).slice(0, 10) : undefined,
+  isOrder: Boolean(s.is_order),
 });
 
 const mapSaleReturn = (r: any): SaleReturn => ({
@@ -259,6 +262,7 @@ const mapChallan = (c: any): Challan => ({
   stockCategory: c.stock_category,
   returnedQty: c.returned_qty,
   restoredQty: c.restored_qty,
+  isOrder: Boolean(c.is_order),
   status: c.status,
 });
 
@@ -599,6 +603,8 @@ export const updateSale = (id: string, updates: Partial<Sale>) => {
   if (updates.status !== undefined) body.status = updates.status;
   if (updates.estimatedDeliveryDate !== undefined)
     body.estimated_delivery_date = updates.estimatedDeliveryDate;
+  if (updates.isOrder !== undefined)
+    body.is_order = updates.isOrder;
   return request<any>(`/sales/${id}`, {
     method: "PUT",
     body: JSON.stringify(body),
@@ -655,6 +661,16 @@ export const generatePendingGroupChallan = (orderNo: string, salesIds?: (number 
     method: "POST",
     body: JSON.stringify({ orderNo, salesIds }),
   }).then(list => list.map(mapChallan));
+export const classifyPendingOrder = (params: {
+  orderNo?: string;
+  challanNo?: string;
+  salesIds?: (string | number)[];
+  isOrder: boolean;
+}) =>
+  request<{ success: boolean; isOrder: boolean }>("/sales/classify-order", {
+    method: "PUT",
+    body: JSON.stringify(params),
+  });
 export const addChallan = (
   c: Omit<Challan, "id" | "challanNo"> & { status?: string },
 ) => {

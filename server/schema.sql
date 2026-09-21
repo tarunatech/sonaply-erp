@@ -57,86 +57,88 @@ CREATE TABLE IF NOT EXISTS sales (
   customer TEXT NOT NULL,
   client_phone TEXT,
   product TEXT NOT NULL,
-  category TEXT NOT NULL,
-  ordered_qty INTEGER NOT NULL,
-  delivered_qty INTEGER DEFAULT 0,
-  pending_qty INTEGER DEFAULT 0,
-  rate NUMERIC,
-  "GST" NUMERIC DEFAULT 0,
-  total_price NUMERIC,
-  order_date DATE DEFAULT CURRENT_DATE,
-  value_category TEXT,
-  batch_no TEXT,
-  stock_category TEXT DEFAULT 'Available',
-  remarks TEXT,
-  status TEXT DEFAULT 'Pending' CHECK (status IN ('Pending', 'Confirmed', 'Partial', 'Delivered', 'Cancelled')),
-  damage_qty INTEGER DEFAULT 0,
-  delivered_at TIMESTAMP,
-  estimated_delivery_date DATE,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+    category TEXT NOT NULL,
+    ordered_qty INTEGER NOT NULL,
+    delivered_qty INTEGER DEFAULT 0,
+    pending_qty INTEGER DEFAULT 0,
+    rate NUMERIC,
+    "GST" NUMERIC DEFAULT 0,
+    total_price NUMERIC,
+    order_date DATE DEFAULT CURRENT_DATE,
+    value_category TEXT,
+    batch_no TEXT,
+    stock_category TEXT DEFAULT 'Available',
+    remarks TEXT,
+    status TEXT DEFAULT 'Pending' CHECK (status IN ('Pending', 'Confirmed', 'Partial', 'Delivered', 'Cancelled')),
+    damage_qty INTEGER DEFAULT 0,
+    delivered_at TIMESTAMP,
+    estimated_delivery_date DATE,
+    is_order BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
 
-CREATE TABLE IF NOT EXISTS sales_returns (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  client_name TEXT NOT NULL,
-  client_phone TEXT,
-  price_category TEXT,
-  receive_date DATE DEFAULT CURRENT_DATE,
-  product_name TEXT NOT NULL,
-  quantity INTEGER NOT NULL,
-  batch_no TEXT,
-  notes TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+  CREATE TABLE IF NOT EXISTS sales_returns (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    client_name TEXT NOT NULL,
+    client_phone TEXT,
+    price_category TEXT,
+    receive_date DATE DEFAULT CURRENT_DATE,
+    product_name TEXT NOT NULL,
+    quantity INTEGER NOT NULL,
+    batch_no TEXT,
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
 
-CREATE TABLE IF NOT EXISTS challans (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  challan_no TEXT NOT NULL,
-  sales_id UUID REFERENCES sales(id),
-  customer TEXT NOT NULL,
-  client_phone TEXT,
-  product TEXT NOT NULL,
-  batch_no TEXT,
-  quantity INTEGER NOT NULL,
-  created_at DATE DEFAULT CURRENT_DATE,
-  notes TEXT,
-  is_printed BOOLEAN DEFAULT FALSE,
-  stock_category TEXT DEFAULT 'Available',
-  is_cancelled BOOLEAN DEFAULT FALSE,
-  cancelled_at TIMESTAMP,
-  is_built BOOLEAN DEFAULT FALSE,
-  bill_no TEXT,
-  restored_qty INTEGER,
-  is_challan_generated BOOLEAN DEFAULT FALSE,
-  status TEXT DEFAULT 'Delivered',
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
- 
-CREATE TABLE IF NOT EXISTS clients (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name TEXT UNIQUE NOT NULL,
-  name_gujarati TEXT,
-  phone TEXT,
-  price_category TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+  CREATE TABLE IF NOT EXISTS challans (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    challan_no TEXT NOT NULL,
+    sales_id UUID REFERENCES sales(id),
+    customer TEXT NOT NULL,
+    client_phone TEXT,
+    product TEXT NOT NULL,
+    batch_no TEXT,
+    quantity INTEGER NOT NULL,
+    created_at DATE DEFAULT CURRENT_DATE,
+    notes TEXT,
+    is_printed BOOLEAN DEFAULT FALSE,
+    stock_category TEXT DEFAULT 'Available',
+    is_cancelled BOOLEAN DEFAULT FALSE,
+    cancelled_at TIMESTAMP,
+    is_built BOOLEAN DEFAULT FALSE,
+    bill_no TEXT,
+    restored_qty INTEGER,
+    is_challan_generated BOOLEAN DEFAULT FALSE,
+    is_order BOOLEAN DEFAULT FALSE,
+    status TEXT DEFAULT 'Delivered',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+  
+  CREATE TABLE IF NOT EXISTS clients (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT UNIQUE NOT NULL,
+    name_gujarati TEXT,
+    phone TEXT,
+    price_category TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
 
-CREATE TABLE IF NOT EXISTS holds (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  client_name TEXT NOT NULL,
-  client_phone TEXT,
-  product_name TEXT NOT NULL,
-  category TEXT NOT NULL,
-  quantity INTEGER NOT NULL,
-  held_qty INTEGER,
-  batch_no TEXT,
-  hold_date DATE DEFAULT CURRENT_DATE,
-  status TEXT DEFAULT 'Active'
-);
+  CREATE TABLE IF NOT EXISTS holds (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    client_name TEXT NOT NULL,
+    client_phone TEXT,
+    product_name TEXT NOT NULL, 
+    category TEXT NOT NULL,
+    quantity INTEGER NOT NULL,
+    held_qty INTEGER,
+    batch_no TEXT,
+    hold_date DATE DEFAULT CURRENT_DATE,
+    status TEXT DEFAULT 'Active'
+  );
 
-CREATE TABLE IF NOT EXISTS challan_notes (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  CREATE TABLE IF NOT EXISTS challan_notes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   note TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'Pending' CHECK (status IN ('Pending', 'Completed')),
   created_by TEXT,

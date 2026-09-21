@@ -85,6 +85,19 @@ ensureHoldQtyColumn().catch((err) => {
   console.error("Holds held_qty column initialization failed:", err.message);
 });
 
+async function ensureOrderClassifiedColumns() {
+  await db.query(
+    "ALTER TABLE sales ADD COLUMN IF NOT EXISTS is_order BOOLEAN DEFAULT FALSE",
+  );
+  await db.query(
+    "ALTER TABLE challans ADD COLUMN IF NOT EXISTS is_order BOOLEAN DEFAULT FALSE",
+  );
+}
+
+ensureOrderClassifiedColumns().catch((err) => {
+  console.error("Order classified column initialization failed:", err.message);
+});
+
 async function ensureSalesReturnTable() {
   await db.query(`
     CREATE TABLE IF NOT EXISTS sales_returns (
@@ -1352,6 +1365,55 @@ app.get("/api/sales", async (req, res) => {
   }
 });
 
+app.put("/api/sales/classify-order", async (req, res) => {
+  const { orderNo, challanNo, salesIds, isOrder } = req.body;
+  const isOrderBool = Boolean(isOrder);
+  try {
+    await db.query("BEGIN");
+
+    if (salesIds && Array.isArray(salesIds) && salesIds.length > 0) {
+      const validIds = salesIds.filter(Boolean);
+      if (validIds.length > 0) {
+        await db.query(
+          "UPDATE sales SET is_order = $1 WHERE id = ANY($2::uuid[])",
+          [isOrderBool, validIds],
+        );
+        await db.query(
+          "UPDATE challans SET is_order = $1 WHERE sales_id = ANY($2::uuid[])",
+          [isOrderBool, validIds],
+        );
+      }
+    }
+    if (orderNo) {
+      await db.query("UPDATE sales SET is_order = $1 WHERE order_no = $2", [
+        isOrderBool,
+        orderNo,
+      ]);
+      await db.query(
+        "UPDATE challans SET is_order = $1 WHERE sales_id IN (SELECT id FROM sales WHERE order_no = $2)",
+        [isOrderBool, orderNo],
+      );
+    }
+    if (challanNo) {
+      await db.query("UPDATE challans SET is_order = $1 WHERE challan_no = $2", [
+        isOrderBool,
+        challanNo,
+      ]);
+      await db.query(
+        "UPDATE sales SET is_order = $1 WHERE id IN (SELECT sales_id FROM challans WHERE challan_no = $2)",
+        [isOrderBool, challanNo],
+      );
+    }
+
+    await db.query("COMMIT");
+    res.json({ success: true, isOrder: isOrderBool });
+  } catch (err) {
+    await db.query("ROLLBACK");
+    console.error("Failed to classify order:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post("/api/sales/bulk", async (req, res) => {
   const {
     customer,
@@ -2194,6 +2256,21 @@ app.put("/api/sales/:id", async (req, res) => {
           ? req.body.estimated_delivery_date
           : req.body.estimatedDeliveryDate;
     }
+    if (
+      req.body.is_order !== undefined ||
+      req.body.isOrder !== undefined
+    ) {
+      const isOrderVal = Boolean(
+        req.body.is_order !== undefined
+          ? req.body.is_order
+          : req.body.isOrder,
+      );
+      updates.is_order = isOrderVal;
+      await db.query("UPDATE challans SET is_order = $1 WHERE sales_id = $2", [
+        isOrderVal,
+        id,
+      ]);
+    }
 
     // Sync client_phone, customer, or notes/remarks to challans if inventory didn't change but customer/phone/remarks did
     if (deliveredQty === 0 && !isInventoryChanged) {
@@ -2939,6 +3016,18 @@ app.put("/api/challans/:id", async (req, res) => {
       allowedUpdates.bill_no = fields.billNo;
     if (fields.is_challan_generated !== undefined)
       allowedUpdates.is_challan_generated = fields.is_challan_generated;
+    if (fields.is_order !== undefined || fields.isOrder !== undefined) {
+      const isOrderVal = Boolean(
+        fields.is_order !== undefined ? fields.is_order : fields.isOrder,
+      );
+      allowedUpdates.is_order = isOrderVal;
+      if (challan.sales_id) {
+        await db.query("UPDATE sales SET is_order = $1 WHERE id = $2", [
+          isOrderVal,
+          challan.sales_id,
+        ]);
+      }
+    }
 
     if (Object.keys(allowedUpdates).length > 0) {
       const setClause = Object.keys(allowedUpdates)
@@ -3917,8 +4006,8 @@ app.post("/api/challans/group/generate-pending", async (req, res) => {
       if (unhandledQty > 0) {
         const insRes = await db.query(
           `INSERT INTO challans 
-          (challan_no, sales_id, customer, client_phone, product, batch_no, quantity, status, created_at, notes, stock_category, is_printed, is_built, is_cancelled) 
-          VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending', CURRENT_DATE, $8, $9, FALSE, FALSE, FALSE) RETURNING *`,
+          (challan_no, sales_id, customer, client_phone, product, batch_no, quantity, status, created_at, notes, stock_category, is_printed, is_built, is_cancelled, is_order) 
+          VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending', CURRENT_DATE, $8, $9, FALSE, FALSE, FALSE, $10) RETURNING *`,
           [
             pGroupNum,
             sale.id,
@@ -3929,6 +4018,7 @@ app.post("/api/challans/group/generate-pending", async (req, res) => {
             unhandledQty,
             sale.remarks || "",
             sale.stock_category || "Available",
+            Boolean(sale.is_order),
           ],
         );
         createdChallans.push(insRes.rows[0]);
