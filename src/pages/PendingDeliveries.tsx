@@ -853,7 +853,7 @@ export default function PendingDeliveries() {
                             <div key={idx} className="py-1 border-b border-slate-100 last:border-0 flex items-center justify-end gap-1 min-h-[44px] flex-nowrap">
                               {group.challanNo ? (
                                 idx === 0 && (
-                                  <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-xs h-7 px-2.5 font-semibold shadow-2xs" onClick={() => handleConfirmChallan(group.salesItems[0].pendingChallan!)}>
+                                  <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-xs h-7 px-2.5 font-semibold shadow-2xs" onClick={() => handleConfirmChallan(group.salesItems[0]?.pendingChallan || ({ challanNo: group.challanNo } as any))}>
                                     <CheckCircle2 className="mr-1 h-3.5 w-3.5" /> Confirm
                                   </Button>
                                 )

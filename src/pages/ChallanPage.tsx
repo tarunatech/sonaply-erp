@@ -110,6 +110,9 @@ export default function ChallanPage() {
 
   useEffect(() => {
     refresh();
+    const handleStockUpdate = () => refresh();
+    window.addEventListener("erp-stock-updated", handleStockUpdate);
+    return () => window.removeEventListener("erp-stock-updated", handleStockUpdate);
   }, [refresh]);
 
   const pendingNotes = useMemo(() => {
@@ -169,15 +172,6 @@ export default function ChallanPage() {
       if (!groups[c.challanNo]) groups[c.challanNo] = [];
       groups[c.challanNo].push(c);
     });
-    const chSalesIds = new Set<string>();
-    Object.entries(groups).forEach(([challanNo, items]) => {
-      if (challanNo.startsWith("CH-") || challanNo.startsWith("CH")) {
-        items.forEach((i) => {
-          if (i.salesId) chSalesIds.add(String(i.salesId));
-        });
-      }
-    });
-
     return Object.entries(groups)
       .map(([challanNo, items]) => ({
         challanNo,
@@ -197,15 +191,7 @@ export default function ChallanPage() {
         const isCH = g.challanNo.startsWith("CH-") || g.challanNo.startsWith("CH");
         const isP = g.challanNo.startsWith("P-");
         if (isCH) return true;
-        if (isP) {
-          if (g.status !== "Confirmed") return false;
-          // If all sales in this P- group are already present in an active CH- group, filter out the duplicate P-
-          const allCoveredByCH = g.items.every(
-            (i) => i.salesId && chSalesIds.has(String(i.salesId))
-          );
-          if (allCoveredByCH) return false;
-          return true;
-        }
+        if (isP) return g.status === "Confirmed";
         return true;
       })
       .sort((a, b) => {
