@@ -7,6 +7,21 @@ export interface Product {
   size: string;
   barcode: string;
 }
+export interface PeriodSaleDetail {
+  orderNo: string;
+  customer: string;
+  clientPhone?: string;
+  orderedQty: number;
+  deliveredQty: number;
+  pendingQty: number;
+  orderDate: string;
+  estimatedDeliveryDate?: string;
+  status: string;
+  rate?: number;
+  totalPrice?: number;
+  remarks?: string;
+}
+
 export interface StockBatch {
   id: string;
   productId: string;
@@ -27,6 +42,9 @@ export interface StockBatch {
   isNil?: boolean;
   isCancelled?: boolean;
   isDeadStock?: boolean;
+  periodSoldQty?: number;
+  periodSalesCount?: number;
+  periodSalesDetails?: PeriodSaleDetail[];
 }
 export interface Hold {
   id: string;
@@ -199,6 +217,9 @@ const mapBatch = (b: any): StockBatch => ({
   isNil: b.is_nil,
   isCancelled: b.is_cancelled,
   isDeadStock: b.is_dead_stock,
+  periodSoldQty: b.period_sold_qty !== undefined ? Number(b.period_sold_qty) : undefined,
+  periodSalesCount: b.period_sales_count !== undefined ? Number(b.period_sales_count) : undefined,
+  periodSalesDetails: Array.isArray(b.period_sales_details) ? b.period_sales_details : [],
 });
 
 const mapSale = (s: any): Sale => ({
@@ -327,6 +348,8 @@ export interface GetBatchesParams {
   damageType?: string;
   description?: string;
   updatedDate?: string;
+  soldStartDate?: string;
+  soldEndDate?: string;
 }
 
 export interface StockStats {
@@ -345,8 +368,14 @@ export interface PaginatedBatchesResponse {
   stats?: StockStats;
 }
 
-export const getBatches = async (): Promise<StockBatch[]> => {
-  const data = await request<any[]>("/batches");
+export const getBatches = async (
+  params: { soldStartDate?: string; soldEndDate?: string } = {},
+): Promise<StockBatch[]> => {
+  const query = new URLSearchParams();
+  if (params.soldStartDate) query.set("soldStartDate", params.soldStartDate);
+  if (params.soldEndDate) query.set("soldEndDate", params.soldEndDate);
+  const qStr = query.toString();
+  const data = await request<any[]>(`/batches${qStr ? `?${qStr}` : ""}`);
   return data.map(mapBatch);
 };
 
@@ -411,6 +440,8 @@ export const getBatchesPaginated = async (
   if (params.damageType) query.set("damageType", params.damageType);
   if (params.description) query.set("description", params.description);
   if (params.updatedDate) query.set("updatedDate", params.updatedDate);
+  if (params.soldStartDate) query.set("soldStartDate", params.soldStartDate);
+  if (params.soldEndDate) query.set("soldEndDate", params.soldEndDate);
 
   const res = await request<any>(`/batches?${query.toString()}`);
   return {
