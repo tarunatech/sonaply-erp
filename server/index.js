@@ -486,9 +486,55 @@ app.get("/api/batches", async (req, res) => {
       isCancelled,
       isDeadStock,
       isNil,
+      soldStartDate,
+      soldEndDate,
     } = req.query;
 
+    const finalSoldStartDate = soldStartDate ? String(soldStartDate).trim() : null;
+    const finalSoldEndDate = soldEndDate ? String(soldEndDate).trim() : (finalSoldStartDate ? finalSoldStartDate : null);
+    const isPeriodFilter = Boolean(finalSoldStartDate && finalSoldEndDate);
+
     if (!page) {
+      if (isPeriodFilter) {
+        const result = await db.query(
+          `SELECT batches.*, COALESCE(ps.period_sold_qty, 0) as period_sold_qty, ps.period_sales_count, ps.period_sales_details
+           FROM batches
+           INNER JOIN (
+             SELECT 
+               LOWER(TRIM(s.product)) as s_product,
+               LOWER(TRIM(COALESCE(s.batch_no, '0'))) as s_batch,
+               SUM(s.ordered_qty) as period_sold_qty,
+               COUNT(s.id) as period_sales_count,
+               JSON_AGG(
+                 JSON_BUILD_OBJECT(
+                   'orderNo', s.order_no,
+                   'customer', s.customer,
+                   'clientPhone', s.client_phone,
+                   'orderedQty', s.ordered_qty,
+                   'deliveredQty', s.delivered_qty,
+                   'pendingQty', s.pending_qty,
+                   'orderDate', s.order_date,
+                   'estimatedDeliveryDate', s.estimated_delivery_date,
+                   'status', s.status,
+                   'rate', s.rate,
+                   'totalPrice', s.total_price,
+                   'remarks', s.remarks
+                 ) ORDER BY s.order_date DESC
+               ) as period_sales_details
+             FROM sales s
+             WHERE s.status != 'Cancelled'
+               AND (
+                 (s.order_date >= $1 AND s.order_date <= $2)
+                 OR (s.estimated_delivery_date IS NOT NULL AND s.estimated_delivery_date >= $1 AND s.estimated_delivery_date <= $2)
+               )
+             GROUP BY LOWER(TRIM(s.product)), LOWER(TRIM(COALESCE(s.batch_no, '0')))
+           ) ps ON LOWER(TRIM(batches.product_name)) = ps.s_product 
+               AND LOWER(TRIM(COALESCE(batches.batch_number, '0'))) = ps.s_batch
+           ORDER BY ps.period_sold_qty DESC, LOWER(batches.product_name) ASC, batches.date DESC, batches.id DESC`,
+          [finalSoldStartDate, finalSoldEndDate]
+        );
+        return res.json(result.rows);
+      }
       const result = await db.query(
         "SELECT * FROM batches ORDER BY date DESC, id DESC",
       );
@@ -501,6 +547,50 @@ app.get("/api/batches", async (req, res) => {
 
     const conditions = [];
     const values = [];
+
+    let joinClause = "";
+    let selectFields = "batches.*";
+    if (isPeriodFilter) {
+      values.push(finalSoldStartDate);
+      const sStartIdx = values.length;
+      values.push(finalSoldEndDate);
+      const sEndIdx = values.length;
+
+      joinClause = `
+        INNER JOIN (
+          SELECT 
+            LOWER(TRIM(s.product)) as s_product,
+            LOWER(TRIM(COALESCE(s.batch_no, '0'))) as s_batch,
+            SUM(s.ordered_qty) as period_sold_qty,
+            COUNT(s.id) as period_sales_count,
+            JSON_AGG(
+              JSON_BUILD_OBJECT(
+                'orderNo', s.order_no,
+                'customer', s.customer,
+                'clientPhone', s.client_phone,
+                'orderedQty', s.ordered_qty,
+                'deliveredQty', s.delivered_qty,
+                'pendingQty', s.pending_qty,
+                'orderDate', s.order_date,
+                'estimatedDeliveryDate', s.estimated_delivery_date,
+                'status', s.status,
+                'rate', s.rate,
+                'totalPrice', s.total_price,
+                'remarks', s.remarks
+              ) ORDER BY s.order_date DESC
+            ) as period_sales_details
+          FROM sales s
+          WHERE s.status != 'Cancelled'
+            AND (
+              (s.order_date >= $${sStartIdx} AND s.order_date <= $${sEndIdx})
+              OR (s.estimated_delivery_date IS NOT NULL AND s.estimated_delivery_date >= $${sStartIdx} AND s.estimated_delivery_date <= $${sEndIdx})
+            )
+          GROUP BY LOWER(TRIM(s.product)), LOWER(TRIM(COALESCE(s.batch_no, '0')))
+        ) ps ON LOWER(TRIM(batches.product_name)) = ps.s_product 
+            AND LOWER(TRIM(COALESCE(batches.batch_number, '0'))) = ps.s_batch
+      `;
+      selectFields = "batches.*, COALESCE(ps.period_sold_qty, 0) as period_sold_qty, ps.period_sales_count, ps.period_sales_details";
+    }
 
     // Global category filter
     if (category && category !== "all") {
@@ -534,7 +624,9 @@ app.get("/api/batches", async (req, res) => {
     }
 
     // 3. Sold quantity filter
-    const soldFormula = "GREATEST(0, quantity - available_qty - COALESCE(display_qty, 0) - COALESCE(damage_qty, 0) - COALESCE(hold_qty, 0))";
+    const soldFormula = isPeriodFilter
+      ? "COALESCE(ps.period_sold_qty, 0)"
+      : "GREATEST(0, batches.quantity - batches.available_qty - COALESCE(batches.display_qty, 0) - COALESCE(batches.damage_qty, 0) - COALESCE(batches.hold_qty, 0))";
     if (soldType === ">0") {
       conditions.push(`${soldFormula} > 0`);
     } else if (soldType === "=0") {
@@ -670,30 +762,72 @@ app.get("/api/batches", async (req, res) => {
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
-    const overallStatsQuery = await db.query(`
-      SELECT 
-        COALESCE(SUM(GREATEST(0, quantity - available_qty - COALESCE(display_qty, 0) - COALESCE(damage_qty, 0) - COALESCE(hold_qty, 0))), 0) as total_sales,
-        COALESCE(SUM(available_qty), 0) as available_stock,
-        COALESCE(SUM(display_qty), 0) as total_display,
-        COALESCE(SUM(damage_qty), 0) as total_damage
-      FROM batches
-    `);
-    const statsRow = overallStatsQuery.rows[0] || {};
-    const stats = {
-      totalSales: Number(statsRow.total_sales || 0),
-      availableStock: Number(statsRow.available_stock || 0),
-      totalDisplay: Number(statsRow.total_display || 0),
-      totalDamage: Number(statsRow.total_damage || 0),
+    let stats = {
+      totalSales: 0,
+      availableStock: 0,
+      totalDisplay: 0,
+      totalDamage: 0,
     };
 
+    if (isPeriodFilter) {
+      const statsQuery = await db.query(
+        `SELECT 
+          COALESCE(SUM(ps.period_sold_qty), 0) as total_sales,
+          COALESCE(SUM(batches.available_qty), 0) as available_stock,
+          COALESCE(SUM(batches.display_qty), 0) as total_display,
+          COALESCE(SUM(batches.damage_qty), 0) as total_damage
+        FROM batches
+        INNER JOIN (
+          SELECT 
+            LOWER(TRIM(s.product)) as s_product,
+            LOWER(TRIM(COALESCE(s.batch_no, '0'))) as s_batch,
+            SUM(s.ordered_qty) as period_sold_qty
+          FROM sales s
+          WHERE s.status != 'Cancelled'
+            AND (
+              (s.order_date >= $1 AND s.order_date <= $2)
+              OR (s.estimated_delivery_date IS NOT NULL AND s.estimated_delivery_date >= $1 AND s.estimated_delivery_date <= $2)
+            )
+          GROUP BY LOWER(TRIM(s.product)), LOWER(TRIM(COALESCE(s.batch_no, '0')))
+        ) ps ON LOWER(TRIM(batches.product_name)) = ps.s_product 
+            AND LOWER(TRIM(COALESCE(batches.batch_number, '0'))) = ps.s_batch`,
+        [finalSoldStartDate, finalSoldEndDate]
+      );
+      const statsRow = statsQuery.rows[0] || {};
+      stats = {
+        totalSales: Number(statsRow.total_sales || 0),
+        availableStock: Number(statsRow.available_stock || 0),
+        totalDisplay: Number(statsRow.total_display || 0),
+        totalDamage: Number(statsRow.total_damage || 0),
+      };
+    } else {
+      const overallStatsQuery = await db.query(`
+        SELECT 
+          COALESCE(SUM(GREATEST(0, quantity - available_qty - COALESCE(display_qty, 0) - COALESCE(damage_qty, 0) - COALESCE(hold_qty, 0))), 0) as total_sales,
+          COALESCE(SUM(available_qty), 0) as available_stock,
+          COALESCE(SUM(display_qty), 0) as total_display,
+          COALESCE(SUM(damage_qty), 0) as total_damage
+        FROM batches
+      `);
+      const statsRow = overallStatsQuery.rows[0] || {};
+      stats = {
+        totalSales: Number(statsRow.total_sales || 0),
+        availableStock: Number(statsRow.available_stock || 0),
+        totalDisplay: Number(statsRow.total_display || 0),
+        totalDamage: Number(statsRow.total_damage || 0),
+      };
+    }
+
     const countResult = await db.query(
-      `SELECT COUNT(*) as total FROM batches ${whereClause}`,
+      `SELECT COUNT(*) as total FROM batches ${joinClause} ${whereClause}`,
       values
     );
     const total = parseInt(countResult.rows[0].total, 10) || 0;
     const totalPages = Math.ceil(total / limitNum) || 1;
 
-    let orderByClause = "ORDER BY LOWER(product_name) ASC, LOWER(batch_number) ASC, date DESC, id DESC";
+    let orderByClause = isPeriodFilter
+      ? "ORDER BY ps.period_sold_qty DESC, LOWER(batches.product_name) ASC, LOWER(batches.batch_number) ASC, batches.date DESC, batches.id DESC"
+      : "ORDER BY LOWER(batches.product_name) ASC, LOWER(batches.batch_number) ASC, batches.date DESC, batches.id DESC";
     const dataValues = [...values];
 
     const searchTarget = (search && search.trim()) || (product && product.trim());
@@ -747,7 +881,7 @@ app.get("/api/batches", async (req, res) => {
     const offsetIdx = dataValues.length;
 
     const dataResult = await db.query(
-      `SELECT * FROM batches ${whereClause} ${orderByClause} LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+      `SELECT ${selectFields} FROM batches ${joinClause} ${whereClause} ${orderByClause} LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
       dataValues
     );
 

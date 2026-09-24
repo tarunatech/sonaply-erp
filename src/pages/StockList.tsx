@@ -71,6 +71,9 @@ import {
   X,
   Check,
   RotateCcw,
+  Calendar,
+  Info,
+  Clock,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -619,6 +622,104 @@ export default function StockList() {
   const [isImporting, setIsImporting] = useState(false);
   const [importProgress, setImportProgress] = useState("");
 
+  // Sold Date & Duration Filter State
+  const [isPeriodFilterActive, setIsPeriodFilterActive] = useState<boolean>(false);
+  const [soldStartDate, setSoldStartDate] = useState<string>(() => getLocalDateString());
+  const [soldEndDate, setSoldEndDate] = useState<string>(() => getLocalDateString());
+  const [soldDurationPreset, setSoldDurationPreset] = useState<string>("today");
+  const [soldDurationDays, setSoldDurationDays] = useState<number>(1);
+  const [isPeriodFilterOpen, setIsPeriodFilterOpen] = useState<boolean>(false);
+  const [viewingPeriodSalesBatch, setViewingPeriodSalesBatch] = useState<StockBatch | null>(null);
+
+  const applyPreset = (preset: string) => {
+    setSoldDurationPreset(preset);
+    const today = new Date();
+    const startStr = getLocalDateString(today);
+
+    if (preset === "today") {
+      setSoldStartDate(startStr);
+      setSoldEndDate(startStr);
+      setSoldDurationDays(1);
+    } else if (preset === "yesterday") {
+      const yesterday = new Date(today);
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yestStr = getLocalDateString(yesterday);
+      setSoldStartDate(yestStr);
+      setSoldEndDate(yestStr);
+      setSoldDurationDays(1);
+    } else if (preset === "thisMonth") {
+      const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+      const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+      setSoldStartDate(getLocalDateString(firstDay));
+      setSoldEndDate(getLocalDateString(lastDay));
+      const diffTime = Math.abs(lastDay.getTime() - firstDay.getTime());
+      setSoldDurationDays(Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1);
+    }
+  };
+
+  const handleStartDateChange = (newStart: string) => {
+    setSoldStartDate(newStart);
+    setSoldDurationPreset("custom");
+    if (newStart && soldDurationDays > 0) {
+      const s = new Date(newStart);
+      s.setDate(s.getDate() + (soldDurationDays <= 1 ? 0 : soldDurationDays));
+      setSoldEndDate(getLocalDateString(s));
+    }
+  };
+
+  const handleDurationDaysChange = (days: number) => {
+    const validDays = Math.max(0, days);
+    setSoldDurationDays(validDays);
+    setSoldDurationPreset("custom");
+    if (soldStartDate) {
+      const s = new Date(soldStartDate);
+      s.setDate(s.getDate() + (validDays <= 1 ? 0 : validDays));
+      setSoldEndDate(getLocalDateString(s));
+    }
+  };
+
+  const handleEndDateChange = (newEnd: string) => {
+    setSoldEndDate(newEnd);
+    setSoldDurationPreset("custom");
+    if (soldStartDate && newEnd) {
+      const s = new Date(soldStartDate);
+      const e = new Date(newEnd);
+      const diffTime = e.getTime() - s.getTime();
+      const diffDays = Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
+      setSoldDurationDays(diffDays === 0 ? 1 : diffDays);
+    }
+  };
+
+  const handleApplySoldPeriod = () => {
+    if (!soldStartDate) {
+      toast({ title: "Start Date required", description: "Please select a start date", variant: "destructive" });
+      return;
+    }
+    const finalEnd = soldEndDate || soldStartDate;
+    if (finalEnd < soldStartDate) {
+      toast({ title: "Invalid range", description: "End date cannot be before start date", variant: "destructive" });
+      return;
+    }
+    setIsPeriodFilterActive(true);
+    setIsPeriodFilterOpen(false);
+    setPage(1);
+    toast({
+      title: "Sold Items Filter Applied",
+      description: `Showing products sold between ${formatLocalDate(soldStartDate)} and ${formatLocalDate(finalEnd)}`,
+    });
+  };
+
+  const handleClearSoldPeriod = () => {
+    setIsPeriodFilterActive(false);
+    setSoldDurationPreset("today");
+    setIsPeriodFilterOpen(false);
+    setPage(1);
+    toast({
+      title: "Filter Cleared",
+      description: "Showing full stock list",
+    });
+  };
+
   useEffect(() => {
     if (!editingBatch) {
       setIsAdminUnlocked(false);
@@ -649,6 +750,7 @@ export default function StockList() {
     setSelectedCategory("all");
     setSelectedStatus("all");
     setColumnFilters(initialFilters);
+    setIsPeriodFilterActive(false);
     setPage(1);
   }, []);
 
@@ -711,6 +813,8 @@ export default function StockList() {
           maxDamage: columnFilters.maxDamage,
           description: columnFilters.description,
           updatedDate: columnFilters.updatedDate,
+          soldStartDate: isPeriodFilterActive ? soldStartDate : undefined,
+          soldEndDate: isPeriodFilterActive ? soldEndDate : undefined,
         }),
         getSales(),
       ]);
@@ -733,7 +837,7 @@ export default function StockList() {
     } finally {
       setIsLoading(false);
     }
-  }, [page, limit, debouncedSearch, selectedCategory, selectedStatus, columnFilters]);
+  }, [page, limit, debouncedSearch, selectedCategory, selectedStatus, columnFilters, isPeriodFilterActive, soldStartDate, soldEndDate]);
 
   useEffect(() => {
     refreshData();
@@ -1389,8 +1493,15 @@ export default function StockList() {
         onRemove: () => setSelectedStatus("all"),
       });
     }
+    if (isPeriodFilterActive) {
+      pills.push({
+        key: "soldPeriod",
+        label: `Sold Period: ${formatLocalDate(soldStartDate)} to ${formatLocalDate(soldEndDate)} (${soldDurationDays > 1 ? `${soldDurationDays} days` : "1 day"})`,
+        onRemove: handleClearSoldPeriod,
+      });
+    }
     return pills;
-  }, [columnFilters, selectedStatus, setColumnFilter, setNumericColumnFilter]);
+  }, [columnFilters, selectedStatus, setColumnFilter, setNumericColumnFilter, isPeriodFilterActive, soldStartDate, soldEndDate, soldDurationDays, handleClearSoldPeriod]);
 
   return (
     <div className="relative space-y-4">
@@ -1472,7 +1583,9 @@ export default function StockList() {
             size="sm"
             onClick={async () => {
               let csvContent = "";
-              const fullBatchesList = await getBatches();
+              const fullBatchesList = await getBatches(
+                isPeriodFilterActive ? { soldStartDate, soldEndDate } : {}
+              );
 
               const brands: Record<string, Record<string, any[]>> = {};
               fullBatchesList.forEach((b) => {
@@ -1521,7 +1634,9 @@ export default function StockList() {
 
               for (const [brand, prefixes] of Object.entries(brands)) {
                 csvContent += `Brand: ${brand},,,,,,,,,,\n`;
-                csvContent += `Product Name,Product Number,Date,Quantity,Available,Stock Maintain,Hold,Display,Damaged,Description\n`;
+                csvContent += isPeriodFilterActive
+                  ? `Product Name,Product Number,Date,Sold (${soldStartDate} to ${soldEndDate}),Quantity,Available,Stock Maintain,Hold,Display,Damaged,Description\n`
+                  : `Product Name,Product Number,Date,Quantity,Available,Stock Maintain,Hold,Display,Damaged,Description\n`;
 
                 const sortedPrefixes = Object.keys(prefixes).sort();
                 for (const prefix of sortedPrefixes) {
@@ -1537,7 +1652,9 @@ export default function StockList() {
                     .forEach((item) => {
                       const cleanDesc = (item.description || "").replace(/"/g, '""');
                       // Data row
-                      csvContent += `"${prefix}","${item.parsedSuffix}","${item.date || ""}","${item.quantity || 0}","${item.availableQty || 0}","${item.stockMaintain || 0}","${item.holdQty || 0}","${item.displayQty || 0}","${item.damageQty || 0}","${cleanDesc}"\n`;
+                      csvContent += isPeriodFilterActive
+                        ? `"${prefix}","${item.parsedSuffix}","${item.date || ""}","${item.periodSoldQty ?? 0}","${item.quantity || 0}","${item.availableQty || 0}","${item.stockMaintain || 0}","${item.holdQty || 0}","${item.displayQty || 0}","${item.damageQty || 0}","${cleanDesc}"\n`
+                        : `"${prefix}","${item.parsedSuffix}","${item.date || ""}","${item.quantity || 0}","${item.availableQty || 0}","${item.stockMaintain || 0}","${item.holdQty || 0}","${item.displayQty || 0}","${item.damageQty || 0}","${cleanDesc}"\n`;
                     });
                   // Empty row between groups
                   csvContent += `,,,,,,,,,,\n`;
@@ -1550,12 +1667,14 @@ export default function StockList() {
               });
               const a = document.createElement("a");
               a.href = URL.createObjectURL(blob);
-              a.download = `stock-patrak-${new Date().toISOString().slice(0, 10)}.csv`;
+              a.download = isPeriodFilterActive
+                ? `sold-stock-patrak-${soldStartDate}-to-${soldEndDate}.csv`
+                : `stock-patrak-${new Date().toISOString().slice(0, 10)}.csv`;
               a.click();
             }}
           >
             <Download className="mr-1 h-4 w-4" />
-            Export Patrak (CSV)
+            {isPeriodFilterActive ? "Export Sold Items (CSV)" : "Export Patrak (CSV)"}
           </Button>
           <Button variant="outline" size="sm" onClick={downloadExcelTemplate} disabled={isImporting}>
             <Download className="mr-1 h-4 w-4" />
@@ -1601,20 +1720,32 @@ export default function StockList() {
         </div>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card className="bg-primary/5 border-primary/20">
+        <Card className={`${isPeriodFilterActive ? "bg-blue-500/10 border-blue-500/30 ring-1 ring-blue-500/30" : "bg-primary/5 border-primary/20"}`}>
           <CardContent className="pt-6">
-            <div className="text-sm font-medium text-muted-foreground">
-              Total Sales (Items)
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-medium text-muted-foreground">
+                {isPeriodFilterActive ? "Sold Items (Period)" : "Total Sales (Items)"}
+              </div>
+              {isPeriodFilterActive && (
+                <Badge variant="outline" className="text-[10px] bg-blue-100/90 text-blue-900 border-blue-300">
+                  {soldDurationDays > 1 ? `${soldDurationDays} days` : "1 day"}
+                </Badge>
+              )}
             </div>
-            <div className="text-2xl font-bold text-primary">
+            <div className={`text-2xl font-bold ${isPeriodFilterActive ? "text-blue-700 dark:text-blue-400" : "text-primary"}`}>
               {stats.totalSales.toLocaleString()}
             </div>
+            {isPeriodFilterActive && (
+              <div className="text-[11px] text-muted-foreground mt-1 truncate">
+                {formatLocalDate(soldStartDate)} to {formatLocalDate(soldEndDate)}
+              </div>
+            )}
           </CardContent>
         </Card>
         <Card className="bg-emerald-500/10 border-emerald-500/20">
           <CardContent className="pt-6">
             <div className="text-sm font-medium text-muted-foreground">
-              Available Stock
+              {isPeriodFilterActive ? "Available Stock (Sold Items)" : "Available Stock"}
             </div>
             <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
               {stats.availableStock.toLocaleString()}
@@ -1654,7 +1785,7 @@ export default function StockList() {
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
-          <div className="w-full sm:w-[220px]">
+          <div className="w-full sm:w-[200px]">
             <Select
               value={columnFilters.category || selectedCategory}
               onValueChange={(val) => {
@@ -1675,7 +1806,7 @@ export default function StockList() {
               </SelectContent>
             </Select>
           </div>
-          <div className="w-full sm:w-[210px]">
+          <div className="w-full sm:w-[190px]">
             <Select
               value={selectedStatus}
               onValueChange={(val) => {
@@ -1715,6 +1846,177 @@ export default function StockList() {
               </SelectContent>
             </Select>
           </div>
+
+          {/* Sold Date & Duration Filter Popover */}
+          <Popover open={isPeriodFilterOpen} onOpenChange={setIsPeriodFilterOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                variant={isPeriodFilterActive ? "default" : "outline"}
+                size="sm"
+                className={`h-9 text-xs font-semibold gap-2 transition-all ${
+                  isPeriodFilterActive
+                    ? "bg-blue-600 hover:bg-blue-700 text-white shadow-2xs ring-2 ring-blue-300"
+                    : "border-blue-200 text-blue-800 hover:bg-blue-50/70"
+                }`}
+              >
+                <Calendar className="h-4 w-4 shrink-0" />
+                <span>
+                  {isPeriodFilterActive
+                    ? `Sold: ${formatLocalDate(soldStartDate)} - ${formatLocalDate(soldEndDate)} (${soldDurationDays > 1 ? `${soldDurationDays}d` : "1d"})`
+                    : "Filter Sold by Date & Duration"}
+                </span>
+                {isPeriodFilterActive && (
+                  <span
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleClearSoldPeriod();
+                    }}
+                    className="ml-1 rounded-full p-0.5 hover:bg-blue-800/80 text-white/90"
+                    title="Clear sold period"
+                  >
+                    <X className="h-3 w-3" />
+                  </span>
+                )}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-84 sm:w-[460px] p-4 z-50 bg-white shadow-xl border border-slate-200" align="start">
+              <div className="space-y-3.5">
+                <div className="flex items-center justify-between border-b pb-2">
+                  <div className="flex items-center gap-1.5">
+                    <Calendar className="h-4 w-4 text-blue-600" />
+                    <span className="text-xs font-bold text-slate-900">Filter Sold Products by Date</span>
+                  </div>
+                  {isPeriodFilterActive && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-1.5 text-[11px] text-red-600 hover:bg-red-50 hover:text-red-700"
+                      onClick={handleClearSoldPeriod}
+                    >
+                      Clear
+                    </Button>
+                  )}
+                </div>
+
+                {/* Quick Presets */}
+                <div className="space-y-1.5">
+                  <div className="text-[11px] font-semibold text-slate-600 flex items-center justify-between">
+                    <span>Quick Date Presets:</span>
+                    <span className="text-[10px] text-slate-400">Duration auto-applied</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <Button
+                      type="button"
+                      variant={soldDurationPreset === "today" ? "default" : "outline"}
+                      size="sm"
+                      className={`h-8 text-xs px-2 font-medium transition-colors ${
+                        soldDurationPreset === "today"
+                          ? "bg-blue-600 text-white hover:bg-blue-700"
+                          : "hover:bg-slate-100 text-slate-700"
+                      }`}
+                      onClick={() => applyPreset("today")}
+                    >
+                      Today
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={soldDurationPreset === "yesterday" ? "default" : "outline"}
+                      size="sm"
+                      className={`h-8 text-xs px-2 font-medium transition-colors ${
+                        soldDurationPreset === "yesterday"
+                          ? "bg-blue-600 text-white hover:bg-blue-700"
+                          : "hover:bg-slate-100 text-slate-700"
+                      }`}
+                      onClick={() => applyPreset("yesterday")}
+                    >
+                      Yesterday
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={soldDurationPreset === "thisMonth" ? "default" : "outline"}
+                      size="sm"
+                      className={`h-8 text-xs px-2 font-medium transition-colors ${
+                        soldDurationPreset === "thisMonth"
+                          ? "bg-blue-600 text-white hover:bg-blue-700"
+                          : "hover:bg-slate-100 text-slate-700"
+                      }`}
+                      onClick={() => applyPreset("thisMonth")}
+                    >
+                      This Month
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Custom Date & Duration Controls */}
+                <div className="space-y-2 pt-2 border-t">
+                  <div className="text-[11px] font-semibold text-slate-700">Custom Date & Duration:</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-[1fr_80px_1fr] gap-2.5 items-end">
+                    <div>
+                      <Label className="text-[10px] text-slate-500 font-medium">From Date</Label>
+                      <Input
+                        type="date"
+                        value={soldStartDate}
+                        onChange={(e) => handleStartDateChange(e.target.value)}
+                        className="h-8 text-xs mt-0.5 px-2 [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-80 hover:[&::-webkit-calendar-picker-indicator]:opacity-100"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-[10px] text-slate-500 font-medium">Duration (Days)</Label>
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <Input
+                          type="number"
+                          min="0"
+                          value={soldDurationDays}
+                          onChange={(e) => handleDurationDaysChange(parseInt(e.target.value, 10) || 0)}
+                          className="h-8 text-xs text-center font-bold text-blue-700 px-1"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <Label className="text-[10px] text-slate-500 font-medium">To Date</Label>
+                      <Input
+                        type="date"
+                        value={soldEndDate}
+                        onChange={(e) => handleEndDateChange(e.target.value)}
+                        className="h-8 text-xs mt-0.5 px-2 [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-80 hover:[&::-webkit-calendar-picker-indicator]:opacity-100"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between pt-2 border-t">
+                  <span className="text-[11px] text-slate-500 font-medium">
+                    {soldStartDate && soldEndDate ? (
+                      <>
+                        Range: <strong className="text-slate-800">{formatLocalDate(soldStartDate)}</strong> to{" "}
+                        <strong className="text-slate-800">{formatLocalDate(soldEndDate)}</strong>
+                      </>
+                    ) : (
+                      "Select a date range"
+                    )}
+                  </span>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => setIsPeriodFilterOpen(false)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="h-7 text-xs bg-blue-600 hover:bg-blue-700 text-white font-semibold"
+                      onClick={handleApplySoldPeriod}
+                    >
+                      Apply Filter
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
+
           {activeFilterPills.length > 0 && (
             <Button
               variant="ghost"
@@ -1749,6 +2051,47 @@ export default function StockList() {
                 </button>
               </Badge>
             ))}
+          </div>
+        )}
+
+        {/* Active Period Filter Highlight Banner */}
+        {isPeriodFilterActive && (
+          <div className="flex flex-wrap items-center justify-between gap-3 px-3.5 py-2.5 bg-blue-50/90 border border-blue-200 rounded-md text-blue-950 shadow-2xs">
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-600 text-white shadow-2xs">
+                <Calendar className="h-3.5 w-3.5" />
+              </span>
+              <div className="text-xs">
+                <span className="font-bold text-blue-900">Period Sold Stock Filter Active:</span>{" "}
+                <span>
+                  Showing only products sold between{" "}
+                  <strong className="text-blue-900 underline">{formatLocalDate(soldStartDate)}</strong> and{" "}
+                  <strong className="text-blue-900 underline">{formatLocalDate(soldEndDate)}</strong>{" "}
+                  ({soldDurationDays > 1 ? `${soldDurationDays} days` : "1 day"})
+                </span>
+                <span className="ml-2 inline-flex items-center gap-1 font-bold text-blue-800 bg-blue-100 px-2 py-0.5 rounded-full text-[11px]">
+                  {stats.totalSales.toLocaleString()} units sold ({total} products)
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs text-blue-700 hover:text-blue-900 hover:bg-blue-100/70"
+                onClick={() => setIsPeriodFilterOpen(true)}
+              >
+                Change Date / Duration
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs border-blue-300 text-red-600 hover:bg-red-50 hover:text-red-700 hover:border-red-200"
+                onClick={handleClearSoldPeriod}
+              >
+                Clear Filter
+              </Button>
+            </div>
           </div>
         )}
       </div>
@@ -1796,16 +2139,23 @@ export default function StockList() {
                     />
                   </div>
                 </TableHead>
-                <TableHead className="border-2 border-slate-300 px-3 py-2.5 font-bold text-slate-800 text-right">
+                <TableHead className={`border-2 border-slate-300 px-3 py-2.5 font-bold text-right ${isPeriodFilterActive ? "bg-blue-100/90 text-blue-950 shadow-2xs" : "text-slate-800"}`}>
                   <div className="flex items-center justify-end gap-1.5">
                     <NumericColumnFilter
-                      title="Sold"
+                      title={isPeriodFilterActive ? "Period Sold" : "Sold"}
                       filterType={columnFilters.soldType}
                       minValue={columnFilters.minSold}
                       maxValue={columnFilters.maxSold}
                       onChange={(type, min, max) => setNumericColumnFilter("sold", type, min, max)}
                     />
-                    <span>Sold</span>
+                    <div className="flex flex-col items-end leading-tight">
+                      <span>{isPeriodFilterActive ? "Period Sold" : "Sold"}</span>
+                      {isPeriodFilterActive && (
+                        <span className="text-[10px] font-semibold text-blue-700 whitespace-nowrap">
+                          ({soldDurationDays > 1 ? `${soldDurationDays}d` : "1d"})
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </TableHead>
                 <TableHead className="border-2 border-slate-300 px-3 py-2.5 font-bold text-slate-800 text-right">
@@ -1915,7 +2265,9 @@ export default function StockList() {
                     colSpan={12}
                     className="border-2 border-slate-300 text-center text-muted-foreground py-8"
                   >
-                    No stock entries found
+                    {isPeriodFilterActive
+                      ? `No sold products found between ${formatLocalDate(soldStartDate)} and ${formatLocalDate(soldEndDate)}`
+                      : "No stock entries found"}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -1937,12 +2289,30 @@ export default function StockList() {
                     </TableCell>
                     <TableCell className="border-2 border-slate-300 px-4 py-3 align-middle font-medium text-slate-700">{b.category}</TableCell>
                     <TableCell className="border-2 border-slate-300 px-4 py-3 align-middle font-medium text-slate-700">{b.batchNumber}</TableCell>
-                    <TableCell className="border-2 border-slate-300 px-4 py-3 align-middle text-right font-bold text-blue-700">
-                      {b.quantity -
+                    <TableCell className={`border-2 border-slate-300 px-4 py-3 align-middle text-right font-bold ${isPeriodFilterActive ? "bg-blue-50/80 text-blue-900" : "text-blue-700"}`}>
+                      {isPeriodFilterActive ? (
+                        <div className="flex flex-col items-end gap-0.5">
+                          <span className="text-sm font-extrabold text-blue-900">
+                            {b.periodSoldQty ?? 0}
+                          </span>
+                          {b.periodSalesDetails && b.periodSalesDetails.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setViewingPeriodSalesBatch(b)}
+                              className="inline-flex items-center gap-1 text-[11px] text-blue-700 hover:text-blue-950 font-semibold underline decoration-blue-400 hover:decoration-blue-700 transition-colors cursor-pointer"
+                              title="Click to view sales order details"
+                            >
+                              <span>{b.periodSalesDetails.length} {b.periodSalesDetails.length === 1 ? "order" : "orders"}</span>
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        b.quantity -
                         b.availableQty -
                         (b.displayQty || 0) -
                         (b.damageQty || 0) -
-                        (b.holdQty || 0) || 0}
+                        (b.holdQty || 0) || 0
+                      )}
                     </TableCell>
                     <TableCell className="border-2 border-slate-300 px-4 py-3 align-middle text-right font-bold text-emerald-700">
                       {b.availableQty}
@@ -1968,6 +2338,17 @@ export default function StockList() {
                     <TableCell className="border-2 border-slate-300 px-4 py-3 align-middle text-xs font-medium text-slate-600">{formatUpdatedDate(b.date)}</TableCell>
                     <TableCell className="border-2 border-slate-300 px-4 py-3 align-middle text-right no-print">
                       <div className="flex justify-end gap-1.5">
+                        {isPeriodFilterActive && b.periodSalesDetails && b.periodSalesDetails.length > 0 && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-blue-600 hover:text-blue-800 hover:bg-blue-100"
+                            onClick={() => setViewingPeriodSalesBatch(b)}
+                            title="View Sales Orders for this Period"
+                          >
+                            <Info className="h-4 w-4" />
+                          </Button>
+                        )}
                         <Button
                           variant="ghost"
                           size="icon"
@@ -2298,6 +2679,96 @@ export default function StockList() {
               Cancel
             </Button>
             <Button onClick={handleEditSave}>Save Changes</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog for viewing order details for a specific batch in the period */}
+      <Dialog
+        open={Boolean(viewingPeriodSalesBatch)}
+        onOpenChange={(open) => {
+          if (!open) setViewingPeriodSalesBatch(null);
+        }}
+      >
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <span>Sold Orders: {viewingPeriodSalesBatch?.productName}</span>
+              <Badge variant="outline" className="text-xs">
+                Batch: {viewingPeriodSalesBatch?.batchNumber || "0"}
+              </Badge>
+            </DialogTitle>
+            <div className="text-xs text-muted-foreground">
+              Period: {formatLocalDate(soldStartDate)} to {formatLocalDate(soldEndDate)} ({soldDurationDays > 1 ? `${soldDurationDays} days` : "1 day"}) • Total Sold:{" "}
+              <strong className="text-blue-700">{viewingPeriodSalesBatch?.periodSoldQty || 0} units</strong>
+            </div>
+          </DialogHeader>
+
+          <div className="border rounded-md overflow-hidden">
+            <Table>
+              <TableHeader className="bg-slate-50">
+                <TableRow>
+                  <TableHead className="text-xs font-bold">Order #</TableHead>
+                  <TableHead className="text-xs font-bold">Customer</TableHead>
+                  <TableHead className="text-xs font-bold">Phone</TableHead>
+                  <TableHead className="text-xs font-bold">Order Date</TableHead>
+                  <TableHead className="text-xs font-bold">Est. Delivery</TableHead>
+                  <TableHead className="text-xs font-bold text-right">Sold Qty</TableHead>
+                  <TableHead className="text-xs font-bold">Status</TableHead>
+                  <TableHead className="text-xs font-bold">Remarks</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {viewingPeriodSalesBatch?.periodSalesDetails &&
+                viewingPeriodSalesBatch.periodSalesDetails.length > 0 ? (
+                  viewingPeriodSalesBatch.periodSalesDetails.map((od, idx) => (
+                    <TableRow key={idx} className="hover:bg-slate-50/50">
+                      <TableCell className="text-xs font-medium text-slate-900">{od.orderNo || "-"}</TableCell>
+                      <TableCell className="text-xs font-semibold text-slate-800">{od.customer || "-"}</TableCell>
+                      <TableCell className="text-xs text-slate-600">{od.clientPhone || "-"}</TableCell>
+                      <TableCell className="text-xs whitespace-nowrap">
+                        {od.orderDate ? formatLocalDate(od.orderDate) : "-"}
+                      </TableCell>
+                      <TableCell className="text-xs whitespace-nowrap">
+                        {od.estimatedDeliveryDate ? formatLocalDate(od.estimatedDeliveryDate) : "-"}
+                      </TableCell>
+                      <TableCell className="text-xs font-extrabold text-blue-700 text-right">
+                        {od.orderedQty}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        <Badge
+                          variant="outline"
+                          className={`text-[10px] ${
+                            od.status === "Delivered"
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-300"
+                              : od.status === "Partial"
+                              ? "bg-amber-50 text-amber-700 border-amber-300"
+                              : "bg-blue-50 text-blue-700 border-blue-300"
+                          }`}
+                        >
+                          {od.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-xs text-slate-500 max-w-[150px] truncate" title={od.remarks}>
+                        {od.remarks || "-"}
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={8} className="text-center py-6 text-muted-foreground text-xs">
+                      No order details found for this period.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setViewingPeriodSalesBatch(null)}>
+              Close
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
