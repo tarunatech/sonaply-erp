@@ -501,6 +501,19 @@ app.get("/api/batches", async (req, res) => {
         nonPageValues.push(category);
         nonPageConditions.push(`LOWER(batches.category) = LOWER($${nonPageValues.length})`);
       }
+      if (stockStatus === "not_in_next_folder" || isNil === "true" || isNil === true) {
+        nonPageConditions.push(`batches.is_nil = TRUE`);
+      } else if (stockStatus === "dead_stock" || isCancelled === "true" || isCancelled === true) {
+        nonPageConditions.push(`batches.is_cancelled = TRUE`);
+      } else if (stockStatus === "nil" || isDeadStock === "true" || isDeadStock === true) {
+        nonPageConditions.push(`batches.is_dead_stock = TRUE`);
+      } else if (stockStatus === "regular") {
+        nonPageConditions.push(`COALESCE(batches.is_cancelled, FALSE) = FALSE AND COALESCE(batches.is_dead_stock, FALSE) = FALSE AND COALESCE(batches.is_nil, FALSE) = FALSE`);
+      } else if (stockStatus === "active") {
+        nonPageConditions.push(`(batches.status IS NULL OR LOWER(batches.status) = 'active')`);
+      } else if (stockStatus === "inactive") {
+        nonPageConditions.push(`LOWER(batches.status) = 'inactive'`);
+      }
       if (isPeriodFilter) {
         nonPageValues.push(finalSoldStartDate, finalSoldEndDate);
         const sStartIdx = nonPageValues.length - 1;
@@ -763,14 +776,18 @@ app.get("/api/batches", async (req, res) => {
     }
 
     // 11. Status flags (Not in Next Folder, Dead Stock, Nil, Regular, Active, Inactive)
-    if (stockStatus === "not_in_next_folder" || isCancelled === "true" || isCancelled === true) {
-      conditions.push(`is_cancelled = TRUE`);
-    } else if (stockStatus === "dead_stock" || isDeadStock === "true" || isDeadStock === true) {
-      conditions.push(`is_dead_stock = TRUE`);
-    } else if (stockStatus === "nil" || isNil === "true" || isNil === true) {
-      conditions.push(`is_nil = TRUE`);
+    // In database schema & UI:
+    // - is_nil = Not in next folder (Blue)
+    // - is_cancelled = Dead Stock (Red)
+    // - is_dead_stock = Nil Stock (Slate/Gray)
+    if (stockStatus === "not_in_next_folder" || isNil === "true" || isNil === true) {
+      conditions.push(`batches.is_nil = TRUE`);
+    } else if (stockStatus === "dead_stock" || isCancelled === "true" || isCancelled === true) {
+      conditions.push(`batches.is_cancelled = TRUE`);
+    } else if (stockStatus === "nil" || isDeadStock === "true" || isDeadStock === true) {
+      conditions.push(`batches.is_dead_stock = TRUE`);
     } else if (stockStatus === "regular") {
-      conditions.push(`COALESCE(is_cancelled, FALSE) = FALSE AND COALESCE(is_dead_stock, FALSE) = FALSE AND COALESCE(is_nil, FALSE) = FALSE`);
+      conditions.push(`COALESCE(batches.is_cancelled, FALSE) = FALSE AND COALESCE(batches.is_dead_stock, FALSE) = FALSE AND COALESCE(batches.is_nil, FALSE) = FALSE`);
     } else if (stockStatus === "active") {
       conditions.push(`(batches.status IS NULL OR LOWER(batches.status) = 'active')`);
     } else if (stockStatus === "inactive") {

@@ -9,10 +9,11 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Download, Search, RefreshCw, Layers, Eye, Trash2, Filter } from "lucide-react";
+import { Download, Search, RefreshCw, Layers, Eye, Trash2, Filter, ChevronDown, ChevronUp } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 
 interface LedgerTransaction {
@@ -46,6 +47,51 @@ const formatDateDDMMYYYY = (dateStr: string) => {
   return dateStr;
 };
 
+/**
+ * Safely extracts YYYY-MM-DD in local time from any date, timestamp, or string
+ * ensuring full 24-hour inclusion (including transactions at 11:00 PM).
+ */
+const extractDateOnly = (val: any): string => {
+  if (!val) return "";
+  if (val instanceof Date) {
+    return getLocalDateString(val);
+  }
+  const str = String(val).trim();
+  if (!str) return "";
+
+  // If ISO string with timezone or time (e.g. 2026-09-25T23:00:00 or with Z)
+  if (str.includes("T")) {
+    try {
+      const d = new Date(str);
+      if (!isNaN(d.getTime())) {
+        return getLocalDateString(d);
+      }
+    } catch (e) {}
+  }
+
+  // If format is YYYY-MM-DD (e.g. "2026-09-25" or "2026-09-25 23:00:00")
+  const ymdMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (ymdMatch) {
+    return `${ymdMatch[1]}-${ymdMatch[2]}-${ymdMatch[3]}`;
+  }
+
+  // If format is DD-MM-YYYY (e.g. "25-09-2026")
+  const dmyMatch = str.match(/^(\d{2})-(\d{2})-(\d{4})/);
+  if (dmyMatch) {
+    return `${dmyMatch[3]}-${dmyMatch[2]}-${dmyMatch[1]}`;
+  }
+
+  return str.slice(0, 10);
+};
+
+const isDateInRange = (dateVal: any, start: string, end: string): boolean => {
+  const d = extractDateOnly(dateVal);
+  if (!d) return false;
+  const s = extractDateOnly(start);
+  const e = extractDateOnly(end);
+  return d >= s && d <= e;
+};
+
 export default function DailyExport() {
   const { toast } = useToast();
 
@@ -70,6 +116,23 @@ export default function DailyExport() {
 
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
+
+  // Category Export Period State: Single Date Only (full 24 hrs) or Custom Range
+  const [periodMode, setPeriodMode] = useState<"singleDate" | "custom">("singleDate");
+  const [customFromDate, setCustomFromDate] = useState(() => getLocalDateString());
+  const [customToDate, setCustomToDate] = useState(() => getLocalDateString());
+  const [showCategoryPreview, setShowCategoryPreview] = useState(false);
+  const [categorySearch, setCategorySearch] = useState("");
+
+  const categoryStartDate = useMemo(() => {
+    if (periodMode === "singleDate") return extractDateOnly(date);
+    return extractDateOnly(customFromDate);
+  }, [periodMode, date, customFromDate]);
+
+  const categoryEndDate = useMemo(() => {
+    if (periodMode === "singleDate") return extractDateOnly(date);
+    return extractDateOnly(customToDate);
+  }, [periodMode, date, customToDate]);
 
   // DB States
   const [allBatches, setAllBatches] = useState<StockBatch[]>([]);
@@ -121,10 +184,19 @@ export default function DailyExport() {
     const d = date;
     let data: any[] = [];
     const batches = await getBatches();
+    const isCategoryFiltered = selectedCategory && selectedCategory !== "all";
+    const catName = isCategoryFiltered ? selectedCategory.toLowerCase().trim() : "";
 
     switch (type) {
       case 'sales': {
-        const rawSales = (await getSales()).filter(s => s.orderDate === d);
+        let rawSales = (await getSales()).filter(s => isDateInRange(s.orderDate || s.estimatedDeliveryDate || s.createdAt, d, d));
+        if (isCategoryFiltered) {
+          rawSales = rawSales.filter(s => {
+            const batchMatch = batches.find(b => b.productName?.toLowerCase().trim() === s.product?.toLowerCase().trim());
+            const sCat = (s.category && s.category !== "Regular" ? s.category : batchMatch?.category || "").toLowerCase().trim();
+            return sCat === catName;
+          });
+        }
         data = rawSales.map(s => {
           const matchingBatch = batches.find(b => b.productName === s.product || (s.batchNo && b.batchNumber === s.batchNo));
           const description = s.description || s.remarks || matchingBatch?.description || "";
@@ -153,7 +225,10 @@ export default function DailyExport() {
         break;
       }
       case 'purchases': {
-        const rawPurchases = (await getPurchases()).filter(p => p.date === d);
+        let rawPurchases = (await getPurchases()).filter(p => isDateInRange(p.date, d, d));
+        if (isCategoryFiltered) {
+          rawPurchases = rawPurchases.filter(p => (p.category || "").toLowerCase().trim() === catName);
+        }
         data = rawPurchases.map(p => {
           const matchingBatch = batches.find(b => (b.productName?.toLowerCase().trim() === p.productName?.toLowerCase().trim() && b.batchNumber === p.batchNumber) || b.batchNumber === p.batchNumber);
           const description = p.description || matchingBatch?.description || "";
@@ -181,7 +256,10 @@ export default function DailyExport() {
         break;
       }
       case 'stock': {
-        const rawBatches = batches.filter(b => b.date === d);
+        let rawBatches = batches.filter(b => isDateInRange(b.date, d, d));
+        if (isCategoryFiltered) {
+          rawBatches = rawBatches.filter(b => (b.category || "").toLowerCase().trim() === catName);
+        }
         data = rawBatches.map(b => {
           const isCancelled = b.isCancelled || false;
           const isNil = b.isNil || false;
@@ -207,8 +285,18 @@ export default function DailyExport() {
         break;
       }
     }
-    if (!data.length) { alert(`No data available for date: ${d}`); return; }
-    exportCSV(data, `daily-${type}-${d}.csv`);
+    if (!data.length) {
+      toast({
+        title: "No Data Available",
+        description: isCategoryFiltered 
+          ? `No ${type} records found for category "${selectedCategory}" on ${formatDateDDMMYYYY(d)}.`
+          : `No ${type} records found on ${formatDateDDMMYYYY(d)}.`,
+        variant: "destructive"
+      });
+      return;
+    }
+    const catSuffix = isCategoryFiltered ? `-${selectedCategory.replace(/[^a-zA-Z0-9_-]/g, "_")}` : "";
+    exportCSV(data, `daily-${type}${catSuffix}-${d}.csv`);
   };
 
   // Compile transactions and ledger dynamically based on appliedFromDate & appliedToDate
@@ -399,6 +487,237 @@ export default function DailyExport() {
     return Array.from(cats).sort((a, b) => a.localeCompare(b));
   }, [allBatches, allSales, allPurchases]);
 
+  // Comprehensive Category Report Data: Computes Sold, Purchased, Available, Hold, Display, Damaged for each product
+  const categoryReportData = useMemo(() => {
+    const isCatFiltered = selectedCategory && selectedCategory !== "all";
+    const targetCat = isCatFiltered ? selectedCategory.toLowerCase().trim() : "";
+
+    const productMap = new Map<string, {
+      productName: string;
+      category: string;
+      supplier: string;
+      status: string;
+      purchasedQty: number;
+      soldQty: number;
+      availableQty: number;
+      holdQty: number;
+      displayQty: number;
+      damageQty: number;
+      totalStock: number;
+      batchNumbers: Set<string>;
+      description: string;
+    }>();
+
+    // 1. Process batches (current available, hold, display, damage)
+    allBatches.forEach(b => {
+      if (!b.productName || !b.productName.trim()) return;
+      const cat = b.category?.trim() || "Other";
+      if (isCatFiltered && cat.toLowerCase() !== targetCat) return;
+
+      const norm = b.productName.toLowerCase().trim();
+      let entry = productMap.get(norm);
+      if (!entry) {
+        entry = {
+          productName: b.productName.trim(),
+          category: cat,
+          supplier: b.supplier || "",
+          status: b.status || "Active",
+          purchasedQty: 0,
+          soldQty: 0,
+          availableQty: 0,
+          holdQty: 0,
+          displayQty: 0,
+          damageQty: 0,
+          totalStock: 0,
+          batchNumbers: new Set(),
+          description: b.description || "",
+        };
+        productMap.set(norm, entry);
+      }
+      if (b.supplier && !entry.supplier) entry.supplier = b.supplier;
+      if (b.description && !entry.description) entry.description = b.description;
+      if (b.batchNumber) entry.batchNumbers.add(String(b.batchNumber).trim());
+      entry.availableQty += Number(b.availableQty || 0);
+      entry.holdQty += Number(b.holdQty || 0);
+      entry.displayQty += Number(b.displayQty || 0);
+      entry.damageQty += Number(b.damageQty || 0);
+      entry.totalStock += Number(b.availableQty || 0) + Number(b.holdQty || 0) + Number(b.displayQty || 0) + Number(b.damageQty || 0);
+      if (b.status === "Inactive") entry.status = "Inactive";
+    });
+
+    // 2. Process purchases within date range
+    allPurchases.forEach(p => {
+      if (!p.productName || !p.productName.trim()) return;
+      const norm = p.productName.toLowerCase().trim();
+      let entry = productMap.get(norm);
+      const cat = p.category?.trim() || entry?.category || "Other";
+      if (isCatFiltered && cat.toLowerCase() !== targetCat) return;
+
+      if (isDateInRange(p.date, categoryStartDate, categoryEndDate)) {
+        if (!entry) {
+          entry = {
+            productName: p.productName.trim(),
+            category: cat,
+            supplier: p.supplierName || "",
+            status: "Active",
+            purchasedQty: 0,
+            soldQty: 0,
+            availableQty: 0,
+            holdQty: 0,
+            displayQty: 0,
+            damageQty: 0,
+            totalStock: 0,
+            batchNumbers: new Set(),
+            description: p.description || "",
+          };
+          productMap.set(norm, entry);
+        }
+        entry.purchasedQty += Number(p.quantity || 0);
+        if (p.supplierName && !entry.supplier) entry.supplier = p.supplierName;
+        if (p.batchNumber) entry.batchNumbers.add(String(p.batchNumber).trim());
+      }
+    });
+
+    // 3. Process sales within date range (excluding cancelled, covers 24 hrs including 11:00 PM)
+    allSales.forEach(s => {
+      if (!s.product || !s.product.trim() || s.status === 'Cancelled') return;
+      const norm = s.product.toLowerCase().trim();
+      let entry = productMap.get(norm);
+      const cat = s.category && s.category !== 'Regular' ? s.category.trim() : (entry?.category || "Other");
+      if (isCatFiltered && cat.toLowerCase() !== targetCat) return;
+
+      const saleDate = s.orderDate || s.estimatedDeliveryDate || s.createdAt;
+      if (isDateInRange(saleDate, categoryStartDate, categoryEndDate)) {
+        if (!entry) {
+          entry = {
+            productName: s.product.trim(),
+            category: cat,
+            supplier: "",
+            status: "Active",
+            purchasedQty: 0,
+            soldQty: 0,
+            availableQty: 0,
+            holdQty: 0,
+            displayQty: 0,
+            damageQty: 0,
+            totalStock: 0,
+            batchNumbers: new Set(),
+            description: s.description || s.remarks || "",
+          };
+          productMap.set(norm, entry);
+        }
+        entry.soldQty += Number(s.orderedQty || 0);
+        if (s.batchNo) entry.batchNumbers.add(String(s.batchNo).trim());
+      }
+    });
+
+    const products = Array.from(productMap.values()).sort((a, b) =>
+      a.productName.localeCompare(b.productName, undefined, {
+        numeric: true,
+        sensitivity: "base",
+      })
+    );
+
+    const totals = products.reduce(
+      (acc, item) => {
+        acc.purchased += item.purchasedQty;
+        acc.sold += item.soldQty;
+        acc.available += item.availableQty;
+        acc.hold += item.holdQty;
+        acc.display += item.displayQty;
+        acc.damage += item.damageQty;
+        acc.totalStock += item.totalStock;
+        return acc;
+      },
+      {
+        purchased: 0,
+        sold: 0,
+        available: 0,
+        hold: 0,
+        display: 0,
+        damage: 0,
+        totalStock: 0,
+      }
+    );
+
+    return { products, totals };
+  }, [allBatches, allPurchases, allSales, selectedCategory, categoryStartDate, categoryEndDate]);
+
+  const filteredCategoryProducts = useMemo(() => {
+    if (!categorySearch.trim()) return categoryReportData.products;
+    const q = categorySearch.toLowerCase().trim();
+    return categoryReportData.products.filter(
+      p => p.productName.toLowerCase().includes(q) || p.category.toLowerCase().includes(q)
+    );
+  }, [categoryReportData.products, categorySearch]);
+
+  const handleExportCategorySummary = () => {
+    const { products, totals } = categoryReportData;
+    if (products.length === 0) {
+      toast({
+        title: "No Data Found",
+        description: selectedCategory !== "all"
+          ? `No products found for category "${selectedCategory}" within ${formatDateDDMMYYYY(categoryStartDate)} to ${formatDateDDMMYYYY(categoryEndDate)}.`
+          : `No products found within ${formatDateDDMMYYYY(categoryStartDate)} to ${formatDateDDMMYYYY(categoryEndDate)}.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const catLabel = selectedCategory !== "all" ? selectedCategory : "All Categories";
+    const isSingleDay = categoryStartDate === categoryEndDate;
+    const periodLabel = isSingleDay
+      ? `${formatDateDDMMYYYY(categoryStartDate)} (Full 24 Hours)`
+      : `${formatDateDDMMYYYY(categoryStartDate)} to ${formatDateDDMMYYYY(categoryEndDate)}`;
+    const rows: string[] = [];
+
+    // Title and Meta Information
+    rows.push(`Category Stock Summary: ${catLabel},,,,,,,,,,,`);
+    rows.push(`Period: ${periodLabel},Generated On: ${formatDateDDMMYYYY(getLocalDateString())},,,,,,,,,,`);
+    rows.push(`SUMMARY TOTALS: Total Purchased: ${totals.purchased},Total Sold: ${totals.sold},Available Stock: ${totals.available},Hold Qty: ${totals.hold},Display Qty: ${totals.display},Damage Qty: ${totals.damage},Total Physical Stock: ${totals.totalStock},,,,,`);
+    rows.push(``);
+
+    // CSV Headers
+    rows.push(`Product Name,Category,Estimated Opening Stock,Purchased Qty (Period),Sold Qty (Period),Available Qty,Hold Qty,Display Qty,Damage Qty,Total In Stock,Status,Supplier,Batches,Description`);
+
+    // Data rows
+    let totalOpening = 0;
+    products.forEach((p) => {
+      const opening = Math.max(0, p.totalStock + p.soldQty - p.purchasedQty);
+      totalOpening += opening;
+      const cleanName = p.productName.replace(/"/g, '""');
+      const cleanCat = p.category.replace(/"/g, '""');
+      const cleanSupplier = (p.supplier || "").replace(/"/g, '""');
+      const batchList = Array.from(p.batchNumbers).join("; ").replace(/"/g, '""');
+      const desc = (p.description || "").replace(/"/g, '""');
+
+      rows.push(
+        `"${cleanName}","${cleanCat}","${opening}","${p.purchasedQty}","${p.soldQty}","${p.availableQty}","${p.holdQty}","${p.displayQty}","${p.damageQty}","${p.totalStock}","${p.status}","${cleanSupplier}","${batchList}","${desc}"`
+      );
+    });
+
+    // Summary Footer Row
+    rows.push(``);
+    rows.push(
+      `"TOTALS","${catLabel}","${totalOpening}","${totals.purchased}","${totals.sold}","${totals.available}","${totals.hold}","${totals.display}","${totals.damage}","${totals.totalStock}","","","",""`
+    );
+
+    const csvContent = rows.join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    const catSlug = selectedCategory !== "all" ? selectedCategory.replace(/[^a-zA-Z0-9_-]/g, "_") : "All_Categories";
+    a.download = isSingleDay
+      ? `category-stock-report-${catSlug}-${categoryStartDate}.csv`
+      : `category-stock-report-${catSlug}-${categoryStartDate}-to-${categoryEndDate}.csv`;
+    a.click();
+
+    toast({
+      title: "Export Successful",
+      description: `Downloaded ${products.length} product records for ${catLabel}.`,
+    });
+  };
+
   // Filtered ledger data for live category & search preview
   const filteredLedger = useMemo(() => {
     let list = ledgerData;
@@ -477,32 +796,365 @@ export default function DailyExport() {
   ];
 
   return (
-    <div className="space-y-6 max-w-4xl mx-auto pb-12">
+    <div className="space-y-6 max-w-6xl mx-auto px-2 sm:px-4 pb-12">
       <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold">Daily Export</h1>
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Daily Export & Category Summary</h1>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Export daily sales, purchases, stock updates, or generate complete category inventory reports.
+          </p>
+        </div>
         <Button variant="ghost" size="icon" onClick={loadLedgerData} disabled={isLoading} title="Reload Data">
           <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
         </Button>
       </div>
 
-      <Card>
-        <CardContent className="pt-6 space-y-4">
-          <div className="w-48">
-            <Label>Select Date</Label>
-            <Input type="date" value={date} onChange={e => setDate(e.target.value)} />
+      <Card className="border border-slate-200/80 shadow-sm">
+        <CardContent className="pt-6 space-y-5">
+          {/* Top Filter Controls: Date, Category, Period Selection */}
+          <div className="flex flex-wrap items-end gap-3 sm:gap-4 p-4 bg-slate-50/80 border rounded-xl">
+            <div className="w-full sm:w-48 space-y-1.5">
+              <Label className="font-semibold text-slate-800 text-xs">Select Date</Label>
+              <Input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="bg-white h-9"
+              />
+            </div>
+
+            <div className="w-full sm:w-56 space-y-1.5">
+              <Label className="font-semibold text-slate-800 text-xs">Select Category</Label>
+              <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+                <SelectTrigger className="bg-white h-9">
+                  <SelectValue placeholder="All Categories" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Categories</SelectItem>
+                  {allCategories.map((cat) => (
+                    <SelectItem key={cat} value={cat}>
+                      {cat}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex-1 min-w-[220px] space-y-1.5">
+              <Label className="font-semibold text-slate-800 text-xs">Category Calculation Period</Label>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <Button
+                  type="button"
+                  variant={periodMode === "singleDate" ? "default" : "outline"}
+                  size="sm"
+                  className={`h-9 text-xs px-3.5 font-semibold transition-colors ${
+                    periodMode === "singleDate"
+                      ? "bg-blue-600 text-white hover:bg-blue-700 shadow-xs"
+                      : "bg-white hover:bg-slate-100 text-slate-700"
+                  }`}
+                  onClick={() => setPeriodMode("singleDate")}
+                >
+                  Single Date Only (24 Hrs)
+                </Button>
+                <Button
+                  type="button"
+                  variant={periodMode === "custom" ? "default" : "outline"}
+                  size="sm"
+                  className={`h-9 text-xs px-3.5 font-semibold transition-colors ${
+                    periodMode === "custom"
+                      ? "bg-blue-600 text-white hover:bg-blue-700 shadow-xs"
+                      : "bg-white hover:bg-slate-100 text-slate-700"
+                  }`}
+                  onClick={() => setPeriodMode("custom")}
+                >
+                  Custom Range
+                </Button>
+              </div>
+            </div>
+
+            {periodMode === "custom" && (
+              <div className="flex items-end gap-2 w-full sm:w-auto pt-1">
+                <div className="space-y-1">
+                  <Label className="text-[11px] text-slate-500 font-medium">From Date</Label>
+                  <Input
+                    type="date"
+                    value={customFromDate}
+                    onChange={(e) => setCustomFromDate(e.target.value)}
+                    className="h-9 text-xs bg-white w-36"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[11px] text-slate-500 font-medium">To Date</Label>
+                  <Input
+                    type="date"
+                    value={customToDate}
+                    onChange={(e) => setCustomToDate(e.target.value)}
+                    className="h-9 text-xs bg-white w-36"
+                  />
+                </div>
+              </div>
+            )}
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {exports.map(e => (
-              <Card key={e.key} className="bg-accent/10 border-accent/20">
-                <CardHeader className="pb-2"><CardTitle className="text-base">{e.title}</CardTitle></CardHeader>
-                <CardContent>
-                  <p className="text-xs text-muted-foreground mb-3">{e.desc}</p>
-                  <Button variant="outline" size="sm" onClick={() => doExport(e.key)} className="w-full">
-                    <Download className="mr-2 h-4 w-4" /> Export CSV
-                  </Button>
-                </CardContent>
-              </Card>
-            ))}
+
+          {/* 4 Export Action Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+            {/* 1. Daily Sales */}
+            <Card className="bg-slate-50/50 border-slate-200 hover:border-slate-300 transition-all flex flex-col justify-between">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-bold flex items-center justify-between">
+                  <span>Daily Sales</span>
+                  {selectedCategory !== "all" && (
+                    <Badge variant="outline" className="text-[10px] font-semibold text-blue-700 bg-blue-50 border-blue-200">
+                      {selectedCategory}
+                    </Badge>
+                  )}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <p className="text-xs text-muted-foreground mb-3">
+                  {selectedCategory !== "all" 
+                    ? `Export sales of ${selectedCategory} for ${formatDateDDMMYYYY(date)}`
+                    : `Export all sales for ${formatDateDDMMYYYY(date)}`}
+                </p>
+                <Button variant="outline" size="sm" onClick={() => doExport("sales")} className="w-full">
+                  <Download className="mr-2 h-4 w-4" /> Export CSV
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* 2. Daily Purchases */}
+            <Card className="bg-slate-50/50 border-slate-200 hover:border-slate-300 transition-all flex flex-col justify-between">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-bold flex items-center justify-between">
+                  <span>Daily Purchases</span>
+                  {selectedCategory !== "all" && (
+                    <Badge variant="outline" className="text-[10px] font-semibold text-purple-700 bg-purple-50 border-purple-200">
+                      {selectedCategory}
+                    </Badge>
+                  )}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <p className="text-xs text-muted-foreground mb-3">
+                  {selectedCategory !== "all" 
+                    ? `Export purchases of ${selectedCategory} for ${formatDateDDMMYYYY(date)}`
+                    : `Export all purchases for ${formatDateDDMMYYYY(date)}`}
+                </p>
+                <Button variant="outline" size="sm" onClick={() => doExport("purchases")} className="w-full">
+                  <Download className="mr-2 h-4 w-4" /> Export CSV
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* 3. Daily Stock Updates */}
+            <Card className="bg-slate-50/50 border-slate-200 hover:border-slate-300 transition-all flex flex-col justify-between">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-bold flex items-center justify-between">
+                  <span>Daily Stock Updates</span>
+                  {selectedCategory !== "all" && (
+                    <Badge variant="outline" className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border-emerald-200">
+                      {selectedCategory}
+                    </Badge>
+                  )}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <p className="text-xs text-muted-foreground mb-3">
+                  {selectedCategory !== "all" 
+                    ? `Export stock entries of ${selectedCategory} for ${formatDateDDMMYYYY(date)}`
+                    : `Export stock entries for ${formatDateDDMMYYYY(date)}`}
+                </p>
+                <Button variant="outline" size="sm" onClick={() => doExport("stock")} className="w-full">
+                  <Download className="mr-2 h-4 w-4" /> Export CSV
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* 4. Complete Category Summary Report */}
+            <Card className="bg-gradient-to-br from-blue-50/70 via-indigo-50/40 to-white border-2 border-blue-300/80 shadow-xs hover:shadow-sm transition-all flex flex-col justify-between">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-bold text-blue-900 flex items-center justify-between">
+                  <span>Category Summary</span>
+                  <Badge className="bg-blue-600 hover:bg-blue-600 text-[10px] text-white font-bold">
+                    Full Report
+                  </Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <p className="text-xs text-slate-600 mb-3">
+                  {periodMode === "singleDate"
+                    ? `Complete Sold, Purchased & Available stock statement for ${selectedCategory !== "all" ? selectedCategory : "all categories"} on ${formatDateDDMMYYYY(categoryStartDate)} (Full 24 Hours).`
+                    : `Complete Sold, Purchased & Available stock statement for ${selectedCategory !== "all" ? selectedCategory : "all categories"} (${formatDateDDMMYYYY(categoryStartDate)} to ${formatDateDDMMYYYY(categoryEndDate)}).`}
+                </p>
+                <Button
+                  size="sm"
+                  onClick={handleExportCategorySummary}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-xs"
+                >
+                  <Download className="mr-2 h-4 w-4" /> Export Category CSV
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Live Category Summary Banner */}
+          <div className="rounded-xl border border-blue-200 bg-blue-50/30 p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-blue-100 pb-2.5">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-bold text-slate-700">Category Overview:</span>
+                <Badge variant="outline" className="font-bold text-xs bg-white text-blue-800 border-blue-300 shadow-2xs">
+                  {selectedCategory !== "all" ? selectedCategory : "All Categories"}
+                </Badge>
+                <span className="text-xs text-slate-500 font-medium">
+                  ({categoryStartDate === categoryEndDate ? `${formatDateDDMMYYYY(categoryStartDate)} • Full 24 Hours` : `${formatDateDDMMYYYY(categoryStartDate)} to ${formatDateDDMMYYYY(categoryEndDate)}`})
+                </span>
+                <span className="text-xs text-slate-400">
+                  • {categoryReportData.products.length} products found
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowCategoryPreview(!showCategoryPreview)}
+                  className="h-7 text-xs text-blue-700 hover:bg-blue-100/60 font-semibold"
+                >
+                  {showCategoryPreview ? (
+                    <>
+                      <ChevronUp className="mr-1 h-3.5 w-3.5" /> Hide Products
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="mr-1 h-3.5 w-3.5" /> View Products ({categoryReportData.products.length})
+                    </>
+                  )}
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleExportCategorySummary}
+                  className="h-7 text-xs bg-blue-600 hover:bg-blue-700 text-white font-bold px-3"
+                >
+                  <Download className="mr-1 h-3.5 w-3.5" /> Download CSV
+                </Button>
+              </div>
+            </div>
+
+            {/* Stat metrics */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 pt-1">
+              <div className="p-2.5 rounded-lg bg-white border border-blue-100 shadow-2xs">
+                <div className="text-[11px] font-medium text-blue-600">Total Sold</div>
+                <div className="text-lg font-bold text-blue-900 font-mono">
+                  {categoryReportData.totals.sold.toLocaleString()}
+                </div>
+              </div>
+              <div className="p-2.5 rounded-lg bg-white border border-purple-100 shadow-2xs">
+                <div className="text-[11px] font-medium text-purple-600">Total Purchased</div>
+                <div className="text-lg font-bold text-purple-900 font-mono">
+                  {categoryReportData.totals.purchased.toLocaleString()}
+                </div>
+              </div>
+              <div className="p-2.5 rounded-lg bg-white border border-emerald-100 shadow-2xs">
+                <div className="text-[11px] font-medium text-emerald-600">Available Stock</div>
+                <div className="text-lg font-bold text-emerald-900 font-mono">
+                  {categoryReportData.totals.available.toLocaleString()}
+                </div>
+              </div>
+              <div className="p-2.5 rounded-lg bg-white border border-amber-100 shadow-2xs">
+                <div className="text-[11px] font-medium text-amber-600">Total Hold</div>
+                <div className="text-lg font-bold text-amber-900 font-mono">
+                  {categoryReportData.totals.hold.toLocaleString()}
+                </div>
+              </div>
+              <div className="p-2.5 rounded-lg bg-white border border-indigo-100 shadow-2xs">
+                <div className="text-[11px] font-medium text-indigo-600">Total Display</div>
+                <div className="text-lg font-bold text-indigo-900 font-mono">
+                  {categoryReportData.totals.display.toLocaleString()}
+                </div>
+              </div>
+              <div className="p-2.5 rounded-lg bg-white border border-rose-100 shadow-2xs">
+                <div className="text-[11px] font-medium text-rose-600">Total Damaged</div>
+                <div className="text-lg font-bold text-rose-900 font-mono">
+                  {categoryReportData.totals.damage.toLocaleString()}
+                </div>
+              </div>
+            </div>
+
+            {/* Optional Collapsible Products Table Preview */}
+            {showCategoryPreview && (
+              <div className="border rounded-lg bg-white mt-3 overflow-hidden shadow-2xs">
+                <div className="p-2 bg-slate-50 border-b flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-slate-700">Product List Breakdown:</span>
+                  <div className="relative w-48">
+                    <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                    <Input
+                      placeholder="Search in category..."
+                      value={categorySearch}
+                      onChange={(e) => setCategorySearch(e.target.value)}
+                      className="h-7 text-xs pl-7 bg-white"
+                    />
+                  </div>
+                </div>
+                <div className="max-h-[260px] overflow-y-auto">
+                  <Table>
+                    <TableHeader className="bg-slate-50/80 sticky top-0 z-10 text-[11px]">
+                      <TableRow>
+                        <TableHead>Product Name</TableHead>
+                        <TableHead>Category</TableHead>
+                        <TableHead className="text-right">Purchased (+)</TableHead>
+                        <TableHead className="text-right">Sold (-)</TableHead>
+                        <TableHead className="text-right font-bold text-emerald-700">Available</TableHead>
+                        <TableHead className="text-right">Hold</TableHead>
+                        <TableHead className="text-right">Display</TableHead>
+                        <TableHead className="text-right">Damaged</TableHead>
+                        <TableHead className="text-right font-bold">Total Stock</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody className="text-xs">
+                      {filteredCategoryProducts.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={9} className="text-center text-muted-foreground py-6">
+                            No products found in this category.
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        filteredCategoryProducts.map((p) => (
+                          <TableRow key={p.productName} className="hover:bg-slate-50/80">
+                            <TableCell className="font-semibold text-slate-800">
+                              {p.productName}
+                            </TableCell>
+                            <TableCell className="text-muted-foreground text-[11px]">
+                              {p.category}
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-purple-700">
+                              {p.purchasedQty > 0 ? `+${p.purchasedQty}` : "-"}
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-blue-700">
+                              {p.soldQty > 0 ? `-${p.soldQty}` : "-"}
+                            </TableCell>
+                            <TableCell className="text-right font-mono font-bold text-emerald-700">
+                              {p.availableQty}
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-amber-700">
+                              {p.holdQty || "-"}
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-indigo-700">
+                              {p.displayQty || "-"}
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-rose-700">
+                              {p.damageQty || "-"}
+                            </TableCell>
+                            <TableCell className="text-right font-mono font-bold text-slate-900">
+                              {p.totalStock}
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

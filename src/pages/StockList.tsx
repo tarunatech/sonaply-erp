@@ -1856,42 +1856,27 @@ export default function StockList() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Stock Status</SelectItem>
-                <SelectItem value="active">
-                  <div className="flex items-center gap-2">
-                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-                    <span>Active Products</span>
-                  </div>
-                </SelectItem>
-                <SelectItem value="inactive">
-                  <div className="flex items-center gap-2">
-                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-slate-400"></span>
-                    <span>Inactive Products</span>
-                  </div>
-                </SelectItem>
+                <SelectItem value="active">Active Products</SelectItem>
+                <SelectItem value="inactive">Inactive Products</SelectItem>
                 <SelectItem value="not_in_next_folder">
                   <div className="flex items-center gap-2">
-                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500"></span>
+                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-blue-500"></span>
                     <span>Not in next folder</span>
                   </div>
                 </SelectItem>
                 <SelectItem value="dead_stock">
                   <div className="flex items-center gap-2">
-                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-slate-500"></span>
+                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500"></span>
                     <span>Dead Stock</span>
                   </div>
                 </SelectItem>
                 <SelectItem value="nil">
                   <div className="flex items-center gap-2">
-                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-blue-500"></span>
+                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-slate-500"></span>
                     <span>Nil Stock</span>
                   </div>
                 </SelectItem>
-                <SelectItem value="regular">
-                  <div className="flex items-center gap-2">
-                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-                    <span>Regular Stock Only</span>
-                  </div>
-                </SelectItem>
+                <SelectItem value="regular">Regular Stock Only</SelectItem>
               </SelectContent>
             </Select>
           </div>
