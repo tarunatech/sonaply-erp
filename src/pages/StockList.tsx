@@ -54,6 +54,7 @@ import {
   PopoverContent,
 } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import {
   Search,
@@ -611,6 +612,7 @@ export default function StockList() {
   const [stats, setStats] = useState<StockStats>({
     totalSales: 0,
     availableStock: 0,
+    totalHold: 0,
     totalDisplay: 0,
     totalDamage: 0,
   });
@@ -873,6 +875,7 @@ export default function StockList() {
         const finalBatch = {
           ...editingBatch,
           batchNumber: editingBatch.batchNumber?.trim() || "0",
+          status: editingBatch.status || "Active",
         };
         const originalBatch = batches.find((b) => b.id === finalBatch.id);
         if (originalBatch) {
@@ -1371,10 +1374,16 @@ export default function StockList() {
         onRemove: () => setColumnFilter("product", ""),
       });
     }
-    if (columnFilters.category && columnFilters.category !== "all") {
+    const activeCategory =
+      columnFilters.category && columnFilters.category !== "all"
+        ? columnFilters.category
+        : selectedCategory !== "all"
+          ? selectedCategory
+          : "";
+    if (activeCategory) {
       pills.push({
         key: "category",
-        label: `Category: ${columnFilters.category}`,
+        label: `Category: ${activeCategory}`,
         onRemove: () => {
           setColumnFilter("category", "");
           setSelectedCategory("all");
@@ -1482,6 +1491,8 @@ export default function StockList() {
     }
     if (selectedStatus && selectedStatus !== "all") {
       const statusLabels: Record<string, string> = {
+        active: "Active Only",
+        inactive: "Inactive Only",
         not_in_next_folder: "Not in Next Folder",
         dead_stock: "Dead Stock",
         nil: "Nil Stock",
@@ -1582,95 +1593,111 @@ export default function StockList() {
             variant="outline"
             size="sm"
             onClick={async () => {
-              let csvContent = "";
-              const fullBatchesList = await getBatches(
-                isPeriodFilterActive ? { soldStartDate, soldEndDate } : {}
-              );
+              try {
+                let csvContent = "";
+                const activeCategory =
+                  columnFilters.category && columnFilters.category !== "all"
+                    ? columnFilters.category
+                    : selectedCategory && selectedCategory !== "all"
+                      ? selectedCategory
+                      : undefined;
 
-              const brands: Record<string, Record<string, any[]>> = {};
-              fullBatchesList.forEach((b) => {
-                let brand = "UNKNOWN";
-                let prefix = "Other";
-                let suffix = b.productName;
+                const fullBatchesList = await getBatches({
+                  ...(isPeriodFilterActive ? { soldStartDate, soldEndDate } : {}),
+                  ...(activeCategory ? { category: activeCategory } : {}),
+                });
 
-                // Parse from productName as default
-                const nameParts = b.productName.trim().split(/\s+/);
-                if (nameParts.length >= 3) {
-                  brand = nameParts[0];
-                  prefix = nameParts[1];
-                  suffix = nameParts.slice(2).join(" ");
-                } else if (nameParts.length === 2) {
-                  prefix = nameParts[0];
-                  suffix = nameParts[1];
+                const batchesToExport = activeCategory
+                  ? fullBatchesList.filter(
+                      (b) =>
+                        (b.category || "").toLowerCase().trim() ===
+                        activeCategory.toLowerCase().trim()
+                    )
+                  : fullBatchesList;
+
+                if (batchesToExport.length === 0) {
+                  toast({
+                    title: "No data to export",
+                    description: activeCategory
+                      ? `No items found for category "${activeCategory}".`
+                      : "No items found to export.",
+                    variant: "destructive",
+                  });
+                  return;
                 }
 
-                if (b.supplier) brand = b.supplier;
+                const brands: Record<string, Record<string, any[]>> = {};
+                batchesToExport.forEach((b) => {
+                  const brand =
+                    b.supplier && b.supplier.trim()
+                      ? b.supplier.trim()
+                      : b.category && b.category.trim()
+                        ? b.category.trim()
+                        : "General";
 
-                // Override with productCode if it exists
-                if (b.productCode && b.productCode.trim() !== "") {
-                  const codeParts = b.productCode.trim().split(/\s+/);
-                  if (codeParts.length > 1) {
-                    prefix = codeParts[0];
-                    suffix = codeParts.slice(1).join(" ");
-                  } else {
-                    const match = b.productCode
-                      .trim()
-                      .match(/^([a-zA-Z]+)(.*)$/);
-                    if (match) {
-                      prefix = match[1];
-                      suffix = match[2];
-                    } else {
-                      suffix = b.productCode;
-                    }
+                  // Extract prefix (e.g. "CH" from "CH 416", "HG" from "HG 401 (3502)") for grouping
+                  const match = b.productName.trim().match(/^([a-zA-Z]+)/);
+                  const prefix = match ? match[1].toUpperCase() : "Other";
+
+                  if (!brands[brand]) brands[brand] = {};
+                  if (!brands[brand][prefix]) brands[brand][prefix] = [];
+                  brands[brand][prefix].push(b);
+                });
+
+                for (const [brand, prefixes] of Object.entries(brands)) {
+                  csvContent += isPeriodFilterActive
+                    ? `Brand: ${brand},,,,,,,,,\n`
+                    : `Brand: ${brand},,,,,,,,\n`;
+                  csvContent += isPeriodFilterActive
+                    ? `Product Name,Date,Sold (${soldStartDate} to ${soldEndDate}),Quantity,Available,Stock Maintain,Hold,Display,Damaged,Description\n`
+                    : `Product Name,Date,Quantity,Available,Stock Maintain,Hold,Display,Damaged,Description\n`;
+
+                  const sortedPrefixes = Object.keys(prefixes).sort();
+                  for (const prefix of sortedPrefixes) {
+                    const items = prefixes[prefix];
+
+                    items
+                      .sort((a, b) =>
+                        a.productName.localeCompare(b.productName, undefined, {
+                          numeric: true,
+                          sensitivity: "base",
+                        })
+                      )
+                      .forEach((item) => {
+                        const cleanProductName = (item.productName || "").replace(/"/g, '""');
+                        const cleanDesc = (item.description || "").replace(/"/g, '""');
+                        // Data row
+                        csvContent += isPeriodFilterActive
+                          ? `"${cleanProductName}","${item.date || ""}","${item.periodSoldQty ?? 0}","${item.quantity || 0}","${item.availableQty || 0}","${item.stockMaintain || 0}","${item.holdQty || 0}","${item.displayQty || 0}","${item.damageQty || 0}","${cleanDesc}"\n`
+                          : `"${cleanProductName}","${item.date || ""}","${item.quantity || 0}","${item.availableQty || 0}","${item.stockMaintain || 0}","${item.holdQty || 0}","${item.displayQty || 0}","${item.damageQty || 0}","${cleanDesc}"\n`;
+                      });
+                    // Empty row between groups
+                    csvContent += isPeriodFilterActive
+                      ? `,,,,,,,,,\n`
+                      : `,,,,,,,,\n`;
                   }
+                  csvContent += `\n`;
                 }
 
-                const item = { ...b, parsedSuffix: suffix };
-
-                if (!brands[brand]) brands[brand] = {};
-                if (!brands[brand][prefix]) brands[brand][prefix] = [];
-                brands[brand][prefix].push(item);
-              });
-
-              for (const [brand, prefixes] of Object.entries(brands)) {
-                csvContent += `Brand: ${brand},,,,,,,,,,\n`;
-                csvContent += isPeriodFilterActive
-                  ? `Product Name,Product Number,Date,Sold (${soldStartDate} to ${soldEndDate}),Quantity,Available,Stock Maintain,Hold,Display,Damaged,Description\n`
-                  : `Product Name,Product Number,Date,Quantity,Available,Stock Maintain,Hold,Display,Damaged,Description\n`;
-
-                const sortedPrefixes = Object.keys(prefixes).sort();
-                for (const prefix of sortedPrefixes) {
-                  const items = prefixes[prefix];
-
-                  items
-                    .sort((a, b) => {
-                      const numA = parseInt(a.parsedSuffix);
-                      const numB = parseInt(b.parsedSuffix);
-                      if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
-                      return a.parsedSuffix.localeCompare(b.parsedSuffix);
-                    })
-                    .forEach((item) => {
-                      const cleanDesc = (item.description || "").replace(/"/g, '""');
-                      // Data row
-                      csvContent += isPeriodFilterActive
-                        ? `"${prefix}","${item.parsedSuffix}","${item.date || ""}","${item.periodSoldQty ?? 0}","${item.quantity || 0}","${item.availableQty || 0}","${item.stockMaintain || 0}","${item.holdQty || 0}","${item.displayQty || 0}","${item.damageQty || 0}","${cleanDesc}"\n`
-                        : `"${prefix}","${item.parsedSuffix}","${item.date || ""}","${item.quantity || 0}","${item.availableQty || 0}","${item.stockMaintain || 0}","${item.holdQty || 0}","${item.displayQty || 0}","${item.damageQty || 0}","${cleanDesc}"\n`;
-                    });
-                  // Empty row between groups
-                  csvContent += `,,,,,,,,,,\n`;
-                }
-                csvContent += `\n`;
+                const blob = new Blob([csvContent], {
+                  type: "text/csv;charset=utf-8;",
+                });
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                const catSuffix = activeCategory
+                  ? `-${activeCategory.replace(/[^a-zA-Z0-9_-]/g, "_")}`
+                  : "";
+                a.download = isPeriodFilterActive
+                  ? `sold-stock-patrak${catSuffix}-${soldStartDate}-to-${soldEndDate}.csv`
+                  : `stock-patrak${catSuffix}-${new Date().toISOString().slice(0, 10)}.csv`;
+                a.click();
+              } catch (exportErr: any) {
+                toast({
+                  title: "Export failed",
+                  description: exportErr?.message || "Failed to export CSV.",
+                  variant: "destructive",
+                });
               }
-
-              const blob = new Blob([csvContent], {
-                type: "text/csv;charset=utf-8;",
-              });
-              const a = document.createElement("a");
-              a.href = URL.createObjectURL(blob);
-              a.download = isPeriodFilterActive
-                ? `sold-stock-patrak-${soldStartDate}-to-${soldEndDate}.csv`
-                : `stock-patrak-${new Date().toISOString().slice(0, 10)}.csv`;
-              a.click();
             }}
           >
             <Download className="mr-1 h-4 w-4" />
@@ -1719,7 +1746,7 @@ export default function StockList() {
           </Button>
         </div>
       </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
         <Card className={`${isPeriodFilterActive ? "bg-blue-500/10 border-blue-500/30 ring-1 ring-blue-500/30" : "bg-primary/5 border-primary/20"}`}>
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
@@ -1749,6 +1776,16 @@ export default function StockList() {
             </div>
             <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
               {stats.availableStock.toLocaleString()}
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="bg-amber-500/10 border-amber-500/20">
+          <CardContent className="pt-6">
+            <div className="text-sm font-medium text-muted-foreground">
+              Total Hold Qty
+            </div>
+            <div className="text-2xl font-bold text-amber-600 dark:text-amber-400">
+              {(stats.totalHold || 0).toLocaleString()}
             </div>
           </CardContent>
         </Card>
@@ -1819,6 +1856,18 @@ export default function StockList() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Stock Status</SelectItem>
+                <SelectItem value="active">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                    <span>Active Products</span>
+                  </div>
+                </SelectItem>
+                <SelectItem value="inactive">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-slate-400"></span>
+                    <span>Inactive Products</span>
+                  </div>
+                </SelectItem>
                 <SelectItem value="not_in_next_folder">
                   <div className="flex items-center gap-2">
                     <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500"></span>
@@ -2032,7 +2081,7 @@ export default function StockList() {
 
         {/* Active Filter Pills Bar */}
         {activeFilterPills.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 pt-1">
             <span className="text-xs font-semibold text-slate-500 mr-1">Active Filters:</span>
             {activeFilterPills.map((pill) => (
               <Badge
@@ -2051,6 +2100,35 @@ export default function StockList() {
                 </button>
               </Badge>
             ))}
+
+            {/* When category is selected, show total sold, available, hold, display, damage in this row */}
+            {Boolean(
+              (columnFilters.category && columnFilters.category !== "all") ||
+              (selectedCategory && selectedCategory !== "all")
+            ) && (
+              <div className="flex flex-wrap items-center gap-1.5 ml-1 sm:ml-2 pl-2 sm:border-l border-slate-300">
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold bg-blue-50 text-blue-800 border border-blue-200 shadow-2xs">
+                  <span className="text-blue-600 font-medium">Total Sold:</span>
+                  <span className="font-bold">{stats.totalSales.toLocaleString()}</span>
+                </span>
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200 shadow-2xs">
+                  <span className="text-emerald-600 font-medium">Total Available:</span>
+                  <span className="font-bold">{stats.availableStock.toLocaleString()}</span>
+                </span>
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200 shadow-2xs">
+                  <span className="text-amber-600 font-medium">Total Hold:</span>
+                  <span className="font-bold">{(stats.totalHold || 0).toLocaleString()}</span>
+                </span>
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold bg-purple-50 text-purple-800 border border-purple-200 shadow-2xs">
+                  <span className="text-purple-600 font-medium">Display:</span>
+                  <span className="font-bold">{stats.totalDisplay.toLocaleString()}</span>
+                </span>
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold bg-rose-50 text-rose-800 border border-rose-200 shadow-2xs">
+                  <span className="text-rose-600 font-medium">Damage:</span>
+                  <span className="font-bold">{stats.totalDamage.toLocaleString()}</span>
+                </span>
+              </div>
+            )}
           </div>
         )}
 
@@ -2285,7 +2363,17 @@ export default function StockList() {
                     }`}
                   >
                     <TableCell className={`border-2 border-slate-300 px-4 py-3 align-middle font-bold ${b.isCancelled ? "text-red-950" : b.isNil ? "text-blue-950" : "text-slate-800"}`}>
-                      {b.productName}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span>{b.productName}</span>
+                        {b.status && b.status.toLowerCase() === "inactive" && (
+                          <Badge
+                            variant="outline"
+                            className="border-slate-400 bg-slate-100 text-slate-700 text-[10px] px-1.5 py-0 font-semibold"
+                          >
+                            Inactive
+                          </Badge>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="border-2 border-slate-300 px-4 py-3 align-middle font-medium text-slate-700">{b.category}</TableCell>
                     <TableCell className="border-2 border-slate-300 px-4 py-3 align-middle font-medium text-slate-700">{b.batchNumber}</TableCell>
@@ -2573,7 +2661,50 @@ export default function StockList() {
                 />
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
-                <Label className="text-right">Status</Label>
+                <Label className="text-right font-medium">Status</Label>
+                <div className="col-span-3 flex items-center justify-between p-2.5 rounded-lg border bg-slate-50/80">
+                  <div className="flex items-center gap-3">
+                    <Switch
+                      id="edit-batch-status-toggle"
+                      checked={(editingBatch.status || "Active").toLowerCase() === "active"}
+                      onCheckedChange={(checked) =>
+                        setEditingBatch({
+                          ...editingBatch,
+                          status: checked ? "Active" : "Inactive",
+                        })
+                      }
+                    />
+                    <Label
+                      htmlFor="edit-batch-status-toggle"
+                      className="text-sm font-semibold cursor-pointer select-none"
+                    >
+                      {(editingBatch.status || "Active").toLowerCase() === "active" ? (
+                        <span className="text-emerald-700 font-bold flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                          Active
+                        </span>
+                      ) : (
+                        <span className="text-slate-600 font-bold flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-slate-400"></span>
+                          Inactive
+                        </span>
+                      )}
+                    </Label>
+                  </div>
+                  <Badge
+                    variant="outline"
+                    className={`text-xs px-2.5 py-0.5 font-bold transition-all ${
+                      (editingBatch.status || "Active").toLowerCase() === "active"
+                        ? "border-emerald-500 bg-emerald-50 text-emerald-700"
+                        : "border-slate-300 bg-slate-100 text-slate-600"
+                    }`}
+                  >
+                    {(editingBatch.status || "Active").toLowerCase() === "active" ? "Active" : "Inactive"}
+                  </Badge>
+                </div>
+              </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label className="text-right">Stock Flags</Label>
                 <div className="col-span-3 grid grid-cols-3 gap-1.5">
                   <div
                     onClick={() =>

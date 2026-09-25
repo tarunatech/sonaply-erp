@@ -466,8 +466,12 @@ export default function SalesPage() {
 
   const getSuggestionsList = useCallback((query: string) => {
     const q = query.toLowerCase().trim();
+    // Exclude inactive products/batches from sales product input suggestions
+    const activeBatches = allBatches.filter(
+      b => !b.status || b.status.toLowerCase() !== 'inactive'
+    );
     if (!q) {
-      const sorted = [...allBatches].sort((a, b) => (b.availableQty || 0) - (a.availableQty || 0));
+      const sorted = [...activeBatches].sort((a, b) => (b.availableQty || 0) - (a.availableQty || 0));
       const list: { batch: StockBatch; category: 'Available' | 'Display' | 'Damage'; label: string }[] = [];
       for (const b of sorted) {
         list.push({ batch: b, category: 'Available', label: 'Available' });
@@ -488,7 +492,7 @@ export default function SalesPage() {
     // Search strictly based on product name
     const scoredBatches: { batch: StockBatch; score: number }[] = [];
 
-    for (const b of allBatches) {
+    for (const b of activeBatches) {
       const prodName = (b.productName || '').toLowerCase().trim();
       if (!prodName) continue;
 
@@ -624,6 +628,14 @@ export default function SalesPage() {
       }
       if (!item.batchNo) {
         toast({ title: "Batch Missing", description: `Please select a batch for "${item.productName}".`, variant: "destructive" }); return;
+      }
+      const matchingBatch = allBatches.find(
+        b => b.productName?.toLowerCase().trim() === item.productName.toLowerCase().trim() &&
+             (item.batchNo ? b.batchNumber === item.batchNo : true)
+      );
+      if (matchingBatch?.status?.toLowerCase() === 'inactive') {
+        toast({ title: "Inactive Product", description: `"${item.productName}" is marked as inactive and cannot be sold.`, variant: "destructive" });
+        return;
       }
     }
 

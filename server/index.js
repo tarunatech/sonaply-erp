@@ -495,7 +495,17 @@ app.get("/api/batches", async (req, res) => {
     const isPeriodFilter = Boolean(finalSoldStartDate && finalSoldEndDate);
 
     if (!page) {
+      const nonPageConditions = [];
+      const nonPageValues = [];
+      if (category && category !== "all") {
+        nonPageValues.push(category);
+        nonPageConditions.push(`LOWER(batches.category) = LOWER($${nonPageValues.length})`);
+      }
       if (isPeriodFilter) {
+        nonPageValues.push(finalSoldStartDate, finalSoldEndDate);
+        const sStartIdx = nonPageValues.length - 1;
+        const sEndIdx = nonPageValues.length;
+        const whereStr = nonPageConditions.length > 0 ? `WHERE ${nonPageConditions.join(" AND ")}` : "";
         const result = await db.query(
           `SELECT batches.*, COALESCE(ps.period_sold_qty, 0) as period_sold_qty, ps.period_sales_count, ps.period_sales_details
            FROM batches
@@ -524,19 +534,22 @@ app.get("/api/batches", async (req, res) => {
              FROM sales s
              WHERE s.status != 'Cancelled'
                AND (
-                 (s.order_date >= $1 AND s.order_date <= $2)
-                 OR (s.estimated_delivery_date IS NOT NULL AND s.estimated_delivery_date >= $1 AND s.estimated_delivery_date <= $2)
+                 (s.order_date >= $${sStartIdx} AND s.order_date <= $${sEndIdx})
+                 OR (s.estimated_delivery_date IS NOT NULL AND s.estimated_delivery_date >= $${sStartIdx} AND s.estimated_delivery_date <= $${sEndIdx})
                )
              GROUP BY LOWER(TRIM(s.product)), LOWER(TRIM(COALESCE(s.batch_no, '0')))
            ) ps ON LOWER(TRIM(batches.product_name)) = ps.s_product 
                AND LOWER(TRIM(COALESCE(batches.batch_number, '0'))) = ps.s_batch
+           ${whereStr}
            ORDER BY ps.period_sold_qty DESC, LOWER(batches.product_name) ASC, batches.date DESC, batches.id DESC`,
-          [finalSoldStartDate, finalSoldEndDate]
+          nonPageValues
         );
         return res.json(result.rows);
       }
+      const whereStr = nonPageConditions.length > 0 ? `WHERE ${nonPageConditions.join(" AND ")}` : "";
       const result = await db.query(
-        "SELECT * FROM batches ORDER BY date DESC, id DESC",
+        `SELECT * FROM batches ${whereStr} ORDER BY date DESC, id DESC`,
+        nonPageValues
       );
       return res.json(result.rows);
     }
@@ -749,7 +762,7 @@ app.get("/api/batches", async (req, res) => {
       );
     }
 
-    // 11. Status flags (Not in Next Folder, Dead Stock, Nil, Regular)
+    // 11. Status flags (Not in Next Folder, Dead Stock, Nil, Regular, Active, Inactive)
     if (stockStatus === "not_in_next_folder" || isCancelled === "true" || isCancelled === true) {
       conditions.push(`is_cancelled = TRUE`);
     } else if (stockStatus === "dead_stock" || isDeadStock === "true" || isDeadStock === true) {
@@ -758,6 +771,10 @@ app.get("/api/batches", async (req, res) => {
       conditions.push(`is_nil = TRUE`);
     } else if (stockStatus === "regular") {
       conditions.push(`COALESCE(is_cancelled, FALSE) = FALSE AND COALESCE(is_dead_stock, FALSE) = FALSE AND COALESCE(is_nil, FALSE) = FALSE`);
+    } else if (stockStatus === "active") {
+      conditions.push(`(batches.status IS NULL OR LOWER(batches.status) = 'active')`);
+    } else if (stockStatus === "inactive") {
+      conditions.push(`LOWER(batches.status) = 'inactive'`);
     }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -765,6 +782,7 @@ app.get("/api/batches", async (req, res) => {
     let stats = {
       totalSales: 0,
       availableStock: 0,
+      totalHold: 0,
       totalDisplay: 0,
       totalDamage: 0,
     };
@@ -774,45 +792,38 @@ app.get("/api/batches", async (req, res) => {
         `SELECT 
           COALESCE(SUM(ps.period_sold_qty), 0) as total_sales,
           COALESCE(SUM(batches.available_qty), 0) as available_stock,
+          COALESCE(SUM(batches.hold_qty), 0) as total_hold,
           COALESCE(SUM(batches.display_qty), 0) as total_display,
           COALESCE(SUM(batches.damage_qty), 0) as total_damage
         FROM batches
-        INNER JOIN (
-          SELECT 
-            LOWER(TRIM(s.product)) as s_product,
-            LOWER(TRIM(COALESCE(s.batch_no, '0'))) as s_batch,
-            SUM(s.ordered_qty) as period_sold_qty
-          FROM sales s
-          WHERE s.status != 'Cancelled'
-            AND (
-              (s.order_date >= $1 AND s.order_date <= $2)
-              OR (s.estimated_delivery_date IS NOT NULL AND s.estimated_delivery_date >= $1 AND s.estimated_delivery_date <= $2)
-            )
-          GROUP BY LOWER(TRIM(s.product)), LOWER(TRIM(COALESCE(s.batch_no, '0')))
-        ) ps ON LOWER(TRIM(batches.product_name)) = ps.s_product 
-            AND LOWER(TRIM(COALESCE(batches.batch_number, '0'))) = ps.s_batch`,
-        [finalSoldStartDate, finalSoldEndDate]
+        ${joinClause}
+        ${whereClause}`,
+        values
       );
       const statsRow = statsQuery.rows[0] || {};
       stats = {
         totalSales: Number(statsRow.total_sales || 0),
         availableStock: Number(statsRow.available_stock || 0),
+        totalHold: Number(statsRow.total_hold || 0),
         totalDisplay: Number(statsRow.total_display || 0),
         totalDamage: Number(statsRow.total_damage || 0),
       };
     } else {
       const overallStatsQuery = await db.query(`
         SELECT 
-          COALESCE(SUM(GREATEST(0, quantity - available_qty - COALESCE(display_qty, 0) - COALESCE(damage_qty, 0) - COALESCE(hold_qty, 0))), 0) as total_sales,
-          COALESCE(SUM(available_qty), 0) as available_stock,
-          COALESCE(SUM(display_qty), 0) as total_display,
-          COALESCE(SUM(damage_qty), 0) as total_damage
+          COALESCE(SUM(GREATEST(0, batches.quantity - batches.available_qty - COALESCE(batches.display_qty, 0) - COALESCE(batches.damage_qty, 0) - COALESCE(batches.hold_qty, 0))), 0) as total_sales,
+          COALESCE(SUM(batches.available_qty), 0) as available_stock,
+          COALESCE(SUM(batches.hold_qty), 0) as total_hold,
+          COALESCE(SUM(batches.display_qty), 0) as total_display,
+          COALESCE(SUM(batches.damage_qty), 0) as total_damage
         FROM batches
-      `);
+        ${whereClause}
+      `, values);
       const statsRow = overallStatsQuery.rows[0] || {};
       stats = {
         totalSales: Number(statsRow.total_sales || 0),
         availableStock: Number(statsRow.available_stock || 0),
+        totalHold: Number(statsRow.total_hold || 0),
         totalDisplay: Number(statsRow.total_display || 0),
         totalDamage: Number(statsRow.total_damage || 0),
       };
@@ -916,6 +927,7 @@ app.post("/api/batches", async (req, res) => {
     stock_maintain,
     nil_qty,
     description,
+    status,
   } = req.body;
   const productId = product_id === "" ? null : product_id;
   const displayQty =
@@ -925,11 +937,12 @@ app.post("/api/batches", async (req, res) => {
         ? nil_qty
         : 0;
   const stockMaintain = stock_maintain !== undefined ? Number(stock_maintain) || 0 : 0;
+  const batchStatus = status && String(status).trim() ? String(status).trim() : "Active";
   try {
     const result = await db.query(
       `INSERT INTO batches 
-      (product_id, product_code, product_name, category, batch_number, supplier, quantity, rate, date, available_qty, damage_qty, display_qty, stock_maintain, description) 
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
+      (product_id, product_code, product_name, category, batch_number, supplier, quantity, rate, date, available_qty, damage_qty, display_qty, stock_maintain, description, status) 
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
       [
         productId,
         product_code,
@@ -945,14 +958,15 @@ app.post("/api/batches", async (req, res) => {
         displayQty,
         stockMaintain,
         description,
+        batchStatus,
       ],
     );
 
     // Auto-create product entry in products table if not present
     if (product_name && product_name.trim()) {
       await db.query(
-        "INSERT INTO products (name, category) SELECT $1, $2 WHERE NOT EXISTS (SELECT 1 FROM products WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)))",
-        [product_name.trim(), category || ""]
+        "INSERT INTO products (name, category, status) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM products WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)))",
+        [product_name.trim(), category || "", batchStatus]
       );
     }
 
@@ -978,6 +992,15 @@ app.put("/api/batches/:id", async (req, res) => {
       `UPDATE batches SET ${setClause} WHERE id = $${values.length + 1} RETURNING *`,
       [...values, id],
     );
+    if (fields.status) {
+      if (result.rows[0]?.product_id) {
+        await db.query("UPDATE products SET status = $1 WHERE id = $2", [fields.status, result.rows[0].product_id]);
+      }
+      if (result.rows[0]?.product_name) {
+        await db.query("UPDATE products SET status = $1 WHERE LOWER(TRIM(name)) = LOWER(TRIM($2))", [fields.status, result.rows[0].product_name]);
+        await db.query("UPDATE batches SET status = $1 WHERE LOWER(TRIM(product_name)) = LOWER(TRIM($2))", [fields.status, result.rows[0].product_name]);
+      }
+    }
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });

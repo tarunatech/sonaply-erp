@@ -461,9 +461,11 @@ export default function PendingDeliveries() {
   const allProductNames = useMemo(() => {
     const set = new Set<string>();
     products.forEach(p => {
+      if (p.status && p.status.toLowerCase() === 'inactive') return;
       if (p.name && p.name.trim()) set.add(p.name.trim());
     });
     batches.forEach(b => {
+      if (b.status && b.status.toLowerCase() === 'inactive') return;
       if (b.productName && b.productName.trim()) set.add(b.productName.trim());
     });
     return Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
