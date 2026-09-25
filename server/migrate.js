@@ -455,6 +455,10 @@ async function migrate() {
     await db.query('UPDATE sales SET damage_qty = 0 WHERE damage_qty IS NULL');
     await db.query("UPDATE sales SET stock_category = 'Available' WHERE stock_category IS NULL OR TRIM(stock_category) = ''");
     await db.query("UPDATE challans SET stock_category = 'Available' WHERE stock_category IS NULL OR TRIM(stock_category) = ''");
+    await db.query("ALTER TABLE batches ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Active'");
+    await db.query("UPDATE batches SET status = 'Active' WHERE status IS NULL OR TRIM(status) = ''");
+    await db.query("ALTER TABLE products ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Active'");
+    await db.query("UPDATE products SET status = 'Active' WHERE status IS NULL OR TRIM(status) = ''");
 
     // Update sales status constraint to support 'Confirmed'
     try {

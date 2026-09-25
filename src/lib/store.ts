@@ -6,6 +6,7 @@ export interface Product {
   category: string;
   size: string;
   barcode: string;
+  status?: string;
 }
 export interface PeriodSaleDetail {
   orderNo: string;
@@ -39,6 +40,7 @@ export interface StockBatch {
   holdQty?: number;
   stockMaintain?: number;
   description?: string;
+  status?: string;
   isNil?: boolean;
   isCancelled?: boolean;
   isDeadStock?: boolean;
@@ -214,6 +216,7 @@ const mapBatch = (b: any): StockBatch => ({
   holdQty: b.hold_qty,
   stockMaintain: Number(b.stock_maintain || 0),
   description: b.description,
+  status: b.status || "Active",
   isNil: b.is_nil,
   isCancelled: b.is_cancelled,
   isDeadStock: b.is_dead_stock,
@@ -355,6 +358,7 @@ export interface GetBatchesParams {
 export interface StockStats {
   totalSales: number;
   availableStock: number;
+  totalHold?: number;
   totalDisplay: number;
   totalDamage: number;
 }
@@ -369,11 +373,12 @@ export interface PaginatedBatchesResponse {
 }
 
 export const getBatches = async (
-  params: { soldStartDate?: string; soldEndDate?: string } = {},
+  params: { soldStartDate?: string; soldEndDate?: string; category?: string } = {},
 ): Promise<StockBatch[]> => {
   const query = new URLSearchParams();
   if (params.soldStartDate) query.set("soldStartDate", params.soldStartDate);
   if (params.soldEndDate) query.set("soldEndDate", params.soldEndDate);
+  if (params.category && params.category !== "all") query.set("category", params.category);
   const qStr = query.toString();
   const data = await request<any[]>(`/batches${qStr ? `?${qStr}` : ""}`);
   return data.map(mapBatch);
@@ -469,6 +474,7 @@ export const addBatch = (b: Omit<StockBatch, "id">) => {
     display_qty: b.displayQty,
     stock_maintain: b.stockMaintain || 0,
     description: b.description,
+    status: b.status || "Active",
     is_nil: b.isNil || false,
     is_cancelled: b.isCancelled || false,
     is_dead_stock: b.isDeadStock || false,
@@ -494,6 +500,7 @@ export const updateBatch = (id: string, updates: Partial<StockBatch>) => {
     body.batch_number = updates.batchNumber || "0";
   if (updates.supplier) body.supplier = updates.supplier;
   if (updates.description !== undefined) body.description = updates.description;
+  if (updates.status !== undefined) body.status = updates.status;
   if (updates.isNil !== undefined) body.is_nil = updates.isNil;
   if (updates.isCancelled !== undefined)
     body.is_cancelled = updates.isCancelled;

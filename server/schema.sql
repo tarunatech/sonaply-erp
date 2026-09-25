@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS products (
   name TEXT NOT NULL,
   category TEXT NOT NULL,
   size TEXT,
-  barcode TEXT
+  barcode TEXT,
+  status TEXT DEFAULT 'Active'
 );
 
 CREATE TABLE IF NOT EXISTS batches (
@@ -35,7 +36,8 @@ CREATE TABLE IF NOT EXISTS batches (
   is_nil BOOLEAN DEFAULT FALSE,
   is_cancelled BOOLEAN DEFAULT FALSE,
   is_dead_stock BOOLEAN DEFAULT FALSE,
-  description TEXT
+  description TEXT,
+  status TEXT DEFAULT 'Active'
 );
 
 CREATE TABLE IF NOT EXISTS purchases (
