@@ -165,48 +165,155 @@ export interface ProductStockSnapshot {
   currentTotalStock: number;
 }
 
+export interface ProductIndex {
+  normToDisplayName: Map<string, string>;
+  productCategories: Map<string, string>;
+  batchesByProduct: Map<string, StockBatch[]>;
+  purchasesByProduct: Map<string, Purchase[]>;
+  salesByProduct: Map<string, Sale[]>;
+  returnsByProduct: Map<string, SaleReturn[]>;
+  purchaseBatchKeys: Set<string>;
+}
+
+export function buildProductIndex(
+  allBatches: StockBatch[],
+  allPurchases: Purchase[],
+  allSales: Sale[],
+  allSalesReturns: SaleReturn[]
+): ProductIndex {
+  const normToDisplayName = new Map<string, string>();
+  const productCategories = new Map<string, string>();
+  const batchesByProduct = new Map<string, StockBatch[]>();
+  const purchasesByProduct = new Map<string, Purchase[]>();
+  const salesByProduct = new Map<string, Sale[]>();
+  const returnsByProduct = new Map<string, SaleReturn[]>();
+  const purchaseBatchKeys = new Set<string>();
+
+  // 1. Index Batches
+  for (let i = 0; i < allBatches.length; i++) {
+    const b = allBatches[i];
+    if (!b.productName) continue;
+    const norm = b.productName.toLowerCase().trim();
+    if (!norm) continue;
+
+    if (!normToDisplayName.has(norm)) {
+      normToDisplayName.set(norm, b.productName.trim());
+    }
+    if (b.category?.trim() && !productCategories.has(norm)) {
+      productCategories.set(norm, b.category.trim());
+    }
+
+    let arr = batchesByProduct.get(norm);
+    if (!arr) {
+      arr = [];
+      batchesByProduct.set(norm, arr);
+    }
+    arr.push(b);
+  }
+
+  // 2. Index Purchases
+  for (let i = 0; i < allPurchases.length; i++) {
+    const p = allPurchases[i];
+    if (!p.productName) continue;
+    const norm = p.productName.toLowerCase().trim();
+    if (!norm) continue;
+
+    if (!normToDisplayName.has(norm)) {
+      normToDisplayName.set(norm, p.productName.trim());
+    }
+    if (p.category?.trim() && !productCategories.has(norm)) {
+      productCategories.set(norm, p.category.trim());
+    }
+
+    let arr = purchasesByProduct.get(norm);
+    if (!arr) {
+      arr = [];
+      purchasesByProduct.set(norm, arr);
+    }
+    arr.push(p);
+
+    const bNum = p.batchNumber ? String(p.batchNumber).trim() : "0";
+    purchaseBatchKeys.add(`${norm}:::${bNum}`);
+  }
+
+  // 3. Index Sales
+  for (let i = 0; i < allSales.length; i++) {
+    const s = allSales[i];
+    if (!s.product) continue;
+    const norm = s.product.toLowerCase().trim();
+    if (!norm) continue;
+
+    if (!normToDisplayName.has(norm)) {
+      normToDisplayName.set(norm, s.product.trim());
+    }
+    if (s.category?.trim() && s.category !== "Regular" && !productCategories.has(norm)) {
+      productCategories.set(norm, s.category.trim());
+    }
+
+    let arr = salesByProduct.get(norm);
+    if (!arr) {
+      arr = [];
+      salesByProduct.set(norm, arr);
+    }
+    arr.push(s);
+  }
+
+  // 4. Index Returns
+  for (let i = 0; i < allSalesReturns.length; i++) {
+    const r = allSalesReturns[i];
+    if (!r.productName) continue;
+    const norm = r.productName.toLowerCase().trim();
+    if (!norm) continue;
+
+    if (!normToDisplayName.has(norm)) {
+      normToDisplayName.set(norm, r.productName.trim());
+    }
+
+    let arr = returnsByProduct.get(norm);
+    if (!arr) {
+      arr = [];
+      returnsByProduct.set(norm, arr);
+    }
+    arr.push(r);
+  }
+
+  return {
+    normToDisplayName,
+    productCategories,
+    batchesByProduct,
+    purchasesByProduct,
+    salesByProduct,
+    returnsByProduct,
+    purchaseBatchKeys,
+  };
+}
+
 /**
- * Calculates historical closing stock for a given product up to targetDate (end of day).
- * If targetDate is current date/future, it returns current stock from batches.
- * If targetDate is in the past, it calculates backward from current stock by reversing
- * transactions that happened strictly after targetDate.
+ * Calculates historical closing stock for a given product in O(product transactions) using pre-built indexes.
  */
-function computeClosingStockForProduct({
+export function computeClosingStockForProductIndexed({
   normName,
   targetDate,
-  allBatches,
-  allPurchases,
-  allSales,
-  allSalesReturns,
+  index,
 }: {
   normName: string;
   targetDate: string;
-  allBatches: StockBatch[];
-  allPurchases: Purchase[];
-  allSales: Sale[];
-  allSalesReturns: SaleReturn[];
+  index: ProductIndex;
 }) {
-  const productBatches = allBatches.filter(
-    (b) => b.productName && b.productName.toLowerCase().trim() === normName,
-  );
-  const currentAvailable = productBatches.reduce(
-    (sum, b) => sum + Number(b.availableQty || 0),
-    0,
-  );
-  const currentHold = productBatches.reduce(
-    (sum, b) => sum + Number(b.holdQty || 0),
-    0,
-  );
-  const currentDisplay = productBatches.reduce(
-    (sum, b) => sum + Number(b.displayQty || 0),
-    0,
-  );
-  const currentDamage = productBatches.reduce(
-    (sum, b) => sum + Number(b.damageQty || 0),
-    0,
-  );
-  const currentTotalStock =
-    currentAvailable + currentHold + currentDisplay + currentDamage;
+  const productBatches = index.batchesByProduct.get(normName) || [];
+  let currentAvailable = 0;
+  let currentHold = 0;
+  let currentDisplay = 0;
+  let currentDamage = 0;
+
+  for (let i = 0; i < productBatches.length; i++) {
+    const b = productBatches[i];
+    currentAvailable += Number(b.availableQty || 0);
+    currentHold += Number(b.holdQty || 0);
+    currentDisplay += Number(b.displayQty || 0);
+    currentDamage += Number(b.damageQty || 0);
+  }
+  const currentTotalStock = currentAvailable + currentHold + currentDisplay + currentDamage;
 
   const tDate = extractDateOnly(targetDate);
   if (!tDate) {
@@ -224,49 +331,47 @@ function computeClosingStockForProduct({
     };
   }
 
-  // Transactions occurring strictly AFTER targetDate
+  // Transactions strictly AFTER targetDate
   let purchasedAfter = 0;
-  allPurchases.forEach((p) => {
-    if (p.productName && p.productName.toLowerCase().trim() === normName) {
+  const purchases = index.purchasesByProduct.get(normName);
+  if (purchases) {
+    for (let i = 0; i < purchases.length; i++) {
+      const p = purchases[i];
       if (extractDateOnly(p.date) > tDate) {
         purchasedAfter += Number(p.quantity || 0);
       }
     }
-  });
+  }
 
   let manualBatchesAfter = 0;
-  allBatches.forEach((b) => {
-    if (b.productName && b.productName.toLowerCase().trim() === normName) {
-      if (extractDateOnly(b.date) > tDate) {
-        const bNum = b.batchNumber ? String(b.batchNumber).trim() : "0";
-        const hasPurchase = allPurchases.some(
-          (p) =>
-            p.productName?.toLowerCase().trim() === normName &&
-            (p.batchNumber ? String(p.batchNumber).trim() : "0") === bNum,
-        );
-        if (!hasPurchase) {
-          manualBatchesAfter += Number(b.quantity || 0);
-        }
+  for (let i = 0; i < productBatches.length; i++) {
+    const b = productBatches[i];
+    if (extractDateOnly(b.date) > tDate) {
+      const bNum = b.batchNumber ? String(b.batchNumber).trim() : "0";
+      if (!index.purchaseBatchKeys.has(`${normName}:::${bNum}`)) {
+        manualBatchesAfter += Number(b.quantity || 0);
       }
     }
-  });
+  }
 
   let returnsAfter = 0;
-  allSalesReturns.forEach((r) => {
-    if (r.productName && r.productName.toLowerCase().trim() === normName) {
+  const returns = index.returnsByProduct.get(normName);
+  if (returns) {
+    for (let i = 0; i < returns.length; i++) {
+      const r = returns[i];
       if (extractDateOnly(r.receiveDate) > tDate) {
         returnsAfter += Number(r.quantity || 0);
       }
     }
-  });
+  }
 
   let soldAfter = 0;
   let cancelledAfterForPriorSales = 0;
-  allSales.forEach((s) => {
-    if (s.product && s.product.toLowerCase().trim() === normName) {
-      const sDate = extractDateOnly(
-        s.orderDate || s.estimatedDeliveryDate || s.createdAt,
-      );
+  const sales = index.salesByProduct.get(normName);
+  if (sales) {
+    for (let i = 0; i < sales.length; i++) {
+      const s = sales[i];
+      const sDate = extractDateOnly(s.orderDate || s.estimatedDeliveryDate || s.createdAt);
       if (s.status !== "Cancelled") {
         if (sDate > tDate) {
           soldAfter += Number(s.orderedQty || 0);
@@ -278,32 +383,16 @@ function computeClosingStockForProduct({
         }
       }
     }
-  });
+  }
 
-  const netAdditionsAfter =
-    purchasedAfter +
-    manualBatchesAfter +
-    returnsAfter +
-    cancelledAfterForPriorSales;
+  const netAdditionsAfter = purchasedAfter + manualBatchesAfter + returnsAfter + cancelledAfterForPriorSales;
   const netSubtractionsAfter = soldAfter;
 
-  const closingTotalStock = Math.max(
-    0,
-    currentTotalStock - netAdditionsAfter + netSubtractionsAfter,
-  );
+  const closingTotalStock = Math.max(0, currentTotalStock - netAdditionsAfter + netSubtractionsAfter);
   const closingHoldQty = Math.min(currentHold, closingTotalStock);
-  const closingDisplayQty = Math.min(
-    currentDisplay,
-    Math.max(0, closingTotalStock - closingHoldQty),
-  );
-  const closingDamageQty = Math.min(
-    currentDamage,
-    Math.max(0, closingTotalStock - closingHoldQty - closingDisplayQty),
-  );
-  const closingAvailableQty = Math.max(
-    0,
-    closingTotalStock - closingHoldQty - closingDisplayQty - closingDamageQty,
-  );
+  const closingDisplayQty = Math.min(currentDisplay, Math.max(0, closingTotalStock - closingHoldQty));
+  const closingDamageQty = Math.min(currentDamage, Math.max(0, closingTotalStock - closingHoldQty - closingDisplayQty));
+  const closingAvailableQty = Math.max(0, closingTotalStock - closingHoldQty - closingDisplayQty - closingDamageQty);
 
   return {
     currentAvailable,
@@ -321,9 +410,9 @@ function computeClosingStockForProduct({
 
 /**
  * Computes full category stock snapshots (Opening, Purchases, Sales, Returns, Closing Stock)
- * for each product within the requested date range [startDate, endDate].
+ * using pre-indexed lookup maps in O(products) time.
  */
-function computeStockSnapshotsHelper({
+export function computeStockSnapshotsHelper({
   allBatches,
   allPurchases,
   allSales,
@@ -331,6 +420,7 @@ function computeStockSnapshotsHelper({
   startDate,
   endDate,
   categoryFilter,
+  index,
 }: {
   allBatches: StockBatch[];
   allPurchases: Purchase[];
@@ -339,177 +429,90 @@ function computeStockSnapshotsHelper({
   startDate: string;
   endDate: string;
   categoryFilter?: string;
+  index?: ProductIndex;
 }) {
+  const prodIndex = index || buildProductIndex(allBatches, allPurchases, allSales, allSalesReturns);
   const isCatFiltered = categoryFilter && categoryFilter !== "all";
   const targetCat = isCatFiltered ? categoryFilter.toLowerCase().trim() : "";
 
-  // Collect all unique products
-  const productNames = new Map<string, string>(); // norm -> original
-  allBatches.forEach((b) => {
-    if (b.productName?.trim())
-      productNames.set(
-        b.productName.toLowerCase().trim(),
-        b.productName.trim(),
-      );
-  });
-  allPurchases.forEach((p) => {
-    if (p.productName?.trim())
-      productNames.set(
-        p.productName.toLowerCase().trim(),
-        p.productName.trim(),
-      );
-  });
-  allSales.forEach((s) => {
-    if (s.product?.trim())
-      productNames.set(s.product.toLowerCase().trim(), s.product.trim());
-  });
-  allSalesReturns.forEach((r) => {
-    if (r.productName?.trim())
-      productNames.set(
-        r.productName.toLowerCase().trim(),
-        r.productName.trim(),
-      );
-  });
-
-  const getProductCategory = (normName: string): string => {
-    const b = allBatches.find(
-      (x) =>
-        x.productName &&
-        x.productName.toLowerCase().trim() === normName &&
-        x.category?.trim(),
-    );
-    if (b && b.category) return b.category.trim();
-    const p = allPurchases.find(
-      (x) =>
-        x.productName &&
-        x.productName.toLowerCase().trim() === normName &&
-        x.category?.trim(),
-    );
-    if (p && p.category) return p.category.trim();
-    const s = allSales.find(
-      (x) =>
-        x.product &&
-        x.product.toLowerCase().trim() === normName &&
-        x.category?.trim() &&
-        x.category !== "Regular",
-    );
-    if (s && s.category) return s.category.trim();
-    return "Other";
-  };
-
   const products: ProductStockSnapshot[] = [];
 
-  Array.from(productNames.entries()).forEach(([normName, originalName]) => {
-    const category = getProductCategory(normName);
-    if (isCatFiltered && category.toLowerCase() !== targetCat) return;
+  prodIndex.normToDisplayName.forEach((originalName, normName) => {
+    const category = prodIndex.productCategories.get(normName) || "Other";
+    if (isCatFiltered && category.toLowerCase().trim() !== targetCat) return;
 
-    const productBatches = allBatches.filter(
-      (b) => b.productName && b.productName.toLowerCase().trim() === normName,
-    );
-
-    const stockSnap = computeClosingStockForProduct({
+    const productBatches = prodIndex.batchesByProduct.get(normName) || [];
+    const stockSnap = computeClosingStockForProductIndexed({
       normName,
       targetDate: endDate,
-      allBatches,
-      allPurchases,
-      allSales,
-      allSalesReturns,
+      index: prodIndex,
     });
 
-    // Batch numbers, supplier, status, description
     const batchNumbers = new Set<string>();
-    productBatches.forEach((b) => {
+    for (let i = 0; i < productBatches.length; i++) {
+      const b = productBatches[i];
       if (b.batchNumber) batchNumbers.add(String(b.batchNumber).trim());
-    });
-    allPurchases.forEach((p) => {
-      if (
-        p.productName &&
-        p.productName.toLowerCase().trim() === normName &&
-        p.batchNumber
-      ) {
-        batchNumbers.add(String(p.batchNumber).trim());
-      }
-    });
+    }
+    const productPurchases = prodIndex.purchasesByProduct.get(normName) || [];
+    for (let i = 0; i < productPurchases.length; i++) {
+      const p = productPurchases[i];
+      if (p.batchNumber) batchNumbers.add(String(p.batchNumber).trim());
+    }
 
     const supplier =
       productBatches.find((b) => b.supplier)?.supplier ||
-      allPurchases.find(
-        (p) =>
-          p.productName &&
-          p.productName.toLowerCase().trim() === normName &&
-          p.supplierName,
-      )?.supplierName ||
+      productPurchases.find((p) => p.supplierName)?.supplierName ||
       "";
 
     const description =
       productBatches.find((b) => b.description)?.description ||
-      allPurchases.find(
-        (p) =>
-          p.productName &&
-          p.productName.toLowerCase().trim() === normName &&
-          p.description,
-      )?.description ||
+      productPurchases.find((p) => p.description)?.description ||
       "";
 
-    const isInactive =
-      productBatches.length > 0 &&
-      productBatches.every((b) => b.status === "Inactive");
+    const isInactive = productBatches.length > 0 && productBatches.every((b) => b.status === "Inactive");
     const status = isInactive ? "Inactive" : "Active";
 
-    // Transactions within period [startDate, endDate]
+    // Period transactions [startDate, endDate]
     let purchasedQty = 0;
-    allPurchases.forEach((p) => {
-      if (p.productName && p.productName.toLowerCase().trim() === normName) {
-        if (isDateInRange(p.date, startDate, endDate)) {
-          purchasedQty += Number(p.quantity || 0);
-        }
+    for (let i = 0; i < productPurchases.length; i++) {
+      const p = productPurchases[i];
+      if (isDateInRange(p.date, startDate, endDate)) {
+        purchasedQty += Number(p.quantity || 0);
       }
-    });
+    }
 
-    allBatches.forEach((b) => {
-      if (b.productName && b.productName.toLowerCase().trim() === normName) {
-        if (isDateInRange(b.date, startDate, endDate)) {
-          const bNum = b.batchNumber ? String(b.batchNumber).trim() : "0";
-          const hasPurchase = allPurchases.some(
-            (p) =>
-              p.productName?.toLowerCase().trim() === normName &&
-              (p.batchNumber ? String(p.batchNumber).trim() : "0") === bNum,
-          );
-          if (!hasPurchase) {
-            purchasedQty += Number(b.quantity || 0);
-          }
+    for (let i = 0; i < productBatches.length; i++) {
+      const b = productBatches[i];
+      if (isDateInRange(b.date, startDate, endDate)) {
+        const bNum = b.batchNumber ? String(b.batchNumber).trim() : "0";
+        if (!prodIndex.purchaseBatchKeys.has(`${normName}:::${bNum}`)) {
+          purchasedQty += Number(b.quantity || 0);
         }
       }
-    });
+    }
 
     let soldQty = 0;
-    allSales.forEach((s) => {
-      if (
-        s.product &&
-        s.product.toLowerCase().trim() === normName &&
-        s.status !== "Cancelled"
-      ) {
+    const productSales = prodIndex.salesByProduct.get(normName) || [];
+    for (let i = 0; i < productSales.length; i++) {
+      const s = productSales[i];
+      if (s.status !== "Cancelled") {
         const sDate = s.orderDate || s.estimatedDeliveryDate || s.createdAt;
         if (isDateInRange(sDate, startDate, endDate)) {
           soldQty += Number(s.orderedQty || 0);
         }
       }
-    });
+    }
 
     let salesReturnQty = 0;
-    allSalesReturns.forEach((r) => {
-      if (r.productName && r.productName.toLowerCase().trim() === normName) {
-        if (isDateInRange(r.receiveDate, startDate, endDate)) {
-          salesReturnQty += Number(r.quantity || 0);
-        }
+    const productReturns = prodIndex.returnsByProduct.get(normName) || [];
+    for (let i = 0; i < productReturns.length; i++) {
+      const r = productReturns[i];
+      if (isDateInRange(r.receiveDate, startDate, endDate)) {
+        salesReturnQty += Number(r.quantity || 0);
       }
-    });
+    }
 
-    // Opening Stock = Closing Stock of period - Purchases in period - Returns in period + Sales in period
-    const openingStock = Math.max(
-      0,
-      stockSnap.closingTotalStock - purchasedQty - salesReturnQty + soldQty,
-    );
+    const openingStock = Math.max(0, stockSnap.closingTotalStock - purchasedQty - salesReturnQty + soldQty);
 
     const hasAnyActivity =
       stockSnap.closingTotalStock > 0 ||
@@ -547,7 +550,7 @@ function computeStockSnapshotsHelper({
     a.productName.localeCompare(b.productName, undefined, {
       numeric: true,
       sensitivity: "base",
-    }),
+    })
   );
 
   const totals = products.reduce(
@@ -573,7 +576,7 @@ function computeStockSnapshotsHelper({
       display: 0,
       damage: 0,
       totalStock: 0,
-    },
+    }
   );
 
   return { products, totals };
@@ -665,6 +668,10 @@ export default function DailyExport() {
   useEffect(() => {
     loadLedgerData();
   }, []);
+
+  const productIndex = useMemo(() => {
+    return buildProductIndex(allBatches, allPurchases, allSales, allSalesReturns);
+  }, [allBatches, allPurchases, allSales, allSalesReturns]);
 
   const handleApplyLedgerFilter = () => {
     setAppliedFromDate(fromDate);
@@ -810,6 +817,7 @@ export default function DailyExport() {
           startDate: d,
           endDate: d,
           categoryFilter: selectedCategory,
+          index: productIndex,
         });
 
         if (!snapshots.products.length) {
@@ -860,66 +868,48 @@ export default function DailyExport() {
 
   // Compile transactions and ledger dynamically based on appliedFromDate & appliedToDate
   const ledgerData = useMemo(() => {
-    const productNames = new Set<string>();
-    allBatches.forEach((b) => {
-      if (b.productName && b.productName.trim())
-        productNames.add(b.productName.trim());
-    });
-    allSales.forEach((s) => {
-      if (s.product && s.product.trim()) productNames.add(s.product.trim());
-    });
-    allPurchases.forEach((p) => {
-      if (p.productName && p.productName.trim())
-        productNames.add(p.productName.trim());
-    });
-
-    const getProductCategory = (name: string): string => {
-      const norm = name.toLowerCase().trim();
-      const b = allBatches.find(
-        (x) => x.productName && x.productName.toLowerCase().trim() === norm,
-      );
-      if (b) return b.category;
-      const p = allPurchases.find(
-        (x) => x.productName && x.productName.toLowerCase().trim() === norm,
-      );
-      if (p) return p.category;
-      const s = allSales.find(
-        (x) => x.product && x.product.toLowerCase().trim() === norm,
-      );
-      if (s) return s.category;
-      return "Other";
-    };
-
-    return Array.from(productNames)
-      .map((productName) => {
-        const category = getProductCategory(productName);
+    return Array.from(productIndex.normToDisplayName.entries())
+      .map(([normName, productName]) => {
+        const category = productIndex.productCategories.get(normName) || "Other";
         const transactions: LedgerTransaction[] = [];
-        const normName = productName.toLowerCase().trim();
-        const productBatches = allBatches.filter(
-          (b) =>
-            b.productName && b.productName.toLowerCase().trim() === normName,
-        );
-        const isProductDeadStock = productBatches.some((b) => b.isDeadStock);
-        const isProductCancelled =
-          !isProductDeadStock && productBatches.some((b) => b.isCancelled);
-        const isProductNil =
-          !isProductDeadStock &&
-          !isProductCancelled &&
-          productBatches.some((b) => b.isNil);
+        const productBatches = productIndex.batchesByProduct.get(normName) || [];
+        const productPurchases = productIndex.purchasesByProduct.get(normName) || [];
+        const productSales = productIndex.salesByProduct.get(normName) || [];
+        const productReturns = productIndex.returnsByProduct.get(normName) || [];
+
+        let currentAvailable = 0;
+        let isProductDeadStock = false;
+        let isProductCancelled = false;
+        let isProductNil = false;
+
+        const batchByNumber = new Map<string, StockBatch>();
+        for (let i = 0; i < productBatches.length; i++) {
+          const b = productBatches[i];
+          currentAvailable +=
+            Number(b.availableQty || 0) +
+            Number(b.displayQty || 0) +
+            Number(b.damageQty || 0);
+          if (b.isDeadStock) isProductDeadStock = true;
+          if (b.isCancelled) isProductCancelled = true;
+          if (b.isNil) isProductNil = true;
+          if (b.batchNumber) {
+            batchByNumber.set(String(b.batchNumber).trim(), b);
+          }
+        }
+        if (isProductDeadStock) {
+          isProductCancelled = false;
+          isProductNil = false;
+        } else if (isProductCancelled) {
+          isProductNil = false;
+        }
 
         // A. Purchases (Stock Addition)
-        allPurchases.forEach((p) => {
-          if (
-            p.productName &&
-            p.productName.toLowerCase().trim() === normName &&
-            p.date >= appliedFromDate &&
-            p.date <= appliedToDate
-          ) {
-            const matchingBatch = allBatches.find(
-              (b) =>
-                b.productName?.toLowerCase().trim() === normName &&
-                b.batchNumber === p.batchNumber,
-            );
+        for (let i = 0; i < productPurchases.length; i++) {
+          const p = productPurchases[i];
+          const pDate = extractDateOnly(p.date);
+          if (pDate >= appliedFromDate && pDate <= appliedToDate) {
+            const bNum = p.batchNumber ? String(p.batchNumber).trim() : "0";
+            const matchingBatch = batchByNumber.get(bNum);
             const desc = p.description || matchingBatch?.description || "";
             const isNil = matchingBatch?.isNil || false;
             const isCancelled = matchingBatch?.isCancelled || false;
@@ -935,7 +925,7 @@ export default function DailyExport() {
               id: p.id,
               date: p.date,
               type: "Addition",
-              qty: p.quantity,
+              qty: Number(p.quantity || 0),
               description: `Purchase (Supplier: ${p.supplierName}, Batch: ${p.batchNumber}${statusStr}${desc ? `, Desc: ${desc}` : ""})`,
               source: "purchase",
               isNil,
@@ -943,22 +933,15 @@ export default function DailyExport() {
               isDeadStock,
             });
           }
-        });
+        }
 
         // B. Manual Batches / Initial Stock (Stock Addition)
-        allBatches.forEach((b) => {
-          if (
-            b.productName &&
-            b.productName.toLowerCase().trim() === normName &&
-            b.date >= appliedFromDate &&
-            b.date <= appliedToDate
-          ) {
-            // Avoid double counting if this batch was created from a purchase
-            const hasPurchase = allPurchases.some(
-              (p) =>
-                p.productName?.toLowerCase().trim() === normName &&
-                p.batchNumber === b.batchNumber,
-            );
+        for (let i = 0; i < productBatches.length; i++) {
+          const b = productBatches[i];
+          const bDate = extractDateOnly(b.date);
+          if (bDate >= appliedFromDate && bDate <= appliedToDate) {
+            const bNum = b.batchNumber ? String(b.batchNumber).trim() : "0";
+            const hasPurchase = productIndex.purchaseBatchKeys.has(`${normName}:::${bNum}`);
             if (!hasPurchase) {
               const desc = b.description || "";
               const isNil = b.isNil || false;
@@ -975,7 +958,7 @@ export default function DailyExport() {
                 id: b.id,
                 date: b.date,
                 type: "Addition",
-                qty: b.quantity,
+                qty: Number(b.quantity || 0),
                 description: `Initial Stock / Manual Entry (Batch: ${b.batchNumber}, Supplier: ${b.supplier}${statusStr}${desc ? `, Desc: ${desc}` : ""})`,
                 source: "batch",
                 isNil,
@@ -984,88 +967,78 @@ export default function DailyExport() {
               });
             }
           }
-        });
+        }
 
         // C. Sales Recorded (Stock Subtraction) & Cancellations (Stock Addition)
-        allSales.forEach((s) => {
-          if (s.product && s.product.toLowerCase().trim() === normName) {
-            const matchingBatch = allBatches.find(
-              (b) =>
-                b.productName?.toLowerCase().trim() === normName ||
-                (s.batchNo && b.batchNumber === s.batchNo),
-            );
-            const desc =
-              s.description || s.remarks || matchingBatch?.description || "";
-            const isCancelled =
-              s.status === "Cancelled" || matchingBatch?.isCancelled || false;
-            const isNil = !isCancelled && (matchingBatch?.isNil || false);
-            const isDeadStock = matchingBatch?.isDeadStock || false;
-            const orderStatus = isCancelled
-              ? "Dead Stock"
-              : isNil
-                ? "Not next Folder"
-                : isDeadStock
-                  ? "Nil"
-                  : s.status;
+        for (let i = 0; i < productSales.length; i++) {
+          const s = productSales[i];
+          const bNum = s.batchNo ? String(s.batchNo).trim() : "";
+          const matchingBatch = bNum ? batchByNumber.get(bNum) : productBatches[0];
+          const desc =
+            s.description || s.remarks || matchingBatch?.description || "";
+          const isCancelled =
+            s.status === "Cancelled" || matchingBatch?.isCancelled || false;
+          const isNil = !isCancelled && (matchingBatch?.isNil || false);
+          const isDeadStock = matchingBatch?.isDeadStock || false;
+          const orderStatus = isCancelled
+            ? "Dead Stock"
+            : isNil
+              ? "Not next Folder"
+              : isDeadStock
+                ? "Nil"
+                : s.status;
 
-            // 1. Record the sale subtraction
-            if (
-              s.orderDate >= appliedFromDate &&
-              s.orderDate <= appliedToDate
-            ) {
+          const sDate = extractDateOnly(
+            s.orderDate || s.estimatedDeliveryDate || s.createdAt
+          );
+
+          // 1. Record the sale subtraction
+          if (sDate >= appliedFromDate && sDate <= appliedToDate) {
+            transactions.push({
+              id: s.id,
+              date: s.orderDate || sDate,
+              type: "Subtraction",
+              qty: Number(s.orderedQty || 0),
+              description: `Sale Recorded (Order: ${s.orderNo}, Customer: ${s.customer}, Batch: ${s.batchNo || "0"}, Status: ${orderStatus}${desc ? `, Desc: ${desc}` : ""})`,
+              source: "sale",
+              isNil,
+              isCancelled,
+              isDeadStock,
+            });
+          }
+
+          // 2. If cancelled, record the cancellation addition
+          if (s.status === "Cancelled") {
+            const cancelDate = extractDateOnly(s.updatedAt || s.orderDate);
+            if (cancelDate >= appliedFromDate && cancelDate <= appliedToDate) {
               transactions.push({
-                id: s.id,
-                date: s.orderDate,
-                type: "Subtraction",
-                qty: s.orderedQty,
-                description: `Sale Recorded (Order: ${s.orderNo}, Customer: ${s.customer}, Batch: ${s.batchNo || "0"}, Status: ${orderStatus}${desc ? `, Desc: ${desc}` : ""})`,
-                source: "sale",
-                isNil,
-                isCancelled,
-                isDeadStock,
+                id: `${s.id}-cancel`,
+                date: cancelDate,
+                type: "Addition",
+                qty: Number(s.orderedQty || 0),
+                description: `Sale Cancelled / Restored (Order: ${s.orderNo}, Customer: ${s.customer}, Status: Cancelled${desc ? `, Desc: ${desc}` : ""})`,
+                source: "challan_cancel",
+                isCancelled: true,
               });
             }
-            // 2. If cancelled, record the cancellation addition
-            if (s.status === "Cancelled") {
-              const cancelDate = s.updatedAt
-                ? s.updatedAt.slice(0, 10)
-                : s.orderDate;
-              if (
-                cancelDate >= appliedFromDate &&
-                cancelDate <= appliedToDate
-              ) {
-                transactions.push({
-                  id: `${s.id}-cancel`,
-                  date: cancelDate,
-                  type: "Addition",
-                  qty: s.orderedQty,
-                  description: `Sale Cancelled / Restored (Order: ${s.orderNo}, Customer: ${s.customer}, Status: Cancelled${desc ? `, Desc: ${desc}` : ""})`,
-                  source: "challan_cancel",
-                  isCancelled: true,
-                });
-              }
-            }
           }
-        });
+        }
 
         // D. Sales Returns (Stock Addition)
-        allSalesReturns.forEach((r) => {
-          if (
-            r.productName &&
-            r.productName.toLowerCase().trim() === normName &&
-            r.receiveDate >= appliedFromDate &&
-            r.receiveDate <= appliedToDate
-          ) {
+        for (let i = 0; i < productReturns.length; i++) {
+          const r = productReturns[i];
+          const rDate = extractDateOnly(r.receiveDate);
+          if (rDate >= appliedFromDate && rDate <= appliedToDate) {
             transactions.push({
               id: r.id,
               date: r.receiveDate,
               type: "Addition",
-              qty: r.quantity,
+              qty: Number(r.quantity || 0),
               description: `Sales Return (Client: ${r.clientName}, Batch: ${r.batchNo || "N/A"}, Notes: ${r.notes || ""})`,
               source: "sales_return",
             });
           }
-        });
+        }
 
         // Sort chronologically
         transactions.sort((a, b) => {
@@ -1076,41 +1049,24 @@ export default function DailyExport() {
 
         let totalAdditions = 0;
         let totalSubtractions = 0;
-        transactions.forEach((t) => {
+        for (let i = 0; i < transactions.length; i++) {
+          const t = transactions[i];
           if (t.type === "Addition") {
             totalAdditions += t.qty;
           } else {
             totalSubtractions += t.qty;
           }
-        });
+        }
 
         // Format sequence like "2+ 5- 4+"
         const sequence = transactions
           .map((t) => `${t.qty}${t.type === "Addition" ? "+" : "-"}`)
           .join(" ");
 
-        // Current total physical stock (Available + Display + Damage)
-        const currentAvailable = allBatches
-          .filter(
-            (b) =>
-              b.productName && b.productName.toLowerCase().trim() === normName,
-          )
-          .reduce(
-            (sum, b) =>
-              sum +
-              (b.availableQty || 0) +
-              (b.displayQty || 0) +
-              (b.damageQty || 0),
-            0,
-          );
-
-        const stockSnap = computeClosingStockForProduct({
+        const stockSnap = computeClosingStockForProductIndexed({
           normName,
           targetDate: appliedToDate,
-          allBatches,
-          allPurchases,
-          allSales,
-          allSalesReturns,
+          index: productIndex,
         });
 
         const details = transactions
@@ -1139,11 +1095,7 @@ export default function DailyExport() {
       })
       .sort((a, b) => a.productName.localeCompare(b.productName));
   }, [
-    allBatches,
-    allSales,
-    allPurchases,
-    allSalesReturns,
-    allChallans,
+    productIndex,
     appliedFromDate,
     appliedToDate,
   ]);
@@ -1152,17 +1104,11 @@ export default function DailyExport() {
   const allCategories = useMemo(() => {
     const cats = new Set<string>();
     CATEGORIES.forEach((c) => cats.add(c));
-    allBatches.forEach((b) => {
-      if (b.category?.trim()) cats.add(b.category.trim());
-    });
-    allSales.forEach((s) => {
-      if (s.category?.trim()) cats.add(s.category.trim());
-    });
-    allPurchases.forEach((p) => {
-      if (p.category?.trim()) cats.add(p.category.trim());
+    productIndex.productCategories.forEach((cat) => {
+      if (cat?.trim()) cats.add(cat.trim());
     });
     return Array.from(cats).sort((a, b) => a.localeCompare(b));
-  }, [allBatches, allSales, allPurchases]);
+  }, [productIndex]);
 
   // Comprehensive Category Report Data: Computes Opening, Sold, Purchased, Closing Available, Hold, Display, Damaged, Closing Total for each product
   const categoryReportData = useMemo(() => {
@@ -1174,12 +1120,10 @@ export default function DailyExport() {
       startDate: categoryStartDate,
       endDate: categoryEndDate,
       categoryFilter: selectedCategory,
+      index: productIndex,
     });
   }, [
-    allBatches,
-    allPurchases,
-    allSales,
-    allSalesReturns,
+    productIndex,
     selectedCategory,
     categoryStartDate,
     categoryEndDate,
