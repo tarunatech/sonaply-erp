@@ -43,7 +43,7 @@ export default function PendingDeliveries() {
   const [filter, setFilter] = useState("");
   const [selectedEstDate, setSelectedEstDate] = useState<string | null>(null);
   const [page, setPage] = useState(1);
-  const pageSize = 25;
+  const [pageSize, setPageSize] = useState(10);
   const { toast } = useToast();
   const [showChallanDialog, setShowChallanDialog] = useState(false);
   const [currentSale, setCurrentSale] = useState<Sale | null>(null);
@@ -566,7 +566,7 @@ export default function PendingDeliveries() {
 
   useEffect(() => {
     setPage(1);
-  }, [filter, selectedEstDate]);
+  }, [filter, selectedEstDate, pageSize]);
 
   const totalPages = Math.max(1, Math.ceil(groupedPendingDeliveries.length / pageSize));
 
@@ -695,7 +695,7 @@ export default function PendingDeliveries() {
 
       <Card>
         <CardContent className="p-0" id="pending-table">
-          <Table className="border-collapse border-2 border-slate-300 w-full" wrapperClassName="max-h-[calc(100vh-130px)] overflow-x-auto">
+          <Table className="border-collapse border-2 border-slate-300 w-full" wrapperClassName="max-h-[calc(100vh-210px)] overflow-x-auto">
             <TableHeader className="sticky top-0 bg-slate-100 z-10 shadow-2xs border-b-2 border-slate-300">
               <TableRow className="hover:bg-transparent">
                 <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-2.5 py-2.5 whitespace-nowrap">Date</TableHead>
@@ -925,24 +925,40 @@ export default function PendingDeliveries() {
                 })}
               </TableBody>
             </Table>
-            {groupedPendingDeliveries.length > pageSize && (
-              <div className="flex flex-wrap items-center justify-between p-3 border-t bg-slate-50 text-xs gap-2 no-print">
-                <span className="text-muted-foreground">
-                  Showing <strong>{(page - 1) * pageSize + 1}</strong> to{" "}
-                  <strong>{Math.min(page * pageSize, groupedPendingDeliveries.length)}</strong> of{" "}
-                  <strong>{groupedPendingDeliveries.length}</strong> pending orders
-                </span>
+            {groupedPendingDeliveries.length > 0 && (
+              <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between p-3 border-t bg-slate-50 text-xs gap-3 no-print shadow-xs">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="text-muted-foreground">
+                    Showing <strong>{(page - 1) * pageSize + 1}</strong> to{" "}
+                    <strong>{Math.min(page * pageSize, groupedPendingDeliveries.length)}</strong> of{" "}
+                    <strong>{groupedPendingDeliveries.length}</strong> pending orders
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-muted-foreground text-xs">Per page:</span>
+                    <Select value={String(pageSize)} onValueChange={(val) => { setPageSize(Number(val)); setPage(1); }}>
+                      <SelectTrigger className="h-7 w-[68px] text-xs bg-white">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="10">10</SelectItem>
+                        <SelectItem value="25">25</SelectItem>
+                        <SelectItem value="50">50</SelectItem>
+                        <SelectItem value="100">100</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
                 <div className="flex items-center gap-2">
                   <Button
                     variant="outline"
                     size="sm"
                     className="h-8 px-3"
                     onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    disabled={page === 1}
+                    disabled={page <= 1}
                   >
                     Previous
                   </Button>
-                  <span className="font-semibold text-slate-700">
+                  <span className="font-semibold text-slate-700 min-w-[75px] text-center">
                     Page {page} of {totalPages}
                   </span>
                   <Button

@@ -1898,8 +1898,8 @@ export default function SalesPage() {
                 ))}
               </TableBody>
             </Table>
-            {groupedSales.length > historyPageSize && (
-              <div className="flex flex-wrap items-center justify-between p-3 border-t bg-slate-50 text-xs gap-2 no-print">
+            {groupedSales.length > 0 && (
+              <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between p-3 border-t bg-slate-50 text-xs gap-2 no-print shadow-xs">
                 <span className="text-muted-foreground">
                   Showing <strong>{(historyPage - 1) * historyPageSize + 1}</strong> to{" "}
                   <strong>{Math.min(historyPage * historyPageSize, groupedSales.length)}</strong> of{" "}
@@ -1911,11 +1911,11 @@ export default function SalesPage() {
                     size="sm"
                     className="h-8 px-3"
                     onClick={() => setHistoryPage((p) => Math.max(1, p - 1))}
-                    disabled={historyPage === 1}
+                    disabled={historyPage <= 1}
                   >
                     Previous
                   </Button>
-                  <span className="font-semibold text-slate-700">
+                  <span className="font-semibold text-slate-700 min-w-[70px] text-center">
                     Page {historyPage} of {totalHistoryPages}
                   </span>
                   <Button
