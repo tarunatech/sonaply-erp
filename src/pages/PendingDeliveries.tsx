@@ -97,6 +97,19 @@ export default function PendingDeliveries() {
     setProducts(prod);
     setClients(cl);
 
+    // Pre-index active challans by salesId to optimize filtering from O(N*M) to O(N)
+    const activeChallansBySalesId = new Map<string, Challan[]>();
+    for (let i = 0; i < c.length; i++) {
+      const ch = c[i];
+      if (ch.isCancelled || !ch.salesId) continue;
+      let list = activeChallansBySalesId.get(ch.salesId);
+      if (!list) {
+        list = [];
+        activeChallansBySalesId.set(ch.salesId, list);
+      }
+      list.push(ch);
+    }
+
     // Filter sales to ONLY show those with unhandled pending quantities or pending P-xxxx draft challans
     const pendingSales = s.filter(sale => {
       if (sale.status === "Cancelled") return false;
@@ -104,7 +117,7 @@ export default function PendingDeliveries() {
       const salePendingQty = Math.max(0, (sale.orderedQty || 0) - (sale.deliveredQty || 0));
       if (salePendingQty <= 0 && (!sale.pendingQty || sale.pendingQty <= 0)) return false;
 
-      const saleChallans = c.filter(ch => ch.salesId === sale.id && !ch.isCancelled);
+      const saleChallans = activeChallansBySalesId.get(sale.id) || [];
 
       // Check if there is a P-xxxx challan waiting in Pending state
       const hasPendingPChallan = saleChallans.some(

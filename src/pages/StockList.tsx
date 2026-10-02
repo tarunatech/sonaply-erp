@@ -767,10 +767,10 @@ export default function StockList() {
 
   const refreshCategories = useCallback(async () => {
     try {
-      const bList = await getBatches();
+      const distinctCats = await getDistinctColumnValues("category");
       const list = new Set<string>();
-      bList.forEach((b) => {
-        if (b.category) list.add(b.category);
+      distinctCats.forEach((c) => {
+        if (c.value) list.add(c.value);
       });
       CATEGORIES.forEach((c) => list.add(c));
       setAllCategories(Array.from(list).sort());
@@ -818,7 +818,7 @@ export default function StockList() {
           soldStartDate: isPeriodFilterActive ? soldStartDate : undefined,
           soldEndDate: isPeriodFilterActive ? soldEndDate : undefined,
         }),
-        getSales(),
+        getSales({ pendingOnly: true }),
       ]);
       setBatches(res.data);
       setTotal(res.total);

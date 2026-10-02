@@ -11,6 +11,13 @@ const pool = new Pool({
   database: process.env.DB_NAME || 'plywood_erp',
   password: process.env.DB_PASSWORD || 'password',
   port: process.env.DB_PORT || 5432,
+  max: 25,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
+});
+
+pool.on('error', (err) => {
+  console.error('Unexpected error on idle database client', err);
 });
 
 module.exports = {

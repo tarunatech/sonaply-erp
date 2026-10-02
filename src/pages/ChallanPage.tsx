@@ -226,11 +226,19 @@ export default function ChallanPage() {
       });
   }, [challans, sales]);
 
+  const salesMap = useMemo(() => {
+    const map = new Map<string, Sale>();
+    for (let i = 0; i < sales.length; i++) {
+      map.set(sales[i].id, sales[i]);
+    }
+    return map;
+  }, [sales]);
+
   const filteredGroupedChallans = useMemo(() => {
     if (!filter) return groupedChallans;
     const f = filter.toLowerCase();
     return groupedChallans.filter(g => {
-      const orderNo = sales.find(s => s.id === g.salesId)?.orderNo || "";
+      const orderNo = salesMap.get(g.salesId)?.orderNo || "";
       const currentBill = (billInputs[g.challanNo] ?? g.billNo ?? "").toLowerCase();
       return (g.challanNo || '').toLowerCase().includes(f) ||
              (g.customer || '').toLowerCase().includes(f) ||
@@ -238,13 +246,27 @@ export default function ChallanPage() {
              currentBill.includes(f) ||
              g.items.some(item => (item.product || '').toLowerCase().includes(f));
     });
-  }, [groupedChallans, filter, sales, billInputs]);
+  }, [groupedChallans, filter, salesMap, billInputs]);
+
+  const [challanPage, setChallanPage] = useState(1);
+  const challanPageSize = 25;
+
+  useEffect(() => {
+    setChallanPage(1);
+  }, [filter]);
+
+  const totalChallanPages = Math.max(1, Math.ceil(filteredGroupedChallans.length / challanPageSize));
+
+  const paginatedGroupedChallans = useMemo(() => {
+    const start = (challanPage - 1) * challanPageSize;
+    return filteredGroupedChallans.slice(start, start + challanPageSize);
+  }, [filteredGroupedChallans, challanPage, challanPageSize]);
 
   const filteredChallansForExport = useMemo(() => {
     if (!filter) return challans;
     const f = filter.toLowerCase();
     return challans.filter(c => {
-      const sale = sales.find(s => s.id === c.salesId);
+      const sale = salesMap.get(c.salesId);
       const orderNo = sale?.orderNo || "";
       return (c.customer || '').toLowerCase().includes(f) ||
              (c.product || '').toLowerCase().includes(f) ||
@@ -252,7 +274,7 @@ export default function ChallanPage() {
              (c.billNo || '').toLowerCase().includes(f) ||
              orderNo.toLowerCase().includes(f);
     });
-  }, [challans, sales, filter]);
+  }, [challans, salesMap, filter]);
 
   const handleBillNoSave = async (challanNo: string, val: string) => {
     try {
@@ -614,7 +636,7 @@ export default function ChallanPage() {
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filteredGroupedChallans.map((group) => {
+                  paginatedGroupedChallans.map((group) => {
                     const currentBillValue = billInputs[group.challanNo] !== undefined
                       ? billInputs[group.challanNo]
                       : (group.billNo || "");
@@ -848,6 +870,38 @@ export default function ChallanPage() {
                 )}
               </TableBody>
             </Table>
+            {filteredGroupedChallans.length > challanPageSize && (
+              <div className="flex flex-wrap items-center justify-between p-3 border-t bg-slate-50 text-xs gap-2">
+                <span className="text-muted-foreground">
+                  Showing <strong>{(challanPage - 1) * challanPageSize + 1}</strong> to{" "}
+                  <strong>{Math.min(challanPage * challanPageSize, filteredGroupedChallans.length)}</strong> of{" "}
+                  <strong>{filteredGroupedChallans.length}</strong> delivery challans
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 px-3"
+                    onClick={() => setChallanPage((p) => Math.max(1, p - 1))}
+                    disabled={challanPage === 1}
+                  >
+                    Previous
+                  </Button>
+                  <span className="font-semibold text-slate-700">
+                    Page {challanPage} of {totalChallanPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 px-3"
+                    onClick={() => setChallanPage((p) => Math.min(totalChallanPages, p + 1))}
+                    disabled={challanPage >= totalChallanPages}
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
+            )}
         </CardContent>
       </Card>
       <Dialog open={confirmDeliverGroup !== null} onOpenChange={(open) => !open && !isDelivering && setConfirmDeliverGroup(null)}>

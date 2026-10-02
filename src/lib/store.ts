@@ -586,9 +586,24 @@ export const releaseHold = (id: string) =>
 export const cancelHold = (id: string) =>
   request(`/holds/cancel/${id}`, { method: "DELETE" });
 
+// Dashboard
+export interface DashboardStats {
+  totalStock: number;
+  pendingDeliveries: number;
+  todaySales: number;
+  todayPurchases: number;
+  todayChallans: number;
+  catDist: { name: string; value: number }[];
+  monthlySales: { month: string; sales: number }[];
+}
+
+export const getDashboardStats = () => request<DashboardStats>("/dashboard/stats");
+
 // Sales
-export const getSales = async () =>
-  (await request<any[]>("/sales")).map(mapSale);
+export const getSales = async (options?: { pendingOnly?: boolean }) => {
+  const query = options?.pendingOnly ? "?pendingOnly=true" : "";
+  return (await request<any[]>(`/sales${query}`)).map(mapSale);
+};
 export const addSale = (
   s: Omit<Sale, "id" | "pendingQty" | "deliveredQty" | "orderNo"> & { status?: string },
 ) => {

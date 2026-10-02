@@ -1233,6 +1233,20 @@ export default function DailyExport() {
     return list;
   }, [ledgerData, selectedCategory, searchQuery]);
 
+  const [ledgerPage, setLedgerPage] = useState(1);
+  const ledgerPageSize = 50;
+
+  useEffect(() => {
+    setLedgerPage(1);
+  }, [searchQuery, selectedCategory, appliedFromDate, appliedToDate]);
+
+  const totalLedgerPages = Math.max(1, Math.ceil(filteredLedger.length / ledgerPageSize));
+
+  const paginatedLedger = useMemo(() => {
+    const start = (ledgerPage - 1) * ledgerPageSize;
+    return filteredLedger.slice(start, start + ledgerPageSize);
+  }, [filteredLedger, ledgerPage, ledgerPageSize]);
+
   // Find the selected product's calculated details live so modal stays synced after deletes
   const selectedProductLedger = useMemo(() => {
     if (!activeLedgerProduct) return null;
@@ -1945,7 +1959,7 @@ export default function DailyExport() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filteredLedger.map((item) => (
+                    paginatedLedger.map((item) => (
                       <TableRow
                         key={item.productName}
                         className={`transition-colors ${
@@ -2010,9 +2024,37 @@ export default function DailyExport() {
                 </TableBody>
               </Table>
             </div>
-            <div className="p-2.5 bg-muted/20 text-xs text-muted-foreground border-t text-right">
-              Showing {filteredLedger.length} of {ledgerData.length} unique
-              products
+            <div className="flex flex-wrap items-center justify-between p-2.5 bg-muted/20 text-xs text-muted-foreground border-t gap-2">
+              <span>
+                Showing <strong>{filteredLedger.length === 0 ? 0 : (ledgerPage - 1) * ledgerPageSize + 1}</strong> to{" "}
+                <strong>{Math.min(ledgerPage * ledgerPageSize, filteredLedger.length)}</strong> of{" "}
+                <strong>{filteredLedger.length}</strong> unique products
+              </span>
+              {filteredLedger.length > ledgerPageSize && (
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2.5 text-xs"
+                    onClick={() => setLedgerPage((p) => Math.max(1, p - 1))}
+                    disabled={ledgerPage === 1}
+                  >
+                    Previous
+                  </Button>
+                  <span className="font-semibold text-slate-700">
+                    Page {ledgerPage} of {totalLedgerPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2.5 text-xs"
+                    onClick={() => setLedgerPage((p) => Math.min(totalLedgerPages, p + 1))}
+                    disabled={ledgerPage >= totalLedgerPages}
+                  >
+                    Next
+                  </Button>
+                </div>
+              )}
             </div>
           </div>
         </CardContent>

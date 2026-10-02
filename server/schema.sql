@@ -178,5 +178,8 @@ CREATE INDEX IF NOT EXISTS idx_holds_client_name ON holds(LOWER(TRIM(client_name
 CREATE INDEX IF NOT EXISTS idx_holds_status ON holds(status);
 CREATE INDEX IF NOT EXISTS idx_purchases_prod_batch ON purchases(LOWER(TRIM(product_name)), LOWER(TRIM(batch_number)));
 CREATE INDEX IF NOT EXISTS idx_purchases_date ON purchases(date DESC);
+CREATE INDEX IF NOT EXISTS idx_challans_status_active ON challans(status, is_cancelled) WHERE is_cancelled = FALSE;
+CREATE INDEX IF NOT EXISTS idx_sales_pending_status ON sales(status, pending_qty) WHERE status != 'Cancelled';
 CREATE INDEX IF NOT EXISTS idx_challan_notes_status ON challan_notes(status);
 CREATE INDEX IF NOT EXISTS idx_challan_notes_created_at ON challan_notes(created_at DESC);
+
