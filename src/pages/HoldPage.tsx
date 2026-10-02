@@ -249,8 +249,8 @@ export default function HoldPage() {
                 )}
               </TableBody>
             </Table>
-            {filteredHolds.length > pageSize && (
-              <div className="flex flex-wrap items-center justify-between p-3 border-t bg-slate-50 text-xs gap-2 no-print">
+            {filteredHolds.length > 0 && (
+              <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between p-3 border-t bg-slate-50 text-xs gap-2 no-print shadow-xs">
                 <span className="text-muted-foreground">
                   Showing <strong>{(page - 1) * pageSize + 1}</strong> to{" "}
                   <strong>{Math.min(page * pageSize, filteredHolds.length)}</strong> of{" "}
@@ -262,11 +262,11 @@ export default function HoldPage() {
                     size="sm"
                     className="h-8 px-3"
                     onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    disabled={page === 1}
+                    disabled={page <= 1}
                   >
                     Previous
                   </Button>
-                  <span className="font-semibold text-slate-700">
+                  <span className="font-semibold text-slate-700 min-w-[70px] text-center">
                     Page {page} of {totalPages}
                   </span>
                   <Button
