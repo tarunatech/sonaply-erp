@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { getChallans, getSales, exportCSV, getBatches, Challan, Sale, StockBatch, formatLocalDate, getLocalDateString } from "@/lib/store";
+import { getChallans, getSales, exportCSV, Challan, Sale, formatLocalDate, getLocalDateString } from "@/lib/store";
 import { format } from "date-fns";
 import { printElement } from "@/lib/print";
 import { Card, CardContent } from "@/components/ui/card";
@@ -26,23 +26,29 @@ export default function DeliveredDeliveries() {
   const navigate = useNavigate();
   const [challans, setChallans] = useState<Challan[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
-  const [batches, setBatches] = useState<StockBatch[]>([]);
   const [filter, setFilter] = useState("");
 
   const refresh = useCallback(async () => {
-    const [c, s, b] = await Promise.all([getChallans(), getSales(), getBatches()]);
+    const [c, s] = await Promise.all([getChallans(), getSales()]);
     // Only include non-cancelled Delivered challans with quantity > 0
     setChallans(c.filter(challan => challan.status === "Delivered" && !challan.isCancelled && Number(challan.quantity) > 0));
     setSales(s);
-    setBatches(b);
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
 
+  const salesMap = useMemo(() => {
+    const map = new Map<string, Sale>();
+    for (let i = 0; i < sales.length; i++) {
+      map.set(sales[i].id, sales[i]);
+    }
+    return map;
+  }, [sales]);
+
   const filteredChallans = useMemo(() => {
     const sorted = [...challans].sort((a, b) => {
-      const saleA = sales.find(s => s.id === a.salesId);
-      const saleB = sales.find(s => s.id === b.salesId);
+      const saleA = salesMap.get(a.salesId);
+      const saleB = salesMap.get(b.salesId);
       const dateA = saleA?.updatedAt || a.createdAt || "";
       const dateB = saleB?.updatedAt || b.createdAt || "";
       const dateCompare = dateB.localeCompare(dateA);
@@ -52,14 +58,14 @@ export default function DeliveredDeliveries() {
     if (!filter) return sorted;
     const f = filter.toLowerCase();
     return sorted.filter(c => {
-      const sale = sales.find(s => s.id === c.salesId);
+      const sale = salesMap.get(c.salesId);
       const orderNo = sale?.orderNo || "";
       return (c.customer || '').toLowerCase().includes(f) ||
              (c.product || '').toLowerCase().includes(f) ||
              (c.challanNo || '').toLowerCase().includes(f) ||
              orderNo.toLowerCase().includes(f);
     });
-  }, [challans, sales, filter]);
+  }, [challans, salesMap, filter]);
 
   const groupedChallans = useMemo(() => {
     const groups: Record<string, Challan[]> = {};

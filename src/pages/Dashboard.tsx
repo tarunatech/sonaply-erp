@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { getBatches, getSales, getPurchases, CATEGORIES, getLocalDateString } from "@/lib/store";
+import { getDashboardStats, DashboardStats } from "@/lib/store";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from "recharts";
 import { Package, Clock, TrendingUp, ShoppingCart, FileText } from "lucide-react";
@@ -9,44 +9,15 @@ const COLORS = ["hsl(213,94%,48%)", "hsl(142,76%,36%)", "hsl(25,95%,53%)", "hsl(
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<DashboardStats | null>(null);
 
   const refreshData = useCallback(async () => {
-    const [batches, sales, purchases] = await Promise.all([
-      getBatches(), getSales(), getPurchases()
-    ]);
-    const today = getLocalDateString();
-
-    const totalStock = batches.reduce((s, b) => s + (b.availableQty || 0), 0);
-
-    // Exclude Cancelled orders from pending deliveries
-    const pendingDeliveriesCount = sales.filter(s =>
-      s.status !== 'Delivered' && s.status !== 'Cancelled' && (s.pendingQty ?? 0) > 0
-    ).length;
-
-    const todaySales = sales.filter(s => s.orderDate === today).reduce((a, s) => a + (s.totalPrice || 0), 0);
-    const todayPurchases = purchases.filter(p => p.date === today).reduce((a, p) => a + (p.totalAmount || 0), 0);
-
-    // Use total batch quantity (not availableQty) so chart shows data even after stock is delivered
-    const catDist = CATEGORIES.map(c => ({
-      name: c,
-      value: batches.filter(b => b.category === c).reduce((s, b) => s + (b.quantity || 0), 0)
-    })).filter(c => c.value > 0);
-
-    const res = await fetch('/api/challans');
-    const challans = await res.json();
-    const todayChallans = challans.filter((c: any) =>
-      (c.created_at || '').slice(0, 10) === today && !c.is_cancelled
-    ).length;
-
-    const months: Record<string, number> = {};
-    sales.forEach(s => {
-      const m = (s.orderDate || '').slice(0, 7);
-      if (m) months[m] = (months[m] || 0) + (s.totalPrice || 0);
-    });
-    const monthlySales = Object.entries(months).sort().slice(-6).map(([m, v]) => ({ month: m, sales: v }));
-
-    setData({ totalStock, pendingDeliveries: pendingDeliveriesCount, todaySales, todayPurchases, todayChallans, catDist, monthlySales });
+    try {
+      const stats = await getDashboardStats();
+      setData(stats);
+    } catch (err) {
+      console.error("Failed to load dashboard stats:", err);
+    }
   }, []);
 
   useEffect(() => {

@@ -188,6 +188,20 @@ export default function PurchasePage() {
     return result;
   }, [filteredPurchases]);
 
+  const [historyPage, setHistoryPage] = useState(1);
+  const historyPageSize = 10;
+
+  useEffect(() => {
+    setHistoryPage(1);
+  }, [purchaseFilter]);
+
+  const totalHistoryPages = Math.max(1, Math.ceil(supplierGroups.length / historyPageSize));
+
+  const paginatedSupplierGroups = useMemo(() => {
+    const start = (historyPage - 1) * historyPageSize;
+    return supplierGroups.slice(start, start + historyPageSize);
+  }, [supplierGroups, historyPage, historyPageSize]);
+
   const toggleSupplier = (supplierName: string) => {
     setExpandedSuppliers(prev => ({
       ...prev,
@@ -895,7 +909,7 @@ export default function PurchasePage() {
                         </TableCell>
                       </TableRow>
                     ) : (
-                      supplierGroups.map(sg => {
+                      paginatedSupplierGroups.map(sg => {
                         const isSupplierExpanded = !!expandedSuppliers[sg.supplierName];
                         
                         return (
@@ -1012,6 +1026,38 @@ export default function PurchasePage() {
                   </TableBody>
                 </Table>
               </div>
+              {supplierGroups.length > historyPageSize && (
+                <div className="flex flex-wrap items-center justify-between p-3 border-t bg-slate-50 text-xs gap-2">
+                  <span className="text-muted-foreground">
+                    Showing <strong>{(historyPage - 1) * historyPageSize + 1}</strong> to{" "}
+                    <strong>{Math.min(historyPage * historyPageSize, supplierGroups.length)}</strong> of{" "}
+                    <strong>{supplierGroups.length}</strong> suppliers
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 px-3"
+                      onClick={() => setHistoryPage((p) => Math.max(1, p - 1))}
+                      disabled={historyPage === 1}
+                    >
+                      Previous
+                    </Button>
+                    <span className="font-semibold text-slate-700">
+                      Page {historyPage} of {totalHistoryPages}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 px-3"
+                      onClick={() => setHistoryPage((p) => Math.min(totalHistoryPages, p + 1))}
+                      disabled={historyPage >= totalHistoryPages}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

@@ -757,8 +757,10 @@ async function migrate() {
     await db.query(`CREATE INDEX IF NOT EXISTS idx_holds_status ON holds(status)`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_purchases_prod_batch ON purchases(LOWER(TRIM(product_name)), LOWER(TRIM(batch_number)))`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_purchases_date ON purchases(date DESC)`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_challan_notes_status ON challan_notes(status)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_challans_notes_status ON challan_notes(status)`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_challan_notes_created_at ON challan_notes(created_at DESC)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_challans_status_active ON challans(status, is_cancelled) WHERE is_cancelled = FALSE`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_sales_pending_status ON sales(status, pending_qty) WHERE status != 'Cancelled'`);
 
     // 14. Sync products table from existing batches, purchases, and sales
     console.log('Step 14: Syncing products table from batches, purchases, and sales...');

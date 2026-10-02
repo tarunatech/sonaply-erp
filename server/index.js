@@ -1,10 +1,12 @@
 const express = require("express");
 const cors = require("cors");
+const compression = require("compression");
 const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 const db = require("./db");
 
 const app = express();
+app.use(compression());
 app.use(cors());
 app.use(express.json());
 
@@ -272,24 +274,15 @@ async function ensureDisplayQtyAndStockCategory() {
   await db.query(
     "ALTER TABLE challans ADD COLUMN IF NOT EXISTS stock_category TEXT DEFAULT 'Available'",
   );
-  await db.query(
-    "UPDATE batches SET batch_number = '0' WHERE batch_number IS NULL OR batch_number = '' OR TRIM(batch_number) = ''",
-  );
-  await db.query(
-    "UPDATE purchases SET batch_number = '0' WHERE batch_number IS NULL OR batch_number = '' OR TRIM(batch_number) = ''",
-  );
   try {
-    const allProds = await db.query(
-      "SELECT DISTINCT product_name FROM batches",
+    await db.query(
+      "UPDATE batches SET batch_number = '0' WHERE batch_number IS NULL OR batch_number = '' OR TRIM(batch_number) = ''",
     );
-    for (const p of allProds.rows) {
-      if (p.product_name) {
-        await resolveNegativeStock(p.product_name);
-      }
-    }
-    await reconcileAllProductStocks();
+    await db.query(
+      "UPDATE purchases SET batch_number = '0' WHERE batch_number IS NULL OR batch_number = '' OR TRIM(batch_number) = ''",
+    );
   } catch (e) {
-    console.error("Batch reconciliation failed:", e.message);
+    console.error("Batch setup check failed:", e.message);
   }
 }
 
@@ -1467,13 +1460,13 @@ async function resolveNegativeStock(productName) {
 
 async function reconcileAllProductStocks(productName) {
   try {
-    let pQuery =
-      "SELECT id, product_name, batch_number, quantity, display_qty, damage_qty, hold_qty FROM batches";
-    let pParams = [];
-    if (productName && productName.trim()) {
-      pQuery += " WHERE LOWER(TRIM(product_name)) = LOWER(TRIM($1))";
-      pParams.push(productName.trim());
+    if (!productName || !productName.trim()) {
+      return; // Safeguard against unbounded full-database scans
     }
+    const cleanProduct = productName.trim();
+    const pQuery =
+      "SELECT id, product_name, batch_number, quantity, display_qty, damage_qty, hold_qty FROM batches WHERE LOWER(TRIM(product_name)) = LOWER(TRIM($1))";
+    const pParams = [cleanProduct];
     const allBatches = await db.query(pQuery, pParams);
 
     for (const b of allBatches.rows) {
@@ -1526,13 +1519,79 @@ async function reconcileAllProductStocks(productName) {
   }
 }
 
+// --- Dashboard Stats ---
+app.get("/api/dashboard/stats", async (req, res) => {
+  try {
+    const [
+      totalStockRes,
+      pendingRes,
+      todaySalesRes,
+      todayPurchasesRes,
+      todayChallansRes,
+      catDistRes,
+      monthlySalesRes,
+    ] = await Promise.all([
+      db.query("SELECT COALESCE(SUM(available_qty), 0) as total FROM batches"),
+      db.query(
+        "SELECT COUNT(*) as count FROM sales WHERE status != 'Delivered' AND status != 'Cancelled' AND COALESCE(pending_qty, 0) > 0"
+      ),
+      db.query(
+        "SELECT COALESCE(SUM(total_price), 0) as total FROM sales WHERE order_date = CURRENT_DATE AND status != 'Cancelled'"
+      ),
+      db.query(
+        "SELECT COALESCE(SUM(total_amount), 0) as total FROM purchases WHERE date = CURRENT_DATE"
+      ),
+      db.query(
+        "SELECT COUNT(*) as count FROM challans WHERE created_at = CURRENT_DATE AND is_cancelled = FALSE"
+      ),
+      db.query(`
+        SELECT category as name, COALESCE(SUM(quantity), 0) as value 
+        FROM batches 
+        WHERE category IS NOT NULL AND TRIM(category) != '' 
+        GROUP BY category 
+        HAVING SUM(quantity) > 0
+        ORDER BY value DESC
+      `),
+      db.query(`
+        SELECT TO_CHAR(order_date, 'YYYY-MM') as month, COALESCE(SUM(total_price), 0) as sales
+        FROM sales
+        WHERE order_date IS NOT NULL AND status != 'Cancelled'
+        GROUP BY TO_CHAR(order_date, 'YYYY-MM')
+        ORDER BY month DESC
+        LIMIT 6
+      `),
+    ]);
+
+    res.json({
+      totalStock: Number(totalStockRes.rows[0]?.total || 0),
+      pendingDeliveries: Number(pendingRes.rows[0]?.count || 0),
+      todaySales: Number(todaySalesRes.rows[0]?.total || 0),
+      todayPurchases: Number(todayPurchasesRes.rows[0]?.total || 0),
+      todayChallans: Number(todayChallansRes.rows[0]?.count || 0),
+      catDist: catDistRes.rows.map((r) => ({
+        name: r.name,
+        value: Number(r.value),
+      })),
+      monthlySales: monthlySalesRes.rows
+        .reverse()
+        .map((r) => ({ month: r.month, sales: Number(r.sales) })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- Sales ---
 
 app.get("/api/sales", async (req, res) => {
   try {
-    const result = await db.query(
-      "SELECT * FROM sales ORDER BY order_date DESC, created_at DESC",
-    );
+    const { pendingOnly } = req.query;
+    let query = "SELECT * FROM sales";
+    if (pendingOnly === "true") {
+      query += " WHERE status != 'Delivered' AND status != 'Cancelled' AND COALESCE(pending_qty, 0) > 0";
+    }
+    query += " ORDER BY order_date DESC, created_at DESC";
+    const result = await db.query(query);
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
