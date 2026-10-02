@@ -42,6 +42,8 @@ export default function PendingDeliveries() {
   const [clients, setClients] = useState<Client[]>([]);
   const [filter, setFilter] = useState("");
   const [selectedEstDate, setSelectedEstDate] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const pageSize = 25;
   const { toast } = useToast();
   const [showChallanDialog, setShowChallanDialog] = useState(false);
   const [currentSale, setCurrentSale] = useState<Sale | null>(null);
@@ -563,6 +565,17 @@ export default function PendingDeliveries() {
   }, [filteredSales, challans, batches]);
 
   useEffect(() => {
+    setPage(1);
+  }, [filter, selectedEstDate]);
+
+  const totalPages = Math.max(1, Math.ceil(groupedPendingDeliveries.length / pageSize));
+
+  const paginatedPendingDeliveries = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return groupedPendingDeliveries.slice(start, start + pageSize);
+  }, [groupedPendingDeliveries, page, pageSize]);
+
+  useEffect(() => {
     if (groupedPendingDeliveries.length > 0) {
       const missingChallans = groupedPendingDeliveries.filter(g => !g.challanNo && g.salesItems.length > 0);
       if (missingChallans.length > 0) {
@@ -697,7 +710,7 @@ export default function PendingDeliveries() {
               </TableRow>
             </TableHeader>
               <TableBody>
-                {groupedPendingDeliveries.length === 0 ? (
+                {paginatedPendingDeliveries.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={9} className="border-2 border-slate-300 text-center text-muted-foreground py-8">
                       {selectedEstDate || filter
@@ -705,7 +718,7 @@ export default function PendingDeliveries() {
                         : "No pending deliveries!"}
                     </TableCell>
                   </TableRow>
-                ) : groupedPendingDeliveries.map(group => {
+                ) : paginatedPendingDeliveries.map(group => {
                   const estDate = group.salesItems.find(i => i.sale.estimatedDeliveryDate)?.sale.estimatedDeliveryDate || null;
                   const isRawOrderNo = group.orderNo.startsWith("ORD-");
                   const displayChallanNo = group.challanNo || (isRawOrderNo ? "P--" : group.orderNo);
@@ -912,6 +925,38 @@ export default function PendingDeliveries() {
                 })}
               </TableBody>
             </Table>
+            {groupedPendingDeliveries.length > pageSize && (
+              <div className="flex flex-wrap items-center justify-between p-3 border-t bg-slate-50 text-xs gap-2 no-print">
+                <span className="text-muted-foreground">
+                  Showing <strong>{(page - 1) * pageSize + 1}</strong> to{" "}
+                  <strong>{Math.min(page * pageSize, groupedPendingDeliveries.length)}</strong> of{" "}
+                  <strong>{groupedPendingDeliveries.length}</strong> pending orders
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 px-3"
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page === 1}
+                  >
+                    Previous
+                  </Button>
+                  <span className="font-semibold text-slate-700">
+                    Page {page} of {totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 px-3"
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={page >= totalPages}
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
+            )}
         </CardContent>
       </Card>
 

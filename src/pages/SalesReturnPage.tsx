@@ -74,6 +74,8 @@ export default function SalesReturnPage() {
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
   const [editingReturn, setEditingReturn] = useState<SaleReturn | null>(null);
   const [filter, setFilter] = useState("");
+  const [returnPage, setReturnPage] = useState(1);
+  const returnPageSize = 25;
   const [activeTab, setActiveTab] = useState("new");
 
   const handleDelete = async (id: string) => {
@@ -148,6 +150,17 @@ export default function SalesReturnPage() {
       (r.notes || '').toLowerCase().includes(q)
     );
   }, [returns, filter]);
+
+  useEffect(() => {
+    setReturnPage(1);
+  }, [filter]);
+
+  const totalReturnPages = Math.max(1, Math.ceil(filteredReturns.length / returnPageSize));
+
+  const paginatedReturns = useMemo(() => {
+    const start = (returnPage - 1) * returnPageSize;
+    return filteredReturns.slice(start, start + returnPageSize);
+  }, [filteredReturns, returnPage, returnPageSize]);
 
   const filteredClients = useMemo(() => {
     const q = clientName.toLowerCase().trim();
@@ -640,9 +653,9 @@ export default function SalesReturnPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredReturns.length === 0 ? (
+                  {paginatedReturns.length === 0 ? (
                     <TableRow><TableCell colSpan={9} className="border-2 border-slate-300 text-center text-muted-foreground py-8">No sales returns found</TableCell></TableRow>
-                  ) : filteredReturns.map(item => (
+                  ) : paginatedReturns.map(item => (
                     <TableRow key={item.id} className="hover:bg-slate-50/40">
                       <TableCell className="border-2 border-slate-300 px-4 py-3 text-sm text-slate-700 font-medium whitespace-nowrap">
                         {item.receiveDate ? format(new Date(item.receiveDate), 'dd-MM-yyyy') : "-"}
@@ -767,6 +780,38 @@ export default function SalesReturnPage() {
                   ))}
                 </TableBody>
               </Table>
+              {filteredReturns.length > returnPageSize && (
+                <div className="flex flex-wrap items-center justify-between p-3 border-t bg-slate-50 text-xs gap-2 no-print">
+                  <span className="text-muted-foreground">
+                    Showing <strong>{(returnPage - 1) * returnPageSize + 1}</strong> to{" "}
+                    <strong>{Math.min(returnPage * returnPageSize, filteredReturns.length)}</strong> of{" "}
+                    <strong>{filteredReturns.length}</strong> return records
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 px-3"
+                      onClick={() => setReturnPage((p) => Math.max(1, p - 1))}
+                      disabled={returnPage === 1}
+                    >
+                      Previous
+                    </Button>
+                    <span className="font-semibold text-slate-700">
+                      Page {returnPage} of {totalReturnPages}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 px-3"
+                      onClick={() => setReturnPage((p) => Math.min(totalReturnPages, p + 1))}
+                      disabled={returnPage >= totalReturnPages}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

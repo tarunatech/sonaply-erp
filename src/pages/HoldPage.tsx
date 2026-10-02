@@ -28,6 +28,8 @@ export default function HoldPage() {
   const [holds, setHolds] = useState<Hold[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const pageSize = 25;
   const { toast } = useToast();
 
   const fetchHolds = async () => {
@@ -116,6 +118,17 @@ export default function HoldPage() {
     );
   }, [groupedHolds, search]);
 
+  useEffect(() => {
+    setPage(1);
+  }, [search]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredHolds.length / pageSize));
+
+  const paginatedHolds = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filteredHolds.slice(start, start + pageSize);
+  }, [filteredHolds, page, pageSize]);
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -158,7 +171,7 @@ export default function HoldPage() {
                     <TableCell colSpan={6} className="border-2 border-slate-300 text-center py-8 text-muted-foreground">No active holds found.</TableCell>
                   </TableRow>
                 ) : (
-                  filteredHolds.map((h) => (
+                  paginatedHolds.map((h) => (
                     <TableRow key={h.id} className="hover:bg-slate-50/40">
                       <TableCell className="border-2 border-slate-300 px-4 py-3 text-sm text-slate-700 font-medium whitespace-nowrap">
                         {formatLocalDate(h.holdDate)}
@@ -236,6 +249,38 @@ export default function HoldPage() {
                 )}
               </TableBody>
             </Table>
+            {filteredHolds.length > pageSize && (
+              <div className="flex flex-wrap items-center justify-between p-3 border-t bg-slate-50 text-xs gap-2 no-print">
+                <span className="text-muted-foreground">
+                  Showing <strong>{(page - 1) * pageSize + 1}</strong> to{" "}
+                  <strong>{Math.min(page * pageSize, filteredHolds.length)}</strong> of{" "}
+                  <strong>{filteredHolds.length}</strong> active holds
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 px-3"
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page === 1}
+                  >
+                    Previous
+                  </Button>
+                  <span className="font-semibold text-slate-700">
+                    Page {page} of {totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 px-3"
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={page >= totalPages}
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
+            )}
         </CardContent>
       </Card>
     </div>
