@@ -133,6 +133,8 @@ export default function SalesPage() {
   }, [items.length]);
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
   const [productFilter, setProductFilter] = useState('');
+  const [historyPage, setHistoryPage] = useState(1);
+  const historyPageSize = 25;
   const [showClientSuggestions, setShowClientSuggestions] = useState(false);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [allClients, setAllClients] = useState<Client[]>([]);
@@ -405,6 +407,17 @@ export default function SalesPage() {
       })
       .sort((a, b) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime());
   }, [filteredSales]);
+
+  useEffect(() => {
+    setHistoryPage(1);
+  }, [productFilter]);
+
+  const totalHistoryPages = Math.max(1, Math.ceil(groupedSales.length / historyPageSize));
+
+  const paginatedGroupedSales = useMemo(() => {
+    const start = (historyPage - 1) * historyPageSize;
+    return groupedSales.slice(start, start + historyPageSize);
+  }, [groupedSales, historyPage, historyPageSize]);
 
   useEffect(() => scrollToSelected(suggestionContainerRef, selectedSuggestionIndex), [selectedSuggestionIndex]);
   
@@ -1731,11 +1744,11 @@ export default function SalesPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {groupedSales.length === 0 ? (
+                {paginatedGroupedSales.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={8} className="border-2 border-slate-300 text-center text-muted-foreground py-8">No sales records found</TableCell>
                   </TableRow>
-                ) : groupedSales.map(group => (
+                ) : paginatedGroupedSales.map(group => (
                   <TableRow key={group.orderNo} className="hover:bg-slate-50/40">
                     <TableCell className="border-2 border-slate-300 px-4 py-3 text-sm text-slate-700 font-medium whitespace-nowrap">
                       {group.orderDate ? format(new Date(group.orderDate), "dd-MM-yyyy") : ""}
@@ -1885,6 +1898,38 @@ export default function SalesPage() {
                 ))}
               </TableBody>
             </Table>
+            {groupedSales.length > historyPageSize && (
+              <div className="flex flex-wrap items-center justify-between p-3 border-t bg-slate-50 text-xs gap-2 no-print">
+                <span className="text-muted-foreground">
+                  Showing <strong>{(historyPage - 1) * historyPageSize + 1}</strong> to{" "}
+                  <strong>{Math.min(historyPage * historyPageSize, groupedSales.length)}</strong> of{" "}
+                  <strong>{groupedSales.length}</strong> sales orders
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 px-3"
+                    onClick={() => setHistoryPage((p) => Math.max(1, p - 1))}
+                    disabled={historyPage === 1}
+                  >
+                    Previous
+                  </Button>
+                  <span className="font-semibold text-slate-700">
+                    Page {historyPage} of {totalHistoryPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 px-3"
+                    onClick={() => setHistoryPage((p) => Math.min(totalHistoryPages, p + 1))}
+                    disabled={historyPage >= totalHistoryPages}
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
+            )}
           </CardContent></Card>
         </TabsContent>
       </Tabs>
