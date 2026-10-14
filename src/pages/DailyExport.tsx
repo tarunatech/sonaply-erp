@@ -37,6 +37,7 @@ import {
   Filter,
   ChevronDown,
   ChevronUp,
+  AlertTriangle,
 } from "lucide-react";
 import {
   Table,
@@ -608,6 +609,7 @@ export default function DailyExport() {
 
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
+  const [showMismatchesOnly, setShowMismatchesOnly] = useState(false);
 
   // Category Export Period State: Single Date Only (full 24 hrs) or Custom Range
   const [periodMode, setPeriodMode] = useState<"singleDate" | "custom">(
@@ -1100,6 +1102,13 @@ export default function DailyExport() {
     appliedToDate,
   ]);
 
+  // Count of products where Net Change in range doesn't match the closing stock
+  const mismatchCount = useMemo(() => {
+    return ledgerData.filter(
+      (item) => item.netChange !== item.closingStockAtEnd,
+    ).length;
+  }, [ledgerData]);
+
   // List of all categories available in the system
   const allCategories = useMemo(() => {
     const cats = new Set<string>();
@@ -1230,15 +1239,20 @@ export default function DailyExport() {
       const q = searchQuery.toLowerCase().trim();
       list = list.filter((item) => item.productName.toLowerCase().includes(q));
     }
+    if (showMismatchesOnly) {
+      list = list.filter(
+        (item) => item.netChange !== item.closingStockAtEnd,
+      );
+    }
     return list;
-  }, [ledgerData, selectedCategory, searchQuery]);
+  }, [ledgerData, selectedCategory, searchQuery, showMismatchesOnly]);
 
   const [ledgerPage, setLedgerPage] = useState(1);
   const ledgerPageSize = 50;
 
   useEffect(() => {
     setLedgerPage(1);
-  }, [searchQuery, selectedCategory, appliedFromDate, appliedToDate]);
+  }, [searchQuery, selectedCategory, appliedFromDate, appliedToDate, showMismatchesOnly]);
 
   const totalLedgerPages = Math.max(1, Math.ceil(filteredLedger.length / ledgerPageSize));
 
@@ -1280,6 +1294,9 @@ export default function DailyExport() {
       "Total Additions (+)": item.totalAdditions,
       "Total Subtractions (-)": item.totalSubtractions,
       "Net Change": item.netChange,
+      "Calculation Mismatch":
+        item.netChange !== item.closingStockAtEnd ? "YES (MISMATCH)" : "NO",
+      "Discrepancy (Net - Closing)": item.netChange - item.closingStockAtEnd,
       "Transaction Sequence": item.sequence,
       "Detailed History": item.details,
     }));
@@ -1890,6 +1907,23 @@ export default function DailyExport() {
               </div>
             </div>
             <Button
+              type="button"
+              variant={showMismatchesOnly ? "destructive" : "outline"}
+              onClick={() => setShowMismatchesOnly(!showMismatchesOnly)}
+              className={`w-full sm:w-auto font-semibold shadow-sm gap-2 transition-all ${
+                showMismatchesOnly
+                  ? "bg-amber-600 hover:bg-amber-700 text-white border-amber-600 ring-2 ring-amber-300"
+                  : mismatchCount > 0
+                    ? "border-amber-500 text-amber-800 bg-amber-50 hover:bg-amber-100 font-bold"
+                    : "text-muted-foreground border-slate-200"
+              }`}
+            >
+              <AlertTriangle className={`h-4 w-4 ${showMismatchesOnly ? "text-white" : "text-amber-600"}`} />
+              {showMismatchesOnly
+                ? `Showing Mismatches (${filteredLedger.length})`
+                : `Mismatch Only (${mismatchCount})`}
+            </Button>
+            <Button
               onClick={handleExportLedger}
               className="w-full sm:w-auto bg-primary hover:bg-primary/95 text-primary-foreground font-semibold shadow-sm"
             >
@@ -2004,7 +2038,21 @@ export default function DailyExport() {
                             : item.netChange}
                         </TableCell>
                         <TableCell className="text-right font-black font-mono text-sm bg-blue-50/50 text-blue-700">
-                          {item.closingStockAtEnd}
+                          <div>{item.closingStockAtEnd}</div>
+                          {item.netChange !== item.closingStockAtEnd && (
+                            <div
+                              className="text-[10px] font-bold text-amber-700 flex items-center justify-end gap-0.5 mt-0.5"
+                              title={`Discrepancy: Net Change (${item.netChange}) - Closing Stock (${item.closingStockAtEnd}) = ${item.netChange - item.closingStockAtEnd}`}
+                            >
+                              <AlertTriangle className="h-3 w-3 inline text-amber-600" />
+                              <span>
+                                Diff:{" "}
+                                {item.netChange - item.closingStockAtEnd > 0
+                                  ? `+${item.netChange - item.closingStockAtEnd}`
+                                  : item.netChange - item.closingStockAtEnd}
+                              </span>
+                            </div>
+                          )}
                         </TableCell>
                         <TableCell className="text-right">
                           <Button
