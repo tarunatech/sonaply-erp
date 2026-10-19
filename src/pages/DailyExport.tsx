@@ -82,6 +82,29 @@ interface LedgerTransaction {
   isDeadStock?: boolean;
 }
 
+export interface LedgerItem {
+  productName: string;
+  batchNo?: string;
+  category: string;
+  isDeadStock: boolean;
+  isNil: boolean;
+  isCancelled: boolean;
+  currentAvailable: number;
+  openingStock: number;
+  closingStockAtEnd: number;
+  closingAvailableAtEnd: number;
+  closingHoldAtEnd: number;
+  totalAdditions: number;
+  totalSubtractions: number;
+  netChange: number;
+  expectedClosing: number;
+  isMismatch: boolean;
+  discrepancy: number;
+  sequence: string;
+  details: string;
+  transactions: LedgerTransaction[];
+}
+
 const formatDateDDMMYYYY = (dateStr: string) => {
   if (!dateStr) return "";
   const parts = dateStr.slice(0, 10).split("-");
@@ -138,6 +161,14 @@ const extractDateOnly = (val: any): string => {
   return str.slice(0, 10);
 };
 
+export const getPreviousDay = (dateStr: string): string => {
+  const dStr = extractDateOnly(dateStr);
+  if (!dStr) return "";
+  const d = new Date(dStr + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+};
+
 const isDateInRange = (dateVal: any, start: string, end: string): boolean => {
   const d = extractDateOnly(dateVal);
   if (!d) return false;
@@ -174,6 +205,20 @@ export interface ProductIndex {
   salesByProduct: Map<string, Sale[]>;
   returnsByProduct: Map<string, SaleReturn[]>;
   purchaseBatchKeys: Set<string>;
+  purchasedQtyByBatchKey: Map<string, number>;
+  batchManualQty: Map<string, number>;
+}
+
+export function getBatchManualQty(b: StockBatch, index?: ProductIndex): number {
+  if (!b) return 0;
+  if (b.id && index?.batchManualQty?.has(b.id)) {
+    return index.batchManualQty.get(b.id)!;
+  }
+  const norm = b.productName ? b.productName.toLowerCase().trim() : "";
+  const bNum = b.batchNumber ? String(b.batchNumber).trim().toLowerCase() : "0";
+  const key = `${norm}:::${bNum}`;
+  const totalPurchased = index?.purchasedQtyByBatchKey?.get(key) || 0;
+  return Math.max(0, Number(b.quantity || 0) - totalPurchased);
 }
 
 export function buildProductIndex(
@@ -189,6 +234,7 @@ export function buildProductIndex(
   const salesByProduct = new Map<string, Sale[]>();
   const returnsByProduct = new Map<string, SaleReturn[]>();
   const purchaseBatchKeys = new Set<string>();
+  const purchasedQtyByBatchKey = new Map<string, number>();
 
   // 1. Index Batches
   for (let i = 0; i < allBatches.length; i++) {
@@ -233,8 +279,16 @@ export function buildProductIndex(
     }
     arr.push(p);
 
-    const bNum = p.batchNumber ? String(p.batchNumber).trim() : "0";
-    purchaseBatchKeys.add(`${norm}:::${bNum}`);
+    const bNum = p.batchNumber ? String(p.batchNumber).trim().toLowerCase() : "0";
+    const key = `${norm}:::${bNum}`;
+    purchaseBatchKeys.add(key);
+    if (p.batchNumber) {
+      purchaseBatchKeys.add(`${norm}:::${String(p.batchNumber).trim()}`);
+    }
+    purchasedQtyByBatchKey.set(
+      key,
+      (purchasedQtyByBatchKey.get(key) || 0) + Number(p.quantity || 0),
+    );
   }
 
   // 3. Index Sales
@@ -278,6 +332,48 @@ export function buildProductIndex(
     arr.push(r);
   }
 
+  // 5. Pre-calculate manual initial stock per batch
+  const batchManualQty = new Map<string, number>();
+  batchesByProduct.forEach((batchesList, norm) => {
+    const batchesByKey = new Map<string, StockBatch[]>();
+    for (let i = 0; i < batchesList.length; i++) {
+      const b = batchesList[i];
+      const bNum = b.batchNumber ? String(b.batchNumber).trim().toLowerCase() : "0";
+      const key = `${norm}:::${bNum}`;
+      let arr = batchesByKey.get(key);
+      if (!arr) {
+        arr = [];
+        batchesByKey.set(key, arr);
+      }
+      arr.push(b);
+    }
+
+    batchesByKey.forEach((arr, key) => {
+      const totalPurchased = purchasedQtyByBatchKey.get(key) || 0;
+      if (arr.length === 1) {
+        const b = arr[0];
+        const manualQty = Math.max(0, Number(b.quantity || 0) - totalPurchased);
+        if (b.id) batchManualQty.set(b.id, manualQty);
+      } else {
+        // Sort from newest to oldest (matching backend order for purchase updates)
+        const sorted = [...arr].sort((b1, b2) => {
+          const d1 = b1.date ? new Date(b1.date).getTime() : 0;
+          const d2 = b2.date ? new Date(b2.date).getTime() : 0;
+          return d2 - d1;
+        });
+        let remPurchased = totalPurchased;
+        for (let i = 0; i < sorted.length; i++) {
+          const b = sorted[i];
+          const bQty = Number(b.quantity || 0);
+          const allocated = Math.min(bQty, remPurchased);
+          remPurchased -= allocated;
+          const manualQty = Math.max(0, bQty - allocated);
+          if (b.id) batchManualQty.set(b.id, manualQty);
+        }
+      }
+    });
+  });
+
   return {
     normToDisplayName,
     productCategories,
@@ -286,6 +382,8 @@ export function buildProductIndex(
     salesByProduct,
     returnsByProduct,
     purchaseBatchKeys,
+    purchasedQtyByBatchKey,
+    batchManualQty,
   };
 }
 
@@ -348,9 +446,9 @@ export function computeClosingStockForProductIndexed({
   for (let i = 0; i < productBatches.length; i++) {
     const b = productBatches[i];
     if (extractDateOnly(b.date) > tDate) {
-      const bNum = b.batchNumber ? String(b.batchNumber).trim() : "0";
-      if (!index.purchaseBatchKeys.has(`${normName}:::${bNum}`)) {
-        manualBatchesAfter += Number(b.quantity || 0);
+      const manualQty = getBatchManualQty(b, index);
+      if (manualQty > 0) {
+        manualBatchesAfter += manualQty;
       }
     }
   }
@@ -389,11 +487,169 @@ export function computeClosingStockForProductIndexed({
   const netAdditionsAfter = purchasedAfter + manualBatchesAfter + returnsAfter + cancelledAfterForPriorSales;
   const netSubtractionsAfter = soldAfter;
 
-  const closingTotalStock = Math.max(0, currentTotalStock - netAdditionsAfter + netSubtractionsAfter);
-  const closingHoldQty = Math.min(currentHold, closingTotalStock);
-  const closingDisplayQty = Math.min(currentDisplay, Math.max(0, closingTotalStock - closingHoldQty));
-  const closingDamageQty = Math.min(currentDamage, Math.max(0, closingTotalStock - closingHoldQty - closingDisplayQty));
-  const closingAvailableQty = Math.max(0, closingTotalStock - closingHoldQty - closingDisplayQty - closingDamageQty);
+  const closingTotalStock = currentTotalStock - netAdditionsAfter + netSubtractionsAfter;
+  const closingHoldQty = currentHold;
+  const closingDisplayQty = currentDisplay;
+  const closingDamageQty = currentDamage;
+  const closingAvailableQty = closingTotalStock - closingHoldQty - closingDisplayQty - closingDamageQty;
+
+  return {
+    currentAvailable,
+    currentHold,
+    currentDisplay,
+    currentDamage,
+    currentTotalStock,
+    closingTotalStock,
+    closingAvailableQty,
+    closingHoldQty,
+    closingDisplayQty,
+    closingDamageQty,
+  };
+}
+
+/**
+ * Normalizes transaction batch numbers safely without guessing when multiple batches exist.
+ */
+export function getTransactionBatch(
+  batchNo?: string | null,
+  productBatches?: StockBatch[]
+): string {
+  if (batchNo && String(batchNo).trim()) {
+    return String(batchNo).trim();
+  }
+  if (productBatches && productBatches.length === 1 && productBatches[0].batchNumber) {
+    return String(productBatches[0].batchNumber).trim();
+  }
+  const hasBatchZero = productBatches?.some(
+    (b) => String(b.batchNumber || "0").trim() === "0"
+  );
+  if (hasBatchZero) {
+    return "0";
+  }
+  return "Unassigned";
+}
+
+/**
+ * Calculates historical closing stock for a given product and batch in O(batch transactions) using pre-built indexes.
+ */
+export function computeClosingStockForBatchIndexed({
+  normName,
+  normBatch,
+  targetDate,
+  index,
+}: {
+  normName: string;
+  normBatch: string;
+  targetDate: string;
+  index: ProductIndex;
+}) {
+  const productBatches = (index.batchesByProduct.get(normName) || []).filter((b) => {
+    const bVal = b.batchNumber ? String(b.batchNumber).trim().toLowerCase() : "0";
+    return bVal === normBatch.toLowerCase();
+  });
+
+  let currentAvailable = 0;
+  let currentHold = 0;
+  let currentDisplay = 0;
+  let currentDamage = 0;
+
+  for (let i = 0; i < productBatches.length; i++) {
+    const b = productBatches[i];
+    currentAvailable += Number(b.availableQty || 0);
+    currentHold += Number(b.holdQty || 0);
+    currentDisplay += Number(b.displayQty || 0);
+    currentDamage += Number(b.damageQty || 0);
+  }
+  const currentTotalStock = currentAvailable + currentHold + currentDisplay + currentDamage;
+
+  const tDate = extractDateOnly(targetDate);
+  if (!tDate) {
+    return {
+      currentAvailable,
+      currentHold,
+      currentDisplay,
+      currentDamage,
+      currentTotalStock,
+      closingTotalStock: currentTotalStock,
+      closingAvailableQty: currentAvailable,
+      closingHoldQty: currentHold,
+      closingDisplayQty: currentDisplay,
+      closingDamageQty: currentDamage,
+    };
+  }
+
+  // Purchases strictly AFTER targetDate matching this batch
+  let purchasedAfter = 0;
+  const purchases = index.purchasesByProduct.get(normName);
+  if (purchases) {
+    for (let i = 0; i < purchases.length; i++) {
+      const p = purchases[i];
+      const pBatch = p.batchNumber ? String(p.batchNumber).trim().toLowerCase() : "0";
+      if (pBatch === normBatch.toLowerCase() && extractDateOnly(p.date) > tDate) {
+        purchasedAfter += Number(p.quantity || 0);
+      }
+    }
+  }
+
+  // Manual batches strictly AFTER targetDate matching this batch
+  let manualBatchesAfter = 0;
+  for (let i = 0; i < productBatches.length; i++) {
+    const b = productBatches[i];
+    if (extractDateOnly(b.date) > tDate) {
+      const manualQty = getBatchManualQty(b, index);
+      if (manualQty > 0) {
+        manualBatchesAfter += manualQty;
+      }
+    }
+  }
+
+  // Returns strictly AFTER targetDate matching this batch
+  let returnsAfter = 0;
+  const returns = index.returnsByProduct.get(normName);
+  if (returns) {
+    const allPBatches = index.batchesByProduct.get(normName) || [];
+    for (let i = 0; i < returns.length; i++) {
+      const r = returns[i];
+      const rBatch = getTransactionBatch(r.batchNo, allPBatches);
+      if (rBatch.toLowerCase() === normBatch.toLowerCase() && extractDateOnly(r.receiveDate) > tDate) {
+        returnsAfter += Number(r.quantity || 0);
+      }
+    }
+  }
+
+  // Sales strictly AFTER targetDate matching this batch
+  let soldAfter = 0;
+  let cancelledAfterForPriorSales = 0;
+  const sales = index.salesByProduct.get(normName);
+  if (sales) {
+    const allPBatches = index.batchesByProduct.get(normName) || [];
+    for (let i = 0; i < sales.length; i++) {
+      const s = sales[i];
+      const sBatch = getTransactionBatch(s.batchNo, allPBatches);
+      if (sBatch.toLowerCase() !== normBatch.toLowerCase()) continue;
+
+      const sDate = extractDateOnly(s.orderDate || s.estimatedDeliveryDate || s.createdAt);
+      if (s.status !== "Cancelled") {
+        if (sDate > tDate) {
+          soldAfter += Number(s.orderedQty || 0);
+        }
+      } else {
+        const cancelDate = extractDateOnly(s.updatedAt || s.orderDate);
+        if (sDate <= tDate && cancelDate > tDate) {
+          cancelledAfterForPriorSales += Number(s.orderedQty || 0);
+        }
+      }
+    }
+  }
+
+  const netAdditionsAfter = purchasedAfter + manualBatchesAfter + returnsAfter + cancelledAfterForPriorSales;
+  const netSubtractionsAfter = soldAfter;
+
+  const closingTotalStock = currentTotalStock - netAdditionsAfter + netSubtractionsAfter;
+  const closingHoldQty = currentHold;
+  const closingDisplayQty = currentDisplay;
+  const closingDamageQty = currentDamage;
+  const closingAvailableQty = closingTotalStock - closingHoldQty - closingDisplayQty - closingDamageQty;
 
   return {
     currentAvailable,
@@ -485,9 +741,9 @@ export function computeStockSnapshotsHelper({
     for (let i = 0; i < productBatches.length; i++) {
       const b = productBatches[i];
       if (isDateInRange(b.date, startDate, endDate)) {
-        const bNum = b.batchNumber ? String(b.batchNumber).trim() : "0";
-        if (!prodIndex.purchaseBatchKeys.has(`${normName}:::${bNum}`)) {
-          purchasedQty += Number(b.quantity || 0);
+        const manualQty = getBatchManualQty(b, prodIndex);
+        if (manualQty > 0) {
+          purchasedQty += manualQty;
         }
       }
     }
@@ -513,20 +769,20 @@ export function computeStockSnapshotsHelper({
       }
     }
 
-    const openingStock = Math.max(0, stockSnap.closingTotalStock - purchasedQty - salesReturnQty + soldQty);
+    const openingStock = stockSnap.closingTotalStock - purchasedQty - salesReturnQty + soldQty;
 
     const hasAnyActivity =
-      stockSnap.closingTotalStock > 0 ||
-      openingStock > 0 ||
+      stockSnap.closingTotalStock !== 0 ||
+      openingStock !== 0 ||
       purchasedQty > 0 ||
       soldQty > 0 ||
       salesReturnQty > 0 ||
-      stockSnap.currentTotalStock > 0 ||
+      stockSnap.currentTotalStock !== 0 ||
       productBatches.length > 0;
 
     if (hasAnyActivity) {
       products.push({
-        productName: originalName,
+        productName: originalName,  
         category,
         supplier,
         status,
@@ -640,10 +896,14 @@ export default function DailyExport() {
   const [allChallans, setAllChallans] = useState<Challan[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Modal State for viewing specific product's transactions
-  const [activeLedgerProduct, setActiveLedgerProduct] = useState<string | null>(
-    null,
-  );
+  // View mode for Date Range Stock Ledger: "product" (default) or "product_batch"
+  const [ledgerViewMode, setLedgerViewMode] = useState<"product" | "product_batch">("product");
+
+  // Modal State for viewing specific product's or product+batch's transactions
+  const [activeLedgerItem, setActiveLedgerItem] = useState<{
+    productName: string;
+    batchNo?: string;
+  } | null>(null);
 
   const loadLedgerData = async () => {
     setIsLoading(true);
@@ -669,6 +929,9 @@ export default function DailyExport() {
 
   useEffect(() => {
     loadLedgerData();
+    const handleStockUpdate = () => loadLedgerData();
+    window.addEventListener("erp-stock-updated", handleStockUpdate);
+    return () => window.removeEventListener("erp-stock-updated", handleStockUpdate);
   }, []);
 
   const productIndex = useMemo(() => {
@@ -869,9 +1132,10 @@ export default function DailyExport() {
   };
 
   // Compile transactions and ledger dynamically based on appliedFromDate & appliedToDate
-  const ledgerData = useMemo(() => {
-    return Array.from(productIndex.normToDisplayName.entries())
-      .map(([normName, productName]) => {
+  const ledgerData = useMemo((): LedgerItem[] => {
+    if (ledgerViewMode === "product") {
+      return Array.from(productIndex.normToDisplayName.entries())
+        .map(([normName, productName]): LedgerItem => {
         const category = productIndex.productCategories.get(normName) || "Other";
         const transactions: LedgerTransaction[] = [];
         const productBatches = productIndex.batchesByProduct.get(normName) || [];
@@ -942,9 +1206,8 @@ export default function DailyExport() {
           const b = productBatches[i];
           const bDate = extractDateOnly(b.date);
           if (bDate >= appliedFromDate && bDate <= appliedToDate) {
-            const bNum = b.batchNumber ? String(b.batchNumber).trim() : "0";
-            const hasPurchase = productIndex.purchaseBatchKeys.has(`${normName}:::${bNum}`);
-            if (!hasPurchase) {
+            const manualQty = getBatchManualQty(b, productIndex);
+            if (manualQty > 0) {
               const desc = b.description || "";
               const isNil = b.isNil || false;
               const isCancelled = b.isCancelled || false;
@@ -960,7 +1223,7 @@ export default function DailyExport() {
                 id: b.id,
                 date: b.date,
                 type: "Addition",
-                qty: Number(b.quantity || 0),
+                qty: manualQty,
                 description: `Initial Stock / Manual Entry (Batch: ${b.batchNumber}, Supplier: ${b.supplier}${statusStr}${desc ? `, Desc: ${desc}` : ""})`,
                 source: "batch",
                 isNil,
@@ -1071,6 +1334,18 @@ export default function DailyExport() {
           index: productIndex,
         });
 
+        const priorDate = getPreviousDay(appliedFromDate);
+        const priorSnap = computeClosingStockForProductIndexed({
+          normName,
+          targetDate: priorDate,
+          index: productIndex,
+        });
+        const openingStock = priorSnap.closingTotalStock;
+        const netChange = totalAdditions - totalSubtractions;
+        const expectedClosing = openingStock + netChange;
+        const isMismatch = expectedClosing !== stockSnap.closingTotalStock;
+        const discrepancy = expectedClosing - stockSnap.closingTotalStock;
+
         const details = transactions
           .map(
             (t) =>
@@ -1085,28 +1360,327 @@ export default function DailyExport() {
           isNil: isProductNil,
           isCancelled: isProductCancelled,
           currentAvailable,
+          openingStock,
           closingStockAtEnd: stockSnap.closingTotalStock,
           closingAvailableAtEnd: stockSnap.closingAvailableQty,
+          closingHoldAtEnd: stockSnap.closingHoldQty,
           totalAdditions,
           totalSubtractions,
-          netChange: totalAdditions - totalSubtractions,
+          netChange,
+          expectedClosing,
+          isMismatch,
+          discrepancy,
           sequence: sequence || "-",
           details: details || "No transactions in range",
           transactions,
         };
       })
       .sort((a, b) => a.productName.localeCompare(b.productName));
+    }
+
+    // Product + Batch mode: render a separate ledger row for each distinct product-and-batch combination
+    const items: LedgerItem[] = [];
+
+    Array.from(productIndex.normToDisplayName.entries()).forEach(
+      ([normName, productName]) => {
+        const productBatches = productIndex.batchesByProduct.get(normName) || [];
+        const productPurchases = productIndex.purchasesByProduct.get(normName) || [];
+        const productSales = productIndex.salesByProduct.get(normName) || [];
+        const productReturns = productIndex.returnsByProduct.get(normName) || [];
+
+        // Collect all distinct batch identifiers for this product
+        const batchMap = new Map<string, string>(); // normBatchKey -> displayBatch
+        for (let i = 0; i < productBatches.length; i++) {
+          const b = productBatches[i];
+          const bVal = b.batchNumber ? String(b.batchNumber).trim() : "0";
+          const normK = bVal.toLowerCase();
+          if (!batchMap.has(normK)) batchMap.set(normK, bVal);
+        }
+        for (let i = 0; i < productPurchases.length; i++) {
+          const p = productPurchases[i];
+          const bVal = p.batchNumber ? String(p.batchNumber).trim() : "0";
+          const normK = bVal.toLowerCase();
+          if (!batchMap.has(normK)) batchMap.set(normK, bVal);
+        }
+        for (let i = 0; i < productSales.length; i++) {
+          const s = productSales[i];
+          const bVal = getTransactionBatch(s.batchNo, productBatches);
+          const normK = bVal.toLowerCase();
+          if (!batchMap.has(normK)) batchMap.set(normK, bVal);
+        }
+        for (let i = 0; i < productReturns.length; i++) {
+          const r = productReturns[i];
+          const bVal = getTransactionBatch(r.batchNo, productBatches);
+          const normK = bVal.toLowerCase();
+          if (!batchMap.has(normK)) batchMap.set(normK, bVal);
+        }
+
+        const baseCategory = productIndex.productCategories.get(normName) || "Other";
+
+        batchMap.forEach((displayBatch, normBatch) => {
+          const matchingBatches = productBatches.filter(
+            (b) => (b.batchNumber ? String(b.batchNumber).trim().toLowerCase() : "0") === normBatch
+          );
+          const matchingPurchases = productPurchases.filter(
+            (p) => (p.batchNumber ? String(p.batchNumber).trim().toLowerCase() : "0") === normBatch
+          );
+          const matchingSales = productSales.filter(
+            (s) => getTransactionBatch(s.batchNo, productBatches).toLowerCase() === normBatch
+          );
+          const matchingReturns = productReturns.filter(
+            (r) => getTransactionBatch(r.batchNo, productBatches).toLowerCase() === normBatch
+          );
+
+          let currentAvailable = 0;
+          let isProductDeadStock = false;
+          let isProductCancelled = false;
+          let isProductNil = false;
+
+          for (let i = 0; i < matchingBatches.length; i++) {
+            const b = matchingBatches[i];
+            currentAvailable +=
+              Number(b.availableQty || 0) +
+              Number(b.displayQty || 0) +
+              Number(b.damageQty || 0);
+            if (b.isDeadStock) isProductDeadStock = true;
+            if (b.isCancelled) isProductCancelled = true;
+            if (b.isNil) isProductNil = true;
+          }
+          if (isProductDeadStock) {
+            isProductCancelled = false;
+            isProductNil = false;
+          } else if (isProductCancelled) {
+            isProductNil = false;
+          }
+
+          const category = matchingBatches[0]?.category || baseCategory;
+          const transactions: LedgerTransaction[] = [];
+
+          // A. Purchases (Stock Addition)
+          for (let i = 0; i < matchingPurchases.length; i++) {
+            const p = matchingPurchases[i];
+            const pDate = extractDateOnly(p.date);
+            if (pDate >= appliedFromDate && pDate <= appliedToDate) {
+              const matchingBatch = matchingBatches[0];
+              const desc = p.description || matchingBatch?.description || "";
+              const isNil = matchingBatch?.isNil || false;
+              const isCancelled = matchingBatch?.isCancelled || false;
+              const isDeadStock = matchingBatch?.isDeadStock || false;
+              const statusStr = isCancelled
+                ? " [Dead Stock]"
+                : isNil
+                  ? " [Not next Folder]"
+                  : isDeadStock
+                    ? " [Nil]"
+                    : "";
+              transactions.push({
+                id: p.id,
+                date: p.date,
+                type: "Addition",
+                qty: Number(p.quantity || 0),
+                description: `Purchase (Supplier: ${p.supplierName}, Batch: ${p.batchNumber || displayBatch}${statusStr}${desc ? `, Desc: ${desc}` : ""})`,
+                source: "purchase",
+                isNil,
+                isCancelled,
+                isDeadStock,
+              });
+            }
+          }
+
+          // B. Manual Batches / Initial Stock (Stock Addition)
+          for (let i = 0; i < matchingBatches.length; i++) {
+            const b = matchingBatches[i];
+            const bDate = extractDateOnly(b.date);
+            if (bDate >= appliedFromDate && bDate <= appliedToDate) {
+              const manualQty = getBatchManualQty(b, productIndex);
+              if (manualQty > 0) {
+                const desc = b.description || "";
+                const isNil = b.isNil || false;
+                const isCancelled = b.isCancelled || false;
+                const isDeadStock = b.isDeadStock || false;
+                const statusStr = isCancelled
+                  ? " [Dead Stock]"
+                  : isNil
+                    ? " [Not next Folder]"
+                    : isDeadStock
+                      ? " [Nil]"
+                      : "";
+                transactions.push({
+                  id: b.id,
+                  date: b.date,
+                  type: "Addition",
+                  qty: manualQty,
+                  description: `Initial Stock / Manual Entry (Batch: ${b.batchNumber || displayBatch}, Supplier: ${b.supplier}${statusStr}${desc ? `, Desc: ${desc}` : ""})`,
+                  source: "batch",
+                  isNil,
+                  isCancelled,
+                  isDeadStock,
+                });
+              }
+            }
+          }
+
+          // C. Sales Recorded (Stock Subtraction) & Cancellations (Stock Addition)
+          for (let i = 0; i < matchingSales.length; i++) {
+            const s = matchingSales[i];
+            const matchingBatch = matchingBatches[0];
+            const desc =
+              s.description || s.remarks || matchingBatch?.description || "";
+            const isCancelled =
+              s.status === "Cancelled" || matchingBatch?.isCancelled || false;
+            const isNil = !isCancelled && (matchingBatch?.isNil || false);
+            const isDeadStock = matchingBatch?.isDeadStock || false;
+            const orderStatus = isCancelled
+              ? "Dead Stock"
+              : isNil
+                ? "Not next Folder"
+                : isDeadStock
+                  ? "Nil"
+                  : s.status;
+
+            const sDate = extractDateOnly(
+              s.orderDate || s.estimatedDeliveryDate || s.createdAt
+            );
+
+            // 1. Record the sale subtraction
+            if (sDate >= appliedFromDate && sDate <= appliedToDate) {
+              transactions.push({
+                id: s.id,
+                date: s.orderDate || sDate,
+                type: "Subtraction",
+                qty: Number(s.orderedQty || 0),
+                description: `Sale Recorded (Order: ${s.orderNo}, Customer: ${s.customer}, Batch: ${s.batchNo || displayBatch}, Status: ${orderStatus}${desc ? `, Desc: ${desc}` : ""})`,
+                source: "sale",
+                isNil,
+                isCancelled,
+                isDeadStock,
+              });
+            }
+
+            // 2. If cancelled, record the cancellation addition
+            if (s.status === "Cancelled") {
+              const cancelDate = extractDateOnly(s.updatedAt || s.orderDate);
+              if (cancelDate >= appliedFromDate && cancelDate <= appliedToDate) {
+                transactions.push({
+                  id: `${s.id}-cancel`,
+                  date: cancelDate,
+                  type: "Addition",
+                  qty: Number(s.orderedQty || 0),
+                  description: `Sale Cancelled / Restored (Order: ${s.orderNo}, Customer: ${s.customer}, Status: Cancelled${desc ? `, Desc: ${desc}` : ""})`,
+                  source: "challan_cancel",
+                  isCancelled: true,
+                });
+              }
+            }
+          }
+
+          // D. Sales Returns (Stock Addition)
+          for (let i = 0; i < matchingReturns.length; i++) {
+            const r = matchingReturns[i];
+            const rDate = extractDateOnly(r.receiveDate);
+            if (rDate >= appliedFromDate && rDate <= appliedToDate) {
+              transactions.push({
+                id: r.id,
+                date: r.receiveDate,
+                type: "Addition",
+                qty: Number(r.quantity || 0),
+                description: `Sales Return (Client: ${r.clientName}, Batch: ${r.batchNo || displayBatch}, Notes: ${r.notes || ""})`,
+                source: "sales_return",
+              });
+            }
+          }
+
+          // Sort chronologically
+          transactions.sort((a, b) => {
+            const dateA = a.date ? new Date(a.date).getTime() : 0;
+            const dateB = b.date ? new Date(b.date).getTime() : 0;
+            return dateA - dateB;
+          });
+
+          let totalAdditions = 0;
+          let totalSubtractions = 0;
+          for (let i = 0; i < transactions.length; i++) {
+            const t = transactions[i];
+            if (t.type === "Addition") {
+              totalAdditions += t.qty;
+            } else {
+              totalSubtractions += t.qty;
+            }
+          }
+
+          const sequence = transactions
+            .map((t) => `${t.qty}${t.type === "Addition" ? "+" : "-"}`)
+            .join(" ");
+
+          const stockSnap = computeClosingStockForBatchIndexed({
+            normName,
+            normBatch,
+            targetDate: appliedToDate,
+            index: productIndex,
+          });
+
+          const priorDate = getPreviousDay(appliedFromDate);
+          const priorSnap = computeClosingStockForBatchIndexed({
+            normName,
+            normBatch,
+            targetDate: priorDate,
+            index: productIndex,
+          });
+
+          const openingStock = priorSnap.closingTotalStock;
+          const netChange = totalAdditions - totalSubtractions;
+          const expectedClosing = openingStock + netChange;
+          const isMismatch = expectedClosing !== stockSnap.closingTotalStock;
+          const discrepancy = expectedClosing - stockSnap.closingTotalStock;
+
+          const details = transactions
+            .map(
+              (t) =>
+                `[${t.date}] ${t.qty}${t.type === "Addition" ? "+" : "-"} (${t.description})`
+            )
+            .join("; ");
+
+          items.push({
+            productName,
+            batchNo: displayBatch,
+            category,
+            isDeadStock: isProductDeadStock,
+            isNil: isProductNil,
+            isCancelled: isProductCancelled,
+            currentAvailable,
+            openingStock,
+            closingStockAtEnd: stockSnap.closingTotalStock,
+            closingAvailableAtEnd: stockSnap.closingAvailableQty,
+            closingHoldAtEnd: stockSnap.closingHoldQty,
+            totalAdditions,
+            totalSubtractions,
+            netChange,
+            expectedClosing,
+            isMismatch,
+            discrepancy,
+            sequence: sequence || "-",
+            details: details || "No transactions in range",
+            transactions,
+          });
+        });
+      }
+    );
+
+    return items.sort((a, b) => {
+      const pComp = a.productName.localeCompare(b.productName);
+      if (pComp !== 0) return pComp;
+      return (a.batchNo || "").localeCompare(b.batchNo || "");
+    });
   }, [
     productIndex,
     appliedFromDate,
     appliedToDate,
+    ledgerViewMode,
   ]);
 
-  // Count of products where Net Change in range doesn't match the closing stock
+  // Count of products where Opening Stock + Net Change in range doesn't match the closing stock
   const mismatchCount = useMemo(() => {
-    return ledgerData.filter(
-      (item) => item.netChange !== item.closingStockAtEnd,
-    ).length;
+    return ledgerData.filter((item) => item.isMismatch).length;
   }, [ledgerData]);
 
   // List of all categories available in the system
@@ -1237,12 +1811,14 @@ export default function DailyExport() {
     }
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
-      list = list.filter((item) => item.productName.toLowerCase().includes(q));
+      list = list.filter(
+        (item) =>
+          item.productName.toLowerCase().includes(q) ||
+          (item.batchNo && item.batchNo.toLowerCase().includes(q))
+      );
     }
     if (showMismatchesOnly) {
-      list = list.filter(
-        (item) => item.netChange !== item.closingStockAtEnd,
-      );
+      list = list.filter((item) => item.isMismatch);
     }
     return list;
   }, [ledgerData, selectedCategory, searchQuery, showMismatchesOnly]);
@@ -1252,7 +1828,7 @@ export default function DailyExport() {
 
   useEffect(() => {
     setLedgerPage(1);
-  }, [searchQuery, selectedCategory, appliedFromDate, appliedToDate, showMismatchesOnly]);
+  }, [searchQuery, selectedCategory, appliedFromDate, appliedToDate, showMismatchesOnly, ledgerViewMode]);
 
   const totalLedgerPages = Math.max(1, Math.ceil(filteredLedger.length / ledgerPageSize));
 
@@ -1263,46 +1839,62 @@ export default function DailyExport() {
 
   // Find the selected product's calculated details live so modal stays synced after deletes
   const selectedProductLedger = useMemo(() => {
-    if (!activeLedgerProduct) return null;
+    if (!activeLedgerItem) return null;
     return (
-      ledgerData.find((item) => item.productName === activeLedgerProduct) ||
-      null
+      ledgerData.find((item) => {
+        if (item.productName.toLowerCase().trim() !== activeLedgerItem.productName.toLowerCase().trim()) {
+          return false;
+        }
+        if (activeLedgerItem.batchNo !== undefined) {
+          return (item.batchNo || "").toLowerCase().trim() === (activeLedgerItem.batchNo || "").toLowerCase().trim();
+        }
+        return true;
+      }) || null
     );
-  }, [ledgerData, activeLedgerProduct]);
+  }, [ledgerData, activeLedgerItem]);
 
   const handleExportLedger = () => {
     if (!filteredLedger.length) {
       alert("No data available to export.");
       return;
     }
-    const formatted = filteredLedger.map((item) => ({
-      "Product Name": item.productName,
-      Category: item.category,
-      "Is Not next Folder": item.isNil ? "Yes" : "No",
-      "Is Dead Stock": item.isCancelled ? "Yes" : "No",
-      "Is Nil": item.isDeadStock ? "Yes" : "No",
-      Status: item.isDeadStock
+    const formatted = filteredLedger.map((item) => {
+      const baseObj: Record<string, any> = {
+        "Product Name": item.productName,
+      };
+      if (ledgerViewMode === "product_batch") {
+        baseObj["Batch Number"] = item.batchNo || "0";
+      }
+      baseObj["Category"] = item.category;
+      baseObj["Is Not next Folder"] = item.isNil ? "Yes" : "No";
+      baseObj["Is Dead Stock"] = item.isCancelled ? "Yes" : "No";
+      baseObj["Is Nil"] = item.isDeadStock ? "Yes" : "No";
+      baseObj["Status"] = item.isDeadStock
         ? "Nil"
         : item.isCancelled
           ? "Dead Stock"
           : item.isNil
             ? "Not next Folder"
-            : "Active",
-      [`Closing Stock (as of ${formatDateDDMMYYYY(appliedToDate)})`]:
-        item.closingStockAtEnd,
-      "Current Physical Stock": item.currentAvailable,
-      "Total Additions (+)": item.totalAdditions,
-      "Total Subtractions (-)": item.totalSubtractions,
-      "Net Change": item.netChange,
-      "Calculation Mismatch":
-        item.netChange !== item.closingStockAtEnd ? "YES (MISMATCH)" : "NO",
-      "Discrepancy (Net - Closing)": item.netChange - item.closingStockAtEnd,
-      "Transaction Sequence": item.sequence,
-      "Detailed History": item.details,
-    }));
+            : "Active";
+      baseObj[`Opening Stock (as of ${formatDateDDMMYYYY(appliedFromDate)})`] =
+        item.openingStock;
+      baseObj["Total Additions (+)"] = item.totalAdditions;
+      baseObj["Total Subtractions (-)"] = item.totalSubtractions;
+      baseObj["Net Change"] = item.netChange;
+      baseObj[`Physical Closing Stock (as of ${formatDateDDMMYYYY(appliedToDate)})`] =
+        item.closingStockAtEnd;
+      baseObj["Closing Available Qty"] = item.closingAvailableAtEnd;
+      baseObj["Hold Qty"] = item.closingHoldAtEnd || 0;
+      baseObj["Current Physical Stock"] = item.currentAvailable;
+      baseObj["Calculation Mismatch"] = item.isMismatch ? "YES (MISMATCH)" : "NO";
+      baseObj["Discrepancy (Expected - Closing)"] = item.discrepancy;
+      baseObj["Transaction Sequence"] = item.sequence;
+      baseObj["Detailed History"] = item.details;
+      return baseObj;
+    });
     exportCSV(
       formatted as any[],
-      `stock-ledger-totals-${appliedFromDate}-to-${appliedToDate}.csv`,
+      `stock-ledger-${ledgerViewMode === "product_batch" ? "batches" : "totals"}-${appliedFromDate}-to-${appliedToDate}.csv`,
     );
   };
 
@@ -1888,17 +2480,47 @@ export default function DailyExport() {
                 </SelectContent>
               </Select>
             </div>
+            {/* View Mode Toggle: Product vs Product + Batch */}
+            <div className="space-y-1.5 min-w-[200px]">
+              <Label className="font-semibold text-slate-800">Ledger View</Label>
+              <div className="flex items-center rounded-md border border-slate-200 bg-slate-100/90 p-0.5 shadow-2xs h-9">
+                <button
+                  type="button"
+                  onClick={() => setLedgerViewMode("product")}
+                  className={`flex-1 text-xs font-semibold py-1.5 px-3 rounded transition-all ${
+                    ledgerViewMode === "product"
+                      ? "bg-white text-slate-900 shadow-xs font-bold"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  Product
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLedgerViewMode("product_batch")}
+                  className={`flex-1 text-xs font-semibold py-1.5 px-3 rounded transition-all ${
+                    ledgerViewMode === "product_batch"
+                      ? "bg-white text-slate-900 shadow-xs font-bold"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  Product + Batch
+                </button>
+              </div>
+            </div>
             <div className="space-y-1.5 flex-1 min-w-[180px] relative">
               <Label className="font-semibold text-slate-800">
-                Search Product
+                {ledgerViewMode === "product_batch" ? "Search Product / Batch" : "Search Product"}
               </Label>
               <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   placeholder={
-                    selectedCategory && selectedCategory !== "all"
-                      ? `Search product in ${selectedCategory}...`
-                      : "Search product..."
+                    ledgerViewMode === "product_batch"
+                      ? "Search product or batch..."
+                      : selectedCategory && selectedCategory !== "all"
+                        ? `Search product in ${selectedCategory}...`
+                        : "Search product..."
                   }
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
@@ -1927,7 +2549,7 @@ export default function DailyExport() {
               onClick={handleExportLedger}
               className="w-full sm:w-auto bg-primary hover:bg-primary/95 text-primary-foreground font-semibold shadow-sm"
             >
-              <Download className="mr-2 h-4 w-4" /> Export Ledger Totals
+              <Download className="mr-2 h-4 w-4" /> {ledgerViewMode === "product_batch" ? "Export Batch Ledger" : "Export Ledger Totals"}
             </Button>
           </div>
 
@@ -1956,7 +2578,13 @@ export default function DailyExport() {
                 <TableHeader className="bg-muted/50 sticky top-0 z-10">
                   <TableRow>
                     <TableHead>Product Name</TableHead>
+                    {ledgerViewMode === "product_batch" && (
+                      <TableHead className="font-bold text-slate-800">Batch No</TableHead>
+                    )}
                     <TableHead>Category</TableHead>
+                    <TableHead className="text-right text-slate-700">
+                      Opening ({formatDateDDMMYYYY(appliedFromDate)})
+                    </TableHead>
                     <TableHead className="text-center font-bold">
                       Stock Sequence
                     </TableHead>
@@ -1968,7 +2596,7 @@ export default function DailyExport() {
                     </TableHead>
                     <TableHead className="text-right">Net Change</TableHead>
                     <TableHead className="text-right font-black">
-                      Closing Stock ({formatDateDDMMYYYY(appliedToDate)})
+                      Physical Closing Stock ({formatDateDDMMYYYY(appliedToDate)})
                     </TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
@@ -1977,7 +2605,7 @@ export default function DailyExport() {
                   {isLoading ? (
                     <TableRow>
                       <TableCell
-                        colSpan={8}
+                        colSpan={ledgerViewMode === "product_batch" ? 10 : 9}
                         className="text-center text-muted-foreground py-8"
                       >
                         Loading transaction data...
@@ -1986,16 +2614,18 @@ export default function DailyExport() {
                   ) : filteredLedger.length === 0 ? (
                     <TableRow>
                       <TableCell
-                        colSpan={8}
+                        colSpan={ledgerViewMode === "product_batch" ? 10 : 9}
                         className="text-center text-muted-foreground py-8"
                       >
-                        No product matches found
+                        {ledgerViewMode === "product_batch"
+                          ? "No product and batch matches found"
+                          : "No product matches found"}
                       </TableCell>
                     </TableRow>
                   ) : (
                     paginatedLedger.map((item) => (
                       <TableRow
-                        key={item.productName}
+                        key={`${item.productName}_${item.batchNo || "all"}`}
                         className={`transition-colors ${
                           item.isDeadStock
                             ? "bg-slate-400/90 text-slate-900 hover:bg-slate-500/90 border-slate-300"
@@ -2013,8 +2643,18 @@ export default function DailyExport() {
                             <span>{item.productName}</span>
                           </div>
                         </TableCell>
+                        {ledgerViewMode === "product_batch" && (
+                          <TableCell className="font-mono text-xs font-semibold text-slate-700">
+                            <span className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200">
+                              {item.batchNo || "0"}
+                            </span>
+                          </TableCell>
+                        )}
                         <TableCell className="text-xs text-muted-foreground">
                           {item.category}
+                        </TableCell>
+                        <TableCell className="text-right font-medium font-mono text-slate-700">
+                          {item.openingStock}
                         </TableCell>
                         <TableCell className="text-center">
                           <span
@@ -2037,19 +2677,38 @@ export default function DailyExport() {
                             ? `+${item.netChange}`
                             : item.netChange}
                         </TableCell>
-                        <TableCell className="text-right font-black font-mono text-sm bg-blue-50/50 text-blue-700">
-                          <div>{item.closingStockAtEnd}</div>
-                          {item.netChange !== item.closingStockAtEnd && (
+                        <TableCell className="text-right font-mono bg-blue-50/50">
+                          <div className="font-black text-sm text-blue-700">{item.closingStockAtEnd}</div>
+                          <div className="text-[11px] font-semibold text-slate-500 whitespace-nowrap mt-0.5 flex items-center justify-end gap-1.5">
+                            <span>
+                              Available:{" "}
+                              <span
+                                className={
+                                   item.closingAvailableAtEnd < 0
+                                    ? "text-red-600 font-bold"
+                                    : "text-emerald-700 font-bold"
+                                }
+                              >
+                                {item.closingAvailableAtEnd}
+                              </span>
+                            </span>
+                            {Boolean(item.closingHoldAtEnd && item.closingHoldAtEnd > 0) && (
+                              <span className="text-amber-600 font-bold">
+                                (Hold: {item.closingHoldAtEnd})
+                              </span>
+                            )}
+                          </div>
+                          {item.isMismatch && (
                             <div
                               className="text-[10px] font-bold text-amber-700 flex items-center justify-end gap-0.5 mt-0.5"
-                              title={`Discrepancy: Net Change (${item.netChange}) - Closing Stock (${item.closingStockAtEnd}) = ${item.netChange - item.closingStockAtEnd}`}
+                              title={`Discrepancy: Expected Closing (${item.openingStock + item.netChange}) - Closing Stock (${item.closingStockAtEnd}) = ${item.discrepancy}`}
                             >
                               <AlertTriangle className="h-3 w-3 inline text-amber-600" />
                               <span>
                                 Diff:{" "}
-                                {item.netChange - item.closingStockAtEnd > 0
-                                  ? `+${item.netChange - item.closingStockAtEnd}`
-                                  : item.netChange - item.closingStockAtEnd}
+                                {item.discrepancy > 0
+                                  ? `+${item.discrepancy}`
+                                  : item.discrepancy}
                               </span>
                             </div>
                           )}
@@ -2060,7 +2719,10 @@ export default function DailyExport() {
                             size="sm"
                             className="h-8 text-primary hover:bg-primary/10 gap-1"
                             onClick={() =>
-                              setActiveLedgerProduct(item.productName)
+                              setActiveLedgerItem({
+                                productName: item.productName,
+                                batchNo: item.batchNo,
+                              })
                             }
                           >
                             <Eye className="h-4 w-4" /> View / Clean
@@ -2076,7 +2738,7 @@ export default function DailyExport() {
               <span>
                 Showing <strong>{filteredLedger.length === 0 ? 0 : (ledgerPage - 1) * ledgerPageSize + 1}</strong> to{" "}
                 <strong>{Math.min(ledgerPage * ledgerPageSize, filteredLedger.length)}</strong> of{" "}
-                <strong>{filteredLedger.length}</strong> unique products
+                <strong>{filteredLedger.length}</strong> {ledgerViewMode === "product_batch" ? "product-batch combinations" : "unique products"}
               </span>
               {filteredLedger.length > ledgerPageSize && (
                 <div className="flex items-center gap-2">
@@ -2110,14 +2772,19 @@ export default function DailyExport() {
 
       {/* Transaction History & Cleaning Dialog */}
       <Dialog
-        open={!!activeLedgerProduct}
-        onOpenChange={(open) => !open && setActiveLedgerProduct(null)}
+        open={!!activeLedgerItem}
+        onOpenChange={(open) => !open && setActiveLedgerItem(null)}
       >
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+            <DialogTitle className="flex items-center gap-2 flex-wrap">
               <Eye className="h-5 w-5 text-primary" />
-              Transaction Ledger: {selectedProductLedger?.productName}
+              <span>Transaction Ledger: {selectedProductLedger?.productName}</span>
+              {selectedProductLedger?.batchNo && (
+                <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-800 border border-blue-200">
+                  Batch: {selectedProductLedger.batchNo}
+                </span>
+              )}
             </DialogTitle>
             <DialogDescription>
               Chronological log of transactions in the selected date range.
@@ -2141,10 +2808,30 @@ export default function DailyExport() {
               </div>
               <div>
                 <span className="font-bold">
-                  Closing Stock ({formatDateDDMMYYYY(appliedToDate)}):
+                  Physical Closing Stock ({formatDateDDMMYYYY(appliedToDate)}):
                 </span>{" "}
                 <span className="font-mono text-blue-700 font-bold">
                   {selectedProductLedger?.closingStockAtEnd}
+                </span>
+                <span className="text-[11px] text-muted-foreground block mt-0.5">
+                  Available:{" "}
+                  <span
+                    className={
+                      Number(selectedProductLedger?.closingAvailableAtEnd || 0) < 0
+                        ? "text-red-600 font-bold"
+                        : "text-emerald-700 font-bold"
+                    }
+                  >
+                    {selectedProductLedger?.closingAvailableAtEnd}
+                  </span>
+                  {Boolean(
+                    selectedProductLedger?.closingHoldAtEnd &&
+                      selectedProductLedger.closingHoldAtEnd > 0
+                  ) && (
+                    <span className="text-amber-600 font-bold ml-1.5">
+                      (Hold: {selectedProductLedger?.closingHoldAtEnd})
+                    </span>
+                  )}
                 </span>
               </div>
               <div>

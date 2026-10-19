@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
-import { getSales, getChallans, exportCSV, addChallan, generatePendingGroupChallan, classifyPendingOrder, getBatches, getProducts, getClients, confirmChallanGroup, deleteChallanGroup, updateChallanGroup, updateSale, cancelPendingDeliveryGroup, Sale, StockBatch, Challan, Product, Client, formatLocalDate, getLocalDateString } from "@/lib/store";
+import { useNavigate } from "react-router-dom";
+import { getSales, getChallans, exportCSV, addChallan, classifyPendingOrder, getBatches, getProducts, getClients, confirmChallanGroup, deleteChallanGroup, updateSale, cancelPendingDeliveryGroup, Sale, StockBatch, Challan, Product, Client, formatLocalDate, getLocalDateString } from "@/lib/store";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
@@ -35,7 +36,9 @@ const renderCustomer = (customerName: string) => {
 };
 
 export default function PendingDeliveries() {
+  const navigate = useNavigate();
   const [sales, setSales] = useState<Sale[]>([]);
+  const [allSales, setAllSales] = useState<Sale[]>([]);
   const [challans, setChallans] = useState<Challan[]>([]);
   const [cancelledPChallans, setCancelledPChallans] = useState<Challan[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -58,39 +61,94 @@ export default function PendingDeliveries() {
     }
   });
 
-  // Edit dialog state
-  interface EditItemForm {
-    id?: number;          // challan id
-    salesId?: number;     // sale id
-    product: string;
-    orderedQty: number;
-    deliveredQty: number;
-    batchNo: string;
-    stockCategory: "Available" | "Display" | "Damage";
-    remarks: string;
-  }
+  const handleEditPendingOrder = (group: any) => {
+    const firstSale = group.salesItems[0]?.sale;
+    const orderNotes =
+      group.salesItems.find((si: any) => si.pendingChallan?.notes)?.pendingChallan?.notes ||
+      firstSale?.remarks ||
+      "";
+    const targetOrderNo = group.orderNo || firstSale?.orderNo || group.challanNo;
+    const orderDateStr =
+      typeof group.orderDate === "string" && group.orderDate.length >= 10
+        ? group.orderDate.slice(0, 10)
+        : firstSale?.orderDate
+          ? typeof firstSale.orderDate === "string"
+            ? firstSale.orderDate.slice(0, 10)
+            : new Date(firstSale.orderDate).toISOString().slice(0, 10)
+          : getLocalDateString();
 
-  const [showEditDialog, setShowEditDialog] = useState(false);
-  const [editingGroup, setEditingGroup] = useState<any>(null);
-  const [showClientSearch, setShowClientSearch] = useState(false);
-  const [selectedClientIndexForEdit, setSelectedClientIndexForEdit] = useState<number>(-1);
-  const [activeProductSearchIndex, setActiveProductSearchIndex] = useState<number | null>(null);
-  const [selectedProductIndexForEdit, setSelectedProductIndexForEdit] = useState<number>(-1);
-  const [editForm, setEditForm] = useState<{
-    challanNo: string | null;
-    orderNo: string;
-    customer: string;
-    clientPhone: string;
-    estimatedDeliveryDate: string;
-    items: EditItemForm[];
-  }>({
-    challanNo: null,
-    orderNo: "",
-    customer: "",
-    clientPhone: "",
-    estimatedDeliveryDate: "",
-    items: [],
-  });
+    const orderSalesMap = new Map<string, Sale>();
+    const orderNo = group.orderNo || firstSale?.orderNo;
+    const isValidOrderNo = orderNo && !orderNo.startsWith("ORDER-");
+
+    if (isValidOrderNo) {
+      allSales
+        .filter((s) => s.orderNo === orderNo && s.status !== "Cancelled")
+        .forEach((s) => orderSalesMap.set(s.id, s));
+    }
+
+    const saleIdsInGroup = group.salesItems.map((si: any) => si.sale?.id).filter(Boolean);
+    const relatedChallanNos = new Set(
+      challans
+        .filter((c) => saleIdsInGroup.includes(c.salesId) && !c.isCancelled)
+        .map((c) => c.challanNo)
+    );
+    if (group.challanNo) relatedChallanNos.add(group.challanNo);
+
+    if (relatedChallanNos.size > 0) {
+      const siblingSaleIds = new Set(
+        challans
+          .filter((c) => relatedChallanNos.has(c.challanNo) && !c.isCancelled)
+          .map((c) => c.salesId)
+      );
+      allSales
+        .filter((s) => siblingSaleIds.has(s.id) && s.status !== "Cancelled")
+        .forEach((s) => orderSalesMap.set(s.id, s));
+    }
+
+    // Always ensure all sales from group.salesItems are present
+    group.salesItems.forEach((si: any) => {
+      if (si.sale && si.sale.status !== "Cancelled") {
+        orderSalesMap.set(si.sale.id, si.sale);
+      }
+    });
+
+    const orderSales = Array.from(orderSalesMap.values());
+    const itemsToEdit = orderSales.length > 0 ? orderSales : group.salesItems.map((si: any) => si.sale);
+
+    navigate("/sales", {
+      state: {
+        editOrder: {
+          orderNo: targetOrderNo,
+          salesId: firstSale?.id,
+          customer: group.customer,
+          clientPhone: group.clientPhone || firstSale?.clientPhone || "",
+          orderDate: orderDateStr,
+          category: firstSale?.category || "Regular",
+          notes: orderNotes,
+          returnTo: "/pending-orders",
+          items: itemsToEdit.map((itemSale: Sale) => {
+            const si = group.salesItems.find((x: any) => x.sale?.id === itemSale.id);
+            const itemChallan =
+              si?.pendingChallan ||
+              challans.find((c) => c.salesId === itemSale.id && !c.isCancelled);
+            return {
+              id: itemSale.id,
+              salesId: itemSale.id,
+              productName: itemSale.product,
+              quantity: itemSale.orderedQty,
+              fulfilledQty: itemSale.deliveredQty || 0,
+              batchNo: itemSale.batchNo || itemChallan?.batchNo || "",
+              notes: itemChallan?.notes || itemSale.remarks || "",
+              stockCategory:
+                itemSale.stockCategory || itemChallan?.stockCategory || "Available",
+              isProductSelected: true,
+            };
+          }),
+        },
+      },
+    });
+  };
 
   const refresh = useCallback(async () => {
     const [s, b, c, prod, cl] = await Promise.all([getSales(), getBatches(), getChallans(), getProducts(), getClients()]);
@@ -98,6 +156,7 @@ export default function PendingDeliveries() {
     setChallans(c);
     setProducts(prod);
     setClients(cl);
+    setAllSales(s);
 
     // Pre-index active challans by salesId to optimize filtering from O(N*M) to O(N)
     const activeChallansBySalesId = new Map<string, Challan[]>();
@@ -151,7 +210,12 @@ export default function PendingDeliveries() {
     setCancelledPChallans(cancelledP);
   }, []);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => {
+    refresh();
+    const handleStockUpdate = () => refresh();
+    window.addEventListener("erp-stock-updated", handleStockUpdate);
+    return () => window.removeEventListener("erp-stock-updated", handleStockUpdate);
+  }, [refresh]);
 
   const getPendingChallanForSale = (saleId: string): Challan | null =>
     challans.find(c =>
@@ -248,6 +312,12 @@ export default function PendingDeliveries() {
       }
       return s;
     }));
+    setAllSales(prev => prev.map(s => {
+      if (saleIds.includes(s.id) || (group.orderNo && s.orderNo === group.orderNo)) {
+        return { ...s, isOrder: checked };
+      }
+      return s;
+    }));
     setChallans(prev => prev.map(c => {
       if ((group.challanNo && c.challanNo === group.challanNo) || saleIds.includes(c.salesId)) {
         return { ...c, isOrder: checked };
@@ -316,119 +386,6 @@ export default function PendingDeliveries() {
     }
   };
 
-  const handleOpenEditGroupModal = async (group: any) => {
-    await refresh();
-    setEditingGroup(group);
-    setEditForm({
-      challanNo: group.challanNo,
-      orderNo: group.orderNo,
-      customer: group.customer || "",
-      clientPhone: group.clientPhone || "",
-      estimatedDeliveryDate: group.salesItems[0]?.sale.estimatedDeliveryDate || "",
-      items: group.salesItems.map((si: any) => ({
-        id: si.pendingChallan ? si.pendingChallan.id : undefined,
-        salesId: si.sale.id,
-        product: si.sale.product || "",
-        orderedQty: si.sale.orderedQty || 1,
-        deliveredQty: si.sale.deliveredQty || 0,
-        batchNo: si.sale.batchNo || "0",
-        stockCategory: si.sale.stockCategory || "Available",
-        remarks: si.pendingChallan?.notes || si.sale.remarks || "",
-      })),
-    });
-    setShowEditDialog(true);
-  };
-
-  const handleAddProductItem = () => {
-    setEditForm(prev => ({
-      ...prev,
-      items: [
-        {
-          product: "",
-          orderedQty: 1,
-          deliveredQty: 0,
-          batchNo: "0",
-          stockCategory: "Available",
-          remarks: "",
-        },
-        ...prev.items,
-      ],
-    }));
-  };
-
-  const handleRemoveProductItem = (index: number) => {
-    setEditForm(prev => ({
-      ...prev,
-      items: prev.items.filter((_, i) => i !== index),
-    }));
-  };
-
-  const handleUpdateItemRow = (index: number, field: string, value: any) => {
-    setEditForm(prev => {
-      const nextItems = [...prev.items];
-      nextItems[index] = { ...nextItems[index], [field]: value };
-      return { ...prev, items: nextItems };
-    });
-  };
-
-  const handleSaveGroupEdit = async () => {
-    if (!editingGroup) return;
-    if (!editForm.customer.trim()) {
-      toast({ title: "Validation Error", description: "Customer name is required.", variant: "destructive" });
-      return;
-    }
-    if (editForm.items.length === 0) {
-      toast({ title: "Validation Error", description: "At least one product item is required.", variant: "destructive" });
-      return;
-    }
-    for (let i = 0; i < editForm.items.length; i++) {
-      const item = editForm.items[i];
-      if (!item.product.trim()) {
-        toast({ title: "Validation Error", description: `Product name is required for item #${i + 1}.`, variant: "destructive" });
-        return;
-      }
-      const q = Number(item.orderedQty);
-      if (!item.orderedQty || isNaN(q) || q <= 0) {
-        toast({ title: "Validation Error", description: `Quantity must be greater than 0 for "${item.product}". If you wish to remove this product, please delete the row.`, variant: "destructive" });
-        return;
-      }
-    }
-
-    try {
-      const groupKey = editForm.challanNo || editForm.orderNo;
-      await updateChallanGroup(groupKey, {
-        customer: editForm.customer,
-        client_phone: editForm.clientPhone,
-        date: editForm.estimatedDeliveryDate || undefined,
-        items: editForm.items.map(item => ({
-          id: item.id,
-          salesId: item.salesId,
-          productName: item.product,
-          quantity: item.orderedQty,
-          batchNo: item.batchNo || "0",
-          stockCategory: item.stockCategory || "Available",
-          notes: item.remarks || "",
-        })),
-      });
-
-      toast({
-        title: "Pending Delivery Order Updated",
-        description: `Updated order details with ${editForm.items.length} product(s).`,
-      });
-
-      setShowEditDialog(false);
-      setEditingGroup(null);
-      window.dispatchEvent(new CustomEvent("erp-stock-updated"));
-      refresh();
-    } catch (err: any) {
-      toast({
-        title: "Update Failed",
-        description: err.message || "Could not update pending delivery order.",
-        variant: "destructive",
-      });
-    }
-  };
-
   const filteredSales = useMemo(() => {
     let base = sales;
     if (selectedEstDate) {
@@ -463,37 +420,6 @@ export default function PendingDeliveries() {
     currentProductBatches.forEach(b => { if (b.batchNumber) list.add(b.batchNumber); });
     return Array.from(list);
   }, [currentSale, currentProductBatches]);
-
-  const filteredClientsForEdit = useMemo(() => {
-    const q = editForm.customer.toLowerCase().trim();
-    if (!q) return clients;
-    return clients.filter(c =>
-      (c.name || '').toLowerCase().includes(q) ||
-      (c.phone || '').toLowerCase().includes(q)     
-    );
-  }, [clients, editForm.customer]);
-
-  const allProductNames = useMemo(() => {
-    const set = new Set<string>();
-    products.forEach(p => {
-      if (p.status && p.status.toLowerCase() === 'inactive') return;
-      if (p.name && p.name.trim()) set.add(p.name.trim());
-    });
-    batches.forEach(b => {
-      if (b.status && b.status.toLowerCase() === 'inactive') return;
-      if (b.productName && b.productName.trim()) set.add(b.productName.trim());
-    });
-    return Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-  }, [products, batches]);
-
-  const filteredProductsForEdit = useMemo(() => {
-    const activeItem = activeProductSearchIndex !== null ? editForm.items[activeProductSearchIndex] : null;
-    const q = (activeItem?.product || "").toLowerCase().trim();
-    if (!q) return allProductNames;
-    return allProductNames.filter(name =>
-      name.toLowerCase().includes(q)
-    );
-  }, [allProductNames, editForm.items, activeProductSearchIndex]);
 
   const groupedPendingDeliveries = useMemo(() => {
     const groups: Record<string, {
@@ -575,30 +501,7 @@ export default function PendingDeliveries() {
     return groupedPendingDeliveries.slice(start, start + pageSize);
   }, [groupedPendingDeliveries, page, pageSize]);
 
-  useEffect(() => {
-    if (groupedPendingDeliveries.length > 0) {
-      const missingChallans = groupedPendingDeliveries.filter(g => !g.challanNo && g.salesItems.length > 0);
-      if (missingChallans.length > 0) {
-        let isCancelled = false;
-        (async () => {
-          let hasUpdated = false;
-          for (const g of missingChallans) {
-            if (isCancelled) break;
-            try {
-              const res = await generatePendingGroupChallan(g.orderNo, g.salesItems.map(si => si.sale.id));
-              if (res && res.length > 0) hasUpdated = true;
-            } catch (err) {
-              console.error("Auto-generate pending challans error:", err);
-            }
-          }
-          if (hasUpdated && !isCancelled) {
-            refresh();
-          }
-        })();
-        return () => { isCancelled = true; };
-      }
-    }
-  }, [groupedPendingDeliveries, refresh]);
+
 
   // Migrate any previous localStorage order-classified records to database
   useEffect(() => {
@@ -721,7 +624,7 @@ export default function PendingDeliveries() {
                 ) : paginatedPendingDeliveries.map(group => {
                   const estDate = group.salesItems.find(i => i.sale.estimatedDeliveryDate)?.sale.estimatedDeliveryDate || null;
                   const isRawOrderNo = group.orderNo.startsWith("ORD-");
-                  const displayChallanNo = group.challanNo || (isRawOrderNo ? "P--" : group.orderNo);
+                  const displayChallanNo = group.challanNo || group.orderNo;
                   const isDbClassified = group.salesItems.some(i => i.sale.isOrder || i.pendingChallan?.isOrder);
                   const isLocalClassified = !!(
                     orderClassifiedRows[group.groupKey] ||
@@ -900,8 +803,8 @@ export default function PendingDeliveries() {
                                     variant="outline"
                                     size="sm"
                                     className="h-7 px-2 text-xs border-slate-300 text-slate-700 hover:bg-slate-100 hover:text-slate-900 font-medium shrink-0"
-                                    onClick={() => handleOpenEditGroupModal(group)}
-                                    title="Edit Order / Pending Delivery Details"
+                                    onClick={() => handleEditPendingOrder(group)}
+                                    title="Edit Order in Sales Module"
                                   >
                                     <Pencil className="h-3.5 w-3.5 mr-1 text-slate-600" /> Edit
                                   </Button>
@@ -1084,368 +987,6 @@ export default function PendingDeliveries() {
         </DialogContent>
       </Dialog>
 
-      {/* Edit Pending Delivery Dialog */}
-      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Edit Pending Delivery Details {editForm.challanNo ? `(${editForm.challanNo})` : editForm.orderNo ? `(${editForm.orderNo})` : ""}</DialogTitle>
-            <DialogDescription>
-              Modify customer details, delivery date, products, quantities, batches, or add new products to this pending order.
-            </DialogDescription>
-          </DialogHeader>
-
-          {editingGroup && (
-            <div className="space-y-4 py-2 text-sm">
-              {/* Order Header Fields */}
-              <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3 rounded-lg border border-slate-200">
-                {/* Client Name with Auto-Search */}
-                <div className="space-y-1">
-                  <Label className="text-xs font-bold text-slate-700">Client Name</Label>
-                  <div className="relative">
-                    <Input
-                      className="h-9 pr-8 bg-white"
-                      value={editForm.customer}
-                      onChange={e => {
-                        const val = e.target.value;
-                        setEditForm(prev => ({ ...prev, customer: val }));
-                        setShowClientSearch(true);
-                        setSelectedClientIndexForEdit(-1);
-                      }}
-                      onFocus={() => {
-                        setShowClientSearch(true);
-                        setSelectedClientIndexForEdit(-1);
-                      }}
-                      onBlur={() => setTimeout(() => {
-                        setShowClientSearch(false);
-                        setSelectedClientIndexForEdit(-1);
-                      }, 200)}
-                      onKeyDown={e => {
-                        if (!showClientSearch || filteredClientsForEdit.length === 0) return;
-                        if (e.key === 'ArrowDown') {
-                          e.preventDefault();
-                          setSelectedClientIndexForEdit(prev => (prev < filteredClientsForEdit.length - 1 ? prev + 1 : 0));
-                        } else if (e.key === 'ArrowUp') {
-                          e.preventDefault();
-                          setSelectedClientIndexForEdit(prev => (prev > 0 ? prev - 1 : filteredClientsForEdit.length - 1));
-                        } else if (e.key === 'Enter' || e.key === 'Tab') {
-                          e.preventDefault();
-                          const idxToPick = selectedClientIndexForEdit >= 0 ? selectedClientIndexForEdit : 0;
-                          const c = filteredClientsForEdit[idxToPick];
-                          if (c) {
-                            setEditForm(prev => ({
-                              ...prev,
-                              customer: c.name,
-                              clientPhone: c.phone || prev.clientPhone,
-                            }));
-                            setShowClientSearch(false);
-                            setSelectedClientIndexForEdit(-1);
-                          }
-                        } else if (e.key === 'Escape') {
-                          setShowClientSearch(false);
-                          setSelectedClientIndexForEdit(-1);
-                        }
-                      }}
-                      placeholder="Search client..."
-                      autoComplete="off"
-                    />
-                    <User className="absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
-
-                    {showClientSearch && filteredClientsForEdit.length > 0 && (
-                      <div className="absolute z-[120] left-0 right-0 mt-1 bg-popover border border-slate-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
-                        {filteredClientsForEdit.map((c, i) => (
-                          <div
-                            key={c.id}
-                            className={`px-3 py-2 cursor-pointer text-xs flex items-center justify-between border-b border-slate-100 last:border-0 ${selectedClientIndexForEdit === i ? 'bg-blue-50 text-blue-900 font-semibold' : 'hover:bg-slate-100'}`}
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              setEditForm(prev => ({
-                                ...prev,
-                                customer: c.name,
-                                clientPhone: c.phone || prev.clientPhone,
-                              }));
-                              setShowClientSearch(false);
-                              setSelectedClientIndexForEdit(-1);
-                            }}
-                          >
-                            <span className="font-semibold text-slate-900">{c.name}</span>
-                            <span className="text-[11px] text-slate-500 font-mono">{c.phone || "No phone"}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Phone Number */}
-                <div className="space-y-1">
-                  <Label className="text-xs font-bold text-slate-700">Phone Number</Label>
-                  <Input
-                    className="h-9 bg-white"
-                    value={editForm.clientPhone}
-                    onChange={e => setEditForm({ ...editForm, clientPhone: e.target.value })}
-                    placeholder="Phone number"
-                  />
-                </div>
-
-                {/* Estimated Delivery Date */}
-                <div className="space-y-1 col-span-2 sm:col-span-1">
-                  <Label className="text-xs font-bold text-slate-700">Est. Delivery Date</Label>
-                  <Input
-                    type="date"
-                    className="h-9 bg-white"
-                    value={editForm.estimatedDeliveryDate}
-                    onChange={e => setEditForm({ ...editForm, estimatedDeliveryDate: e.target.value })}
-                  />
-                </div>
-              </div>
-
-              {/* Products Section */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between border-b pb-2">
-                  <h3 className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
-                    <Package className="h-4 w-4 text-blue-600" /> Products & Order Items
-                  </h3>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="h-8 text-xs border-blue-200 text-blue-700 hover:bg-blue-50"
-                    onClick={handleAddProductItem}
-                  >
-                    <Plus className="h-3.5 w-3.5 mr-1" /> Add Product
-                  </Button>
-                </div>
-
-                {editForm.items.map((item, idx) => {
-                  const allProductBatches = batches.filter(b => b.productName.trim().toLowerCase() === item.product.trim().toLowerCase());
-                  const matchingBatches = batches.filter(b => {
-                    const nameMatches = b.productName.trim().toLowerCase() === item.product.trim().toLowerCase();
-                    if (!nameMatches) return false;
-                    if (item.batchNo && item.batchNo !== "0" && item.batchNo.trim() !== "") {
-                      return (b.batchNumber || "").trim().toLowerCase() === item.batchNo.trim().toLowerCase();
-                    }
-                    return true;
-                  });
-                  const itemTotalStock = matchingBatches.reduce((acc, curr) => {
-                    const col = item.stockCategory === "Display" ? curr.displayQty : item.stockCategory === "Damage" ? curr.damageQty : curr.availableQty;
-                    return acc + Number(col || 0);
-                  }, 0);
-
-                  const prodCategory = products.find(p => p.name.trim().toLowerCase() === item.product.trim().toLowerCase())?.category || allProductBatches.find(b => b.productName.trim().toLowerCase() === item.product.trim().toLowerCase())?.category || "";
-
-                  const batchOptionsSet = new Set<string>();
-                  if (item.batchNo) batchOptionsSet.add(item.batchNo);
-                  batchOptionsSet.add("0");
-                  allProductBatches.forEach(b => { if (b.batchNumber) batchOptionsSet.add(b.batchNumber); });
-                  const batchOptionsList = Array.from(batchOptionsSet);
-
-                  return (
-                    <div key={idx} className="p-3 border border-slate-200 rounded-lg bg-white shadow-sm space-y-3 relative">
-                      <div className="flex items-center justify-between text-xs font-bold text-slate-700 border-b pb-1">
-                        <div className="flex items-center gap-2">
-                          <span>Item #{idx + 1}</span>
-                          {prodCategory && (
-                            <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded">
-                              Category: {prodCategory}
-                            </span>
-                          )}
-                        </div>
-                        {editForm.items.length > 1 && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6 text-red-500 hover:text-red-700 hover:bg-red-50"
-                            onClick={() => handleRemoveProductItem(idx)}
-                            title="Remove product item"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                        {/* Product Search */}
-                        <div className="space-y-1 relative sm:col-span-2">
-                          <Label className="text-[11px] font-semibold text-slate-600">Product Name</Label>
-                          <div className="relative">
-                            <Input
-                              className="h-8 text-xs pr-7"
-                              value={item.product}
-                              onChange={e => {
-                                handleUpdateItemRow(idx, "product", e.target.value);
-                                handleUpdateItemRow(idx, "batchNo", "0");
-                                setActiveProductSearchIndex(idx);
-                                setSelectedProductIndexForEdit(-1);
-                              }}
-                              onFocus={() => {
-                                setActiveProductSearchIndex(idx);
-                                setSelectedProductIndexForEdit(-1);
-                              }}
-                              onBlur={() => setTimeout(() => {
-                                if (activeProductSearchIndex === idx) {
-                                  setActiveProductSearchIndex(null);
-                                  setSelectedProductIndexForEdit(-1);
-                                }
-                              }, 200)}
-                              onKeyDown={e => {
-                                if (activeProductSearchIndex !== idx || filteredProductsForEdit.length === 0) return;
-                                if (e.key === 'ArrowDown') {
-                                  e.preventDefault();
-                                  setSelectedProductIndexForEdit(prev => (prev < filteredProductsForEdit.length - 1 ? prev + 1 : 0));
-                                } else if (e.key === 'ArrowUp') {
-                                  e.preventDefault();
-                                  setSelectedProductIndexForEdit(prev => (prev > 0 ? prev - 1 : filteredProductsForEdit.length - 1));
-                                } else if (e.key === 'Enter' || e.key === 'Tab') {
-                                  e.preventDefault();
-                                  const idxToPick = selectedProductIndexForEdit >= 0 ? selectedProductIndexForEdit : 0;
-                                  const name = filteredProductsForEdit[idxToPick];
-                                  if (name) {
-                                    handleUpdateItemRow(idx, "product", name);
-                                    handleUpdateItemRow(idx, "batchNo", "0");
-                                    setActiveProductSearchIndex(null);
-                                    setSelectedProductIndexForEdit(-1);
-                                  }
-                                } else if (e.key === 'Escape') {
-                                  setActiveProductSearchIndex(null);
-                                  setSelectedProductIndexForEdit(-1);
-                                }
-                              }}
-                              placeholder="Search product..."
-                              autoComplete="off"
-                            />
-                            <Package className="absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
-                          </div>
-
-                          {activeProductSearchIndex === idx && filteredProductsForEdit.length > 0 && (
-                            <div className="absolute z-[120] left-0 right-0 mt-1 bg-popover border border-slate-200 rounded-md shadow-lg max-h-40 overflow-y-auto">
-                              {filteredProductsForEdit.map((name, i) => {
-                                const prodObj = products.find(p => p.name.trim().toLowerCase() === name.toLowerCase());
-                                const category = prodObj?.category || batches.find(b => b.productName.trim().toLowerCase() === name.toLowerCase())?.category || "";
-                                return (
-                                  <div
-                                    key={name}
-                                    className={`px-3 py-1.5 cursor-pointer text-xs flex items-center justify-between border-b border-slate-100 last:border-0 ${selectedProductIndexForEdit === i ? 'bg-blue-50 text-blue-900 font-semibold' : 'hover:bg-slate-100'}`}
-                                    onMouseDown={(e) => {
-                                      e.preventDefault();
-                                      handleUpdateItemRow(idx, "product", name);
-                                      handleUpdateItemRow(idx, "batchNo", "0");
-                                      setActiveProductSearchIndex(null);
-                                      setSelectedProductIndexForEdit(-1);
-                                    }}
-                                  >
-                                    <span className="font-semibold text-slate-900">{name}</span>
-                                    {category && (
-                                      <span className="text-[10px] text-slate-500 px-1 py-0.5 bg-slate-100 rounded">{category}</span>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Stock Category */}
-                        <div className="space-y-1">
-                          <Label className="text-[11px] font-semibold text-slate-600">Stock Category</Label>
-                          <Select value={item.stockCategory} onValueChange={v => handleUpdateItemRow(idx, "stockCategory", v)}>
-                            <SelectTrigger className="h-8 text-xs">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="Available">Available</SelectItem>
-                              <SelectItem value="Display">Display</SelectItem>
-                              <SelectItem value="Damage">Damage</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                        {/* Batch */}
-                        <div className="space-y-1">
-                          <Label className="text-[11px] font-semibold text-slate-600">Batch</Label>
-                          <Select value={item.batchNo} onValueChange={v => handleUpdateItemRow(idx, "batchNo", v)}>
-                            <SelectTrigger className="h-8 text-xs">
-                              <SelectValue placeholder="Select Batch" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {batchOptionsList.map(bNo => {
-                                const bv = bNo || "0";
-                                const mb = allProductBatches.find(b => (b.batchNumber || "0") === bv);
-                                const avail = mb ? (item.stockCategory === "Display" ? mb.displayQty : item.stockCategory === "Damage" ? mb.damageQty : mb.availableQty) : 0;
-                                return (
-                                  <SelectItem key={bv} value={bv}>
-                                    {bv} {mb ? `(Stock: ${avail})` : "(Default)"}
-                                  </SelectItem>
-                                );
-                              })}
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        {/* Ordered Qty */}
-                        <div className="space-y-1">
-                          <Label className="text-[11px] font-semibold text-slate-600">Ordered Qty</Label>
-                          <Input
-                            type="number"
-                            min={1}
-                            className="h-8 text-xs font-semibold"
-                            value={item.orderedQty}
-                            onChange={e => handleUpdateItemRow(idx, "orderedQty", Number(e.target.value))}
-                          />
-                          {item.deliveredQty > 0 && (
-                            <div className="text-[10px] text-slate-500">
-                              Delivered: <span className="text-green-600 font-bold">{item.deliveredQty}</span> | Pending: <span className="text-red-600 font-bold">{Math.max(0, item.orderedQty - item.deliveredQty)}</span>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Stock Status Badge */}
-                        <div className="space-y-1 flex flex-col justify-end">
-                          {item.product && (
-                            <div className="text-[11px] font-medium pb-1">
-                              {itemTotalStock >= 0 ? (
-                                <span className="text-green-700 bg-green-50 px-2 py-1 rounded border border-green-200 inline-block text-[11px]">
-                                  Stock Ready ({itemTotalStock} extra)
-                                </span>
-                              ) : (
-                                <span className="text-red-700 bg-red-50 px-2 py-1 rounded border border-red-200 inline-block text-[11px]">
-                                  Stock Shortage (Need {Math.abs(itemTotalStock)})
-                                </span>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Remarks */}
-                      <div className="space-y-1">
-                        <Label className="text-[11px] font-semibold text-slate-600">Narration / Notes</Label>
-                        <Input
-                          className="h-8 text-xs"
-                          value={item.remarks}
-                          onChange={e => handleUpdateItemRow(idx, "remarks", e.target.value)}
-                          placeholder="Narration / notes..."
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowEditDialog(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleSaveGroupEdit} className="bg-blue-600 hover:bg-blue-700">
-              Save Changes
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

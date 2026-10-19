@@ -56,21 +56,32 @@ export default function DeliveredDeliveries() {
     const sorted = [...challans].sort((a, b) => {
       const saleA = salesMap.get(a.salesId);
       const saleB = salesMap.get(b.salesId);
-      const dateA = saleA?.updatedAt || a.createdAt || "";
-      const dateB = saleB?.updatedAt || b.createdAt || "";
-      const dateCompare = dateB.localeCompare(dateA);
+      const dateA = a.deliveredAt || a.deliveryDate || saleA?.deliveredAt || saleA?.updatedAt || a.createdAt || "";
+      const dateB = b.deliveredAt || b.deliveryDate || saleB?.deliveredAt || saleB?.updatedAt || b.createdAt || "";
+      const dateCompare = String(dateB).localeCompare(String(dateA));
       if (dateCompare !== 0) return dateCompare;
       return (b.challanNo || '').localeCompare(a.challanNo || '', undefined, { numeric: true, sensitivity: "base" });
     });
     if (!filter) return sorted;
-    const f = filter.toLowerCase();
+    const f = filter.toLowerCase().trim();
     return sorted.filter(c => {
       const sale = salesMap.get(c.salesId);
       const orderNo = sale?.orderNo || "";
+      const billNo = c.billNo || "";
+      const delDateStr = c.deliveryDate || (c.deliveredAt ? String(c.deliveredAt).slice(0, 10) : "");
+      const formattedDelDate = delDateStr ? formatLocalDate(delDateStr) : "";
+      const challanDateStr = c.createdAt ? String(c.createdAt).slice(0, 10) : "";
+      const formattedChallanDate = challanDateStr ? formatLocalDate(challanDateStr) : "";
+
       return (c.customer || '').toLowerCase().includes(f) ||
              (c.product || '').toLowerCase().includes(f) ||
              (c.challanNo || '').toLowerCase().includes(f) ||
-             orderNo.toLowerCase().includes(f);
+             billNo.toLowerCase().includes(f) ||
+             orderNo.toLowerCase().includes(f) ||
+             delDateStr.toLowerCase().includes(f) ||
+             formattedDelDate.toLowerCase().includes(f) ||
+             challanDateStr.toLowerCase().includes(f) ||
+             formattedChallanDate.toLowerCase().includes(f);
     });
   }, [challans, salesMap, filter]);
 
@@ -83,34 +94,43 @@ export default function DeliveredDeliveries() {
     });
     return Object.entries(groups)
       .filter(([_, items]) => items.length > 0)
-      .map(([challanNo, items]) => ({
-        challanNo,
-        customer: items[0].customer,
-        clientPhone: items[0].clientPhone,
-        createdAt: items[0].createdAt,
-        billNo: items.find((i) => i.billNo)?.billNo || "",
-        items: items,
-        salesId: items[0].salesId,
-      }))
+      .map(([challanNo, items]) => {
+        const itemWithDeliveryDate = items.find((i) => i.deliveryDate);
+        const itemWithDeliveredAt = items.find((i) => i.deliveredAt);
+        const relatedSale = salesMap.get(items[0].salesId);
+
+        const rawDeliveredAt = itemWithDeliveredAt?.deliveredAt || relatedSale?.deliveredAt || items[0].updatedAt || items[0].createdAt;
+        const rawDeliveryDate = itemWithDeliveryDate?.deliveryDate || (rawDeliveredAt ? String(rawDeliveredAt).slice(0, 10) : undefined);
+
+        return {
+          challanNo,
+          customer: items[0].customer,
+          clientPhone: items[0].clientPhone,
+          createdAt: items[0].createdAt,
+          deliveryDate: rawDeliveryDate,
+          deliveredAt: rawDeliveredAt,
+          billNo: items.find((i) => i.billNo)?.billNo || "",
+          items: items,
+          salesId: items[0].salesId,
+        };
+      })
       .sort((a, b) => {
         const getGroupLatestTime = (group: typeof a) => {
           let maxTime = 0;
+          const candidateDates = [
+            group.deliveredAt,
+            group.deliveryDate,
+            group.createdAt,
+          ];
           for (const item of group.items) {
-            if (item.updatedAt) {
-              const t = new Date(item.updatedAt).getTime();
-              if (!isNaN(t) && t > maxTime) maxTime = t;
-            }
-            if (item.createdAt) {
-              const t = new Date(item.createdAt).getTime();
-              if (!isNaN(t) && t > maxTime) maxTime = t;
-            }
-            const sale = sales.find((s) => s.id === item.salesId);
-            if (sale?.updatedAt) {
-              const t = new Date(sale.updatedAt).getTime();
-              if (!isNaN(t) && t > maxTime) maxTime = t;
-            }
-            if (sale?.createdAt) {
-              const t = new Date(sale.createdAt).getTime();
+            if (item.deliveredAt) candidateDates.push(item.deliveredAt);
+            if (item.deliveryDate) candidateDates.push(item.deliveryDate);
+            if (item.updatedAt) candidateDates.push(item.updatedAt);
+            if (item.createdAt) candidateDates.push(item.createdAt);
+          }
+          for (const d of candidateDates) {
+            if (d) {
+              const t = new Date(d).getTime();
               if (!isNaN(t) && t > maxTime) maxTime = t;
             }
           }
@@ -122,7 +142,7 @@ export default function DeliveredDeliveries() {
         if (timeA !== timeB) return timeB - timeA;
         return b.challanNo.localeCompare(a.challanNo, undefined, { numeric: true, sensitivity: "base" });
       });
-  }, [filteredChallans, sales]);
+  }, [filteredChallans, salesMap]);
 
   const totalPages = Math.max(1, Math.ceil(groupedChallans.length / pageSize));
 
@@ -130,6 +150,29 @@ export default function DeliveredDeliveries() {
     const start = (page - 1) * pageSize;
     return groupedChallans.slice(start, start + pageSize);
   }, [groupedChallans, page, pageSize]);
+
+  const handleExportCSV = () => {
+    const exportData = filteredChallans.map((c) => {
+      const sale = salesMap.get(c.salesId);
+      const delDate = c.deliveryDate || (c.deliveredAt ? String(c.deliveredAt).slice(0, 10) : (c.updatedAt ? String(c.updatedAt).slice(0, 10) : String(c.createdAt).slice(0, 10)));
+      return {
+        "Challan No": c.challanNo,
+        "Bill No": c.billNo || "",
+        "Order No": sale?.orderNo || "",
+        "Delivered Date": formatLocalDate(delDate),
+        "Challan Date": formatLocalDate(c.createdAt),
+        "Customer": c.customer,
+        "Phone": c.clientPhone || "",
+        "Product": c.product,
+        "Batch No": c.batchNo || "0",
+        "Quantity": c.quantity,
+        "Stock Category": c.stockCategory || "Available",
+        "Status": c.status,
+        "Narration": c.notes || sale?.remarks || "",
+      };
+    });
+    exportCSV(exportData, `delivered-orders-${getLocalDateString()}.csv`);
+  };
 
   return (
     <div className="space-y-4">
@@ -145,7 +188,7 @@ export default function DeliveredDeliveries() {
               className="pl-9 h-9"
             />
           </div>
-          <Button variant="outline" size="sm" onClick={() => exportCSV(filteredChallans as any, `delivered-orders-${new Date().toISOString().slice(0, 10)}.csv`)}><Download className="mr-1 h-4 w-4" />Export</Button>
+          <Button variant="outline" size="sm" onClick={handleExportCSV}><Download className="mr-1 h-4 w-4" />Export</Button>
           <Button variant="outline" size="sm" onClick={() => printElement("delivered-table")}><Printer className="mr-1 h-4 w-4" />Print</Button>
         </div>
       </div>
@@ -155,7 +198,7 @@ export default function DeliveredDeliveries() {
           <Table className="border-collapse border-2 border-slate-300 w-full" wrapperClassName="max-h-[calc(100vh-130px)]">
             <TableHeader className="sticky top-0 bg-slate-100 z-10 shadow-2xs border-b-2 border-slate-300">
               <TableRow className="hover:bg-transparent">
-                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Date</TableHead>
+                <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Delivered / Challan Date</TableHead>
                 <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Challan / Bill No</TableHead>
                 <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Client</TableHead>
                 <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 w-2/5">Items / Quantities</TableHead>
@@ -173,7 +216,22 @@ export default function DeliveredDeliveries() {
                 ) : paginatedGroupedChallans.map(group => {
                   return (
                     <TableRow key={group.challanNo} className="hover:bg-slate-50/40">
-                      <TableCell className="border-2 border-slate-300 px-4 py-3 text-sm text-slate-700 font-medium whitespace-nowrap">{formatLocalDate(group.createdAt)}</TableCell>
+                      <TableCell className="border-2 border-slate-300 px-4 py-3 text-sm text-slate-700 font-medium whitespace-nowrap">
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-green-700 bg-green-50 border border-green-200 px-1.5 py-0.5 rounded shadow-2xs">
+                              Delivered
+                            </span>
+                            <span className="font-semibold text-slate-900">
+                              {formatLocalDate(group.deliveryDate || group.deliveredAt || group.createdAt)}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                            <span className="text-[10px] font-medium text-slate-400">Challan:</span>
+                            <span>{formatLocalDate(group.createdAt)}</span>
+                          </div>
+                        </div>
+                      </TableCell>
                       <TableCell className="border-2 border-slate-300 px-4 py-3 font-medium">
                         <div className="flex flex-col gap-1">
                           <span className="font-mono text-xs font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 w-fit">
