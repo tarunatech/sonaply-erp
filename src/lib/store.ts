@@ -96,6 +96,8 @@ export interface Sale {
   stockCategory?: "Available" | "Display" | "Damage";
   createdAt?: string;
   updatedAt?: string;
+  deliveredAt?: string;
+  deliveryDate?: string;
   estimatedDeliveryDate?: string;
   isOrder?: boolean;
 }
@@ -122,6 +124,8 @@ export interface Challan {
   quantity: number;
   createdAt: string;
   updatedAt?: string;
+  deliveredAt?: string;
+  deliveryDate?: string;
   notes?: string;
   isPrinted?: boolean;
   isBuilt?: boolean;
@@ -149,6 +153,7 @@ export interface ChallanGroupItem {
 }
 
 export interface ChallanGroupUpdate {
+  orderNo?: string;
   challanNumber?: string;
   clientName?: string;
   customer?: string;
@@ -248,6 +253,8 @@ const mapSale = (s: any): Sale => ({
   stockCategory: s.stock_category,
   createdAt: s.created_at,
   updatedAt: s.updated_at,
+  deliveredAt: s.delivered_at,
+  deliveryDate: s.delivery_date ? String(s.delivery_date).slice(0, 10) : (s.delivered_at ? String(s.delivered_at).slice(0, 10) : undefined),
   estimatedDeliveryDate: s.estimated_delivery_date ? String(s.estimated_delivery_date).slice(0, 10) : undefined,
   isOrder: Boolean(s.is_order),
 });
@@ -276,6 +283,8 @@ const mapChallan = (c: any): Challan => ({
   quantity: Number(c.quantity || 0),
   createdAt: c.created_at,
   updatedAt: c.updated_at || c.created_at,
+  deliveredAt: c.delivered_at,
+  deliveryDate: c.delivery_date ? String(c.delivery_date).slice(0, 10) : (c.delivered_at ? String(c.delivered_at).slice(0, 10) : undefined),
   notes: c.notes,
   isPrinted: c.is_printed,
   isBuilt: c.is_built,
@@ -506,6 +515,7 @@ export const updateBatch = (id: string, updates: Partial<StockBatch>) => {
     body.is_cancelled = updates.isCancelled;
   if (updates.isDeadStock !== undefined)
     body.is_dead_stock = updates.isDeadStock;
+  if (updates.date !== undefined) body.date = updates.date;
 
   return request<any>(`/batches/${id}`, {
     method: "PUT",
@@ -585,16 +595,37 @@ export const releaseHold = (id: string) =>
   request(`/holds/${id}`, { method: "DELETE" });
 export const cancelHold = (id: string) =>
   request(`/holds/cancel/${id}`, { method: "DELETE" });
+export const updateHoldGroup = (payload: {
+  holdIds: string | string[];
+  clientName: string;
+  clientPhone?: string;
+  category?: string;
+  holdDate?: string;
+  items: {
+    productName: string;
+    quantity: number;
+    batchNo?: string;
+  }[];
+}) =>
+  request<{ success: boolean; holds: any[] }>("/holds/group", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
 
 // Dashboard
 export interface DashboardStats {
   totalStock: number;
   pendingDeliveries: number;
+  todaySalesQty?: number;
+  todayPurchasesQty?: number;
   todaySales: number;
   todayPurchases: number;
+  todaySalesAmount?: number;
+  todayPurchasesAmount?: number;
   todayChallans: number;
   catDist: { name: string; value: number }[];
-  monthlySales: { month: string; sales: number }[];
+  monthlyComparison?: { month: string; salesQty: number; purchaseQty: number; sales?: number; purchase?: number }[];
+  monthlySales: { month: string; sales: number; salesQty?: number; purchaseQty?: number }[];
 }
 
 export const getDashboardStats = () => request<DashboardStats>("/dashboard/stats");
@@ -759,6 +790,28 @@ export const updateChallan = (id: string, updates: Partial<Challan>) => {
     body: JSON.stringify(body),
   }).then(mapChallan);
 };
+export const updateOrderGroup = (
+  orderNo: string,
+  payload: ChallanGroupUpdate,
+) =>
+  request<any>(`/orders/group/${encodeURIComponent(orderNo)}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      customer: payload.customer || payload.clientName,
+      client_phone: payload.client_phone || payload.clientPhone,
+      date: payload.date,
+      items: payload.items.map((item) => ({
+        id: item.id,
+        salesId: item.salesId,
+        product: item.productName || item.product,
+        quantity: item.quantity,
+        batch_no: item.batchNo,
+        notes: item.notes,
+        stock_category:
+          item.stockCategory || item.stock_category || "Available",
+      })),
+    }),
+  });
 export const updateChallanGroup = (
   challanNumber: string,
   payload: ChallanGroupUpdate,
@@ -823,8 +876,11 @@ export const deliverSale = (id: string) =>
   request<any>(`/sales/${id}/deliver`, { method: "PUT" });
 export const confirmChallanGroup = (challanNo: string) =>
   request<any>(`/challans/group/${encodeURIComponent(challanNo)}/confirm`, { method: "PUT" });
-export const deliverChallanGroup = (challanNo: string) =>
-  request<any>(`/challans/group/${encodeURIComponent(challanNo)}/deliver`, { method: "PUT" });
+export const deliverChallanGroup = (challanNo: string, deliveryDate?: string) =>
+  request<any>(`/challans/group/${encodeURIComponent(challanNo)}/deliver`, {
+    method: "PUT",
+    body: deliveryDate ? JSON.stringify({ deliveryDate }) : undefined,
+  });
 export const updateChallanGroupBillNo = (challanNo: string, billNo: string) =>
   request<any>(`/challans/group/${encodeURIComponent(challanNo)}/bill`, {
     method: "PUT",

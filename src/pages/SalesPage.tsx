@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { addSale, addSaleBulk, addClient, getBatches, getClients, getSales, addHold, cancelHold, updateSale, deleteSale, deleteChallanGroup, exportCSV, confirmSale, deliverSale, updateChallanGroup, updateDeliveredOrderGroup, Sale, Client, StockBatch, generateWhatsAppLink, getLocalDateString } from "@/lib/store";
+import { addSale, addSaleBulk, addClient, getBatches, getClients, getSales, addHold, cancelHold, updateHoldGroup, updateSale, deleteSale, deleteChallanGroup, exportCSV, confirmSale, deliverSale, updateChallanGroup, updateDeliveredOrderGroup, updateOrderGroup, Sale, Client, StockBatch, generateWhatsAppLink, getLocalDateString } from "@/lib/store";
 import { Hand } from "lucide-react";
 
 import { printElement } from "@/lib/print";
@@ -98,6 +98,9 @@ export default function SalesPage() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('new');
   const [editingChallanNumber, setEditingChallanNumber] = useState<string | null>(null);
+  const [isEditingOrder, setIsEditingOrder] = useState(false);
+  const [editingOrderNumber, setEditingOrderNumber] = useState<string | null>(null);
+  const [editingOrderStatus, setEditingOrderStatus] = useState<string | null>(null);
   const [isEditingDeliveredOrder, setIsEditingDeliveredOrder] = useState(false);
   const [isEditingHold, setIsEditingHold] = useState(false);
   const [editingHoldId, setEditingHoldId] = useState<string | null>(null);
@@ -162,6 +165,8 @@ export default function SalesPage() {
     if (location.state?.editHold) {
       const { editHold } = location.state;
       setIsEditingHold(true);
+      setIsEditingOrder(false);
+      setEditingOrderNumber(null);
       setIsEditingDeliveredOrder(false);
       setEditingHoldId(editHold.id);
       setEditingChallanNumber(null);
@@ -206,6 +211,8 @@ export default function SalesPage() {
     if (location.state?.editDeliveredOrder) {
       const { editDeliveredOrder } = location.state;
       setIsEditingDeliveredOrder(true);
+      setIsEditingOrder(false);
+      setEditingOrderNumber(null);
       setIsEditingHold(false);
       setEditingHoldId(null);
       setClientName(editDeliveredOrder.customer || '');
@@ -227,7 +234,7 @@ export default function SalesPage() {
         );
       }
       setEditingChallanNumber(editDeliveredOrder.challanNumber);
-      setReturnTo(editDeliveredOrder.returnTo || '/delivered-deliveries');
+      setReturnTo(editDeliveredOrder.returnTo || '/delivered-orders');
       setActiveTab('new');
 
       if (allClients.length > 0 && editDeliveredOrder.customer) {
@@ -248,8 +255,58 @@ export default function SalesPage() {
       return;
     }
 
+    if (location.state?.editOrder) {
+      const { editOrder } = location.state;
+      setIsEditingOrder(true);
+      setEditingOrderNumber(editOrder.orderNo);
+      setEditingOrderStatus(editOrder.status || null);
+      setIsEditingDeliveredOrder(false);
+      setIsEditingHold(false);
+      setEditingHoldId(null);
+      setEditingChallanNumber(null);
+      setClientName(editOrder.customer || '');
+      setClientPhone(editOrder.clientPhone || '');
+      setPriceCategory(editOrder.category || 'Regular');
+      setOrderDate(editOrder.orderDate || getLocalDateString());
+      setNarration(editOrder.notes || '');
+      if (editOrder.items && editOrder.items.length > 0) {
+        setItems(
+          editOrder.items.map((it: any) => ({
+            id: it.id,
+            salesId: it.salesId,
+            productName: it.productName || it.product || '',
+            quantity: Number(it.quantity || 0),
+            stockCategory: it.stockCategory || 'Available',
+            batchNo: it.batchNo || '',
+            isProductSelected: true,
+          }))
+        );
+      }
+      setReturnTo(editOrder.returnTo || '/pending-orders');
+      setActiveTab('new');
+
+      if (allClients.length > 0 && editOrder.customer) {
+        const matching = allClients.find(
+          (c) => c.name.toLowerCase().trim() === editOrder.customer.toLowerCase().trim()
+        );
+        if (matching) setSelectedClientId(matching.id);
+      }
+
+      window.history.replaceState({}, document.title);
+
+      setTimeout(() => {
+        if (clientInputRef.current) {
+          clientInputRef.current.focus();
+          clientInputRef.current.select();
+        }
+      }, 100);
+      return;
+    }
+
     if (location.state?.editChallan) {
       const { editChallan } = location.state;
+      setIsEditingOrder(false);
+      setEditingOrderNumber(null);
       setIsEditingDeliveredOrder(false);
       setIsEditingHold(false);
       setEditingHoldId(null);
@@ -353,6 +410,42 @@ export default function SalesPage() {
     return map;
   }, [allBatches]);
 
+  const isEligibleForHold = useMemo(() => {
+    if (isEditingDeliveredOrder) return false;
+    if (editingHoldId || isEditingHold) return false;
+
+    if (editingOrderStatus === "Delivered" || editingOrderStatus === "Cancelled") {
+      return false;
+    }
+
+    if (isEditingOrder && editingOrderNumber) {
+      const relatedSales = sales.filter((s) => s.orderNo === editingOrderNumber);
+      if (relatedSales.length > 0) {
+        const allCancelled = relatedSales.every((s) => s.status === "Cancelled");
+        const allDelivered = relatedSales.every(
+          (s) => s.status === "Delivered" || (Number(s.pendingQty) === 0 && Number(s.deliveredQty) > 0)
+        );
+        if (allCancelled || allDelivered) return false;
+      }
+      return true;
+    }
+
+    if (editingChallanNumber) {
+      return !isEditingDeliveredOrder;
+    }
+
+    return false;
+  }, [
+    isEditingDeliveredOrder,
+    editingHoldId,
+    isEditingHold,
+    editingOrderStatus,
+    isEditingOrder,
+    editingOrderNumber,
+    sales,
+    editingChallanNumber,
+  ]);
+
   const filteredSales = useMemo(() => {
     const f = productFilter.toLowerCase().trim();
     if (!f) {
@@ -437,7 +530,14 @@ export default function SalesPage() {
     setItems(prev => {
       const nextIdx = prev.length;
       setTimeout(() => {
-        productInputsRef.current[nextIdx]?.focus();
+        const el = productInputsRef.current[nextIdx];
+        if (el) {
+          el.focus();
+        } else {
+          setTimeout(() => {
+            productInputsRef.current[nextIdx]?.focus();
+          }, 50);
+        }
       }, 50);
       return [...prev, { ...defaultItem }];
     });
@@ -613,6 +713,28 @@ export default function SalesPage() {
     }
   };
 
+  const mergeDuplicateSalesItems = <T extends { productName?: string; batchNo?: string; stockCategory?: string; quantity?: string | number; id?: string; salesId?: string; damageQty?: number }>(itemsList: T[]) => {
+    const map = new Map<string, T>();
+    let hadDuplicates = false;
+    for (const item of itemsList) {
+      const pName = (item.productName || '').trim().toLowerCase();
+      const batch = (item.batchNo || '0').trim().toLowerCase();
+      const stockCat = (item.stockCategory || 'Available').trim().toLowerCase();
+      const key = `${pName}||${batch}||${stockCat}`;
+      if (map.has(key)) {
+        hadDuplicates = true;
+        const existing = map.get(key)!;
+        const totalQty = Number(existing.quantity || 0) + Number(item.quantity || 0);
+        existing.quantity = totalQty.toString();
+        if (!existing.id && item.id) existing.id = item.id;
+        if (!existing.salesId && item.salesId) existing.salesId = item.salesId;
+      } else {
+        map.set(key, { ...item });
+      }
+    }
+    return { merged: Array.from(map.values()), hadDuplicates };
+  };
+
   const handleSubmit = async () => {
     if (isSubmitting) return;
     if (!clientName) {
@@ -660,6 +782,14 @@ export default function SalesPage() {
         await cancelHold(editingHoldId);
       }
 
+      const { merged: normalizedItems, hadDuplicates } = mergeDuplicateSalesItems(items);
+      if (hadDuplicates) {
+        toast({
+          title: "Duplicate products merged",
+          description: "Lines with the same product, batch, and stock category were combined into one.",
+        });
+      }
+
       await addSaleBulk({
         customer: clientName,
         clientPhone,
@@ -667,7 +797,7 @@ export default function SalesPage() {
         status,
         remarks: narration,
         category: priceCategory,
-        items: items.map(item => ({
+        items: normalizedItems.map(item => ({
           productName: item.productName,
           quantity: Number(item.quantity),
           batchNo: item.batchNo,
@@ -709,6 +839,16 @@ export default function SalesPage() {
 
   const handleHold = async () => {
     if (isSubmitting) return;
+
+    if ((isEditingOrder || editingChallanNumber) && !isEligibleForHold) {
+      toast({
+        title: "Not Eligible",
+        description: "Delivered or cancelled orders cannot be moved to Hold.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     if (!clientName) {
       toast({ title: "Please enter client name", variant: "destructive" }); return;
     }
@@ -738,58 +878,101 @@ export default function SalesPage() {
       }
     }
 
+    if (editingOrderNumber || editingChallanNumber) {
+      const orderRef = editingOrderNumber || editingChallanNumber;
+      if (!window.confirm(`Are you sure you want to move order ${orderRef} to Hold? It will be moved to the Holds section.`)) {
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     try {
-      if (isEditingHold && editingHoldId) {
-        await cancelHold(editingHoldId);
-      } else if (editingChallanNumber) {
-        // If moving an existing challan/order to Hold, delete old sales and challans first
-        const associatedSalesIds = Array.from(
-          new Set(
-            items
-              .map((it) => it.salesId)
-              .concat(
-                sales
-                  .filter((s) => s.orderNo === editingChallanNumber)
-                  .map((s) => s.id)
-              )
-              .filter(Boolean) as string[]
-          )
-        );
-
-        for (const sId of associatedSalesIds) {
-          await deleteSale(sId).catch(() => {});
-        }
-        await deleteChallanGroup(editingChallanNumber).catch(() => {});
-      }
-
-      for (const item of items) {
-        await addHold({
-          clientName,
-          clientPhone,
-          productName: item.productName,
-          category: priceCategory,
-          quantity: Number(item.quantity),
-          batchNo: item.batchNo || '',
-          holdDate: orderDate
+      const { merged: normalizedItems, hadDuplicates } = mergeDuplicateSalesItems(items);
+      if (hadDuplicates) {
+        toast({
+          title: "Duplicate products merged",
+          description: "Lines with the same product, batch, and stock category were combined into one.",
         });
       }
 
+      if (isEditingHold && editingHoldId) {
+        await updateHoldGroup({
+          holdIds: editingHoldId,
+          clientName,
+          clientPhone,
+          category: priceCategory,
+          holdDate: orderDate,
+          items: normalizedItems.map((item) => ({
+            productName: item.productName,
+            quantity: Number(item.quantity),
+            batchNo: item.batchNo || "",
+          })),
+        });
+      } else {
+        if (editingOrderNumber || editingChallanNumber) {
+          const targetRef = editingOrderNumber || editingChallanNumber;
+          // Collect all sales IDs for this order/challan
+          const associatedSalesIds = Array.from(
+            new Set(
+              items
+                .map((it) => it.salesId)
+                .concat(
+                  sales
+                    .filter(
+                      (s) =>
+                        s.orderNo === targetRef ||
+                        (editingOrderNumber && s.orderNo === editingOrderNumber) ||
+                        (editingChallanNumber && s.orderNo === editingChallanNumber)
+                    )
+                    .map((s) => s.id)
+                )
+                .filter(Boolean) as string[]
+            )
+          );
+
+          for (const sId of associatedSalesIds) {
+            await deleteSale(sId).catch(() => {});
+          }
+          if (editingChallanNumber) {
+            await deleteChallanGroup(editingChallanNumber).catch(() => {});
+          }
+        }
+
+        for (const item of normalizedItems) {
+          await addHold({
+            clientName,
+            clientPhone,
+            productName: item.productName,
+            category: priceCategory,
+            quantity: Number(item.quantity),
+            batchNo: item.batchNo || '',
+            holdDate: orderDate
+          });
+        }
+      }
+
+      const orderRef = editingOrderNumber || editingChallanNumber;
       toast({
         title: isEditingHold 
           ? "Hold updated!" 
-          : editingChallanNumber 
+          : orderRef 
           ? "Order moved to Hold!" 
           : "Products put on hold!",
         description: isEditingHold
           ? "Hold order has been updated successfully."
-          : editingChallanNumber
-          ? `Order ${editingChallanNumber} has been moved to Hold successfully.`
+          : orderRef
+          ? `Order ${orderRef} has been moved to Hold successfully.`
           : undefined,
       });
       window.dispatchEvent(new CustomEvent("erp-stock-updated"));
       
-      const dest = isEditingHold ? (returnTo || '/holds') : editingChallanNumber ? (returnTo || '/challans') : null;
+      const dest = isEditingHold
+        ? (returnTo || '/holds')
+        : editingOrderNumber
+        ? '/holds'
+        : editingChallanNumber
+        ? (returnTo || '/challans')
+        : null;
 
       // Reset form
       setClientName('');
@@ -799,14 +982,17 @@ export default function SalesPage() {
       setSelectedClientId(null);
       setIsEditingHold(false);
       setEditingHoldId(null);
+      setEditingOrderNumber(null);
+      setIsEditingOrder(false);
+      setEditingOrderStatus(null);
       setEditingChallanNumber(null);
       setReturnTo(null);
 
+      refreshSales();
+      refreshClients();
+
       if (dest) {
         navigate(dest);
-      } else {
-        refreshSales(); // To refresh batches
-        refreshClients();
       }
     } catch (err: any) {
       toast({ title: "Hold Failed", description: err.message || "Failed to put on hold", variant: "destructive" });
@@ -874,13 +1060,63 @@ export default function SalesPage() {
 
     setIsSubmitting(true);
     try {
+      const { merged: normalizedItems, hadDuplicates } = mergeDuplicateSalesItems(items);
+      if (hadDuplicates) {
+        toast({
+          title: "Duplicate products merged",
+          description: "Lines with the same product, batch, and stock category were combined into one.",
+        });
+      }
+
+      if (isEditingOrder) {
+        await updateOrderGroup(editingOrderNumber!, {
+          orderNo: editingOrderNumber!,
+          clientName,
+          clientPhone,
+          date: orderDate,
+          items: normalizedItems.map((item) => ({
+            id: item.id,
+            salesId: item.salesId,
+            productName: item.productName,
+            quantity: Number(item.quantity),
+            batchNo: item.batchNo,
+            notes: narration,
+            stockCategory: item.stockCategory || "Available",
+          })),
+        });
+
+        toast({
+          title: "Sales Order updated!",
+          description: `Changes saved for order ${editingOrderNumber}.`,
+        });
+        window.dispatchEvent(new CustomEvent("erp-stock-updated"));
+
+        // Reset form
+        setClientName("");
+        setClientPhone("");
+        setItems([{ ...defaultItem }]);
+        setNarration("");
+        setSelectedClientId(null);
+        setEditingOrderNumber(null);
+        setIsEditingOrder(false);
+        setEditingOrderStatus(null);
+
+        const dest = returnTo || "/pending-orders";
+        setReturnTo(null);
+        if (dest === "/sales") {
+          setActiveTab("history");
+        }
+        navigate(dest);
+        return;
+      }
+
       if (isEditingDeliveredOrder) {
         await updateDeliveredOrderGroup(editingChallanNumber!, {
           challanNumber: editingChallanNumber!,
           clientName,
           clientPhone,
           date: orderDate,
-          items: items.map((item) => ({
+          items: normalizedItems.map((item) => ({
             id: item.id,
             salesId: item.salesId,
             productName: item.productName,
@@ -906,7 +1142,7 @@ export default function SalesPage() {
         setEditingChallanNumber(null);
         setIsEditingDeliveredOrder(false);
 
-        const dest = returnTo || "/delivered-deliveries";
+        const dest = returnTo || "/delivered-orders";
         setReturnTo(null);
         navigate(dest);
         return;
@@ -917,7 +1153,7 @@ export default function SalesPage() {
         clientName,
         clientPhone,
         date: orderDate,
-        items: items.map((item) => ({
+        items: normalizedItems.map((item) => ({
           id: item.id,
           salesId: item.salesId,
           productName: item.productName,
@@ -958,21 +1194,34 @@ export default function SalesPage() {
   };
 
   const handleCancelEdit = () => {
-    const dest = returnTo || (isEditingDeliveredOrder ? "/delivered-deliveries" : isEditingHold ? "/holds" : "/challans");
+    const dest = returnTo || (isEditingOrder ? "/pending-orders" : isEditingDeliveredOrder ? "/delivered-orders" : isEditingHold ? "/holds" : "/challans");
     setClientName("");
     setClientPhone("");
     setItems([{ ...defaultItem }]);
     setNarration("");
     setSelectedClientId(null);
     setEditingChallanNumber(null);
+    setIsEditingOrder(false);
+    setEditingOrderNumber(null);
+    setEditingOrderStatus(null);
     setIsEditingDeliveredOrder(false);
     setIsEditingHold(false);
     setEditingHoldId(null);
     setReturnTo(null);
+    if (dest === "/sales") {
+      setActiveTab("history");
+    }
     navigate(dest);
   };
 
   const handleEditFromHistory = (group: any) => {
+    setIsEditingOrder(true);
+    setEditingOrderNumber(group.orderNo);
+    setEditingOrderStatus(group.status || null);
+    setIsEditingDeliveredOrder(false);
+    setIsEditingHold(false);
+    setEditingHoldId(null);
+    setEditingChallanNumber(null);
     setClientName(group.customer || "");
     setClientPhone(group.clientPhone || "");
     setOrderDate(group.orderDate || getLocalDateString());
@@ -990,7 +1239,6 @@ export default function SalesPage() {
         isProductSelected: true,
       }))
     );
-    setEditingChallanNumber(group.orderNo);
     setReturnTo("/sales");
     setActiveTab("new");
     setTimeout(() => {
@@ -1007,7 +1255,7 @@ export default function SalesPage() {
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
           <TabsTrigger value="new">
-            {isEditingHold ? "Edit Hold" : editingChallanNumber ? (isEditingDeliveredOrder ? "Edit Delivered Order" : "Edit Order") : "New Sale"}
+            {isEditingHold ? "Edit Hold" : isEditingOrder ? "Edit Order" : editingChallanNumber ? (isEditingDeliveredOrder ? "Edit Delivered Order" : "Edit Challan") : "New Sale"}
           </TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
         </TabsList>
@@ -1173,7 +1421,7 @@ export default function SalesPage() {
                       .map((c, i) => (
                         <div 
                            key={c.id} 
-                          className={`px-3 py-2 cursor-pointer text-sm text-popover-foreground border-b last:border-0 ${selectedClientIndex === i ? 'bg-accent' : 'hover:bg-accent'}`}
+                          className={`px-3 py-2 cursor-pointer text-sm text-popover-foreground border-b last:border-0 ${selectedClientIndex === i ? 'bg-blue-100 text-slate-950 ring-2 ring-inset ring-blue-400 border-blue-300 font-medium' : 'hover:bg-slate-100'}`}
                           onMouseDown={(e) => {
                             e.preventDefault();
                             setClientName(c.name);
@@ -1354,8 +1602,8 @@ export default function SalesPage() {
                                         key={`${b.id}-${category}-${i}`} 
                                         className={`px-3 py-2 cursor-pointer text-sm border-b last:border-0 transition-colors ${
                                           isSelected
-                                            ? (statusInfo ? statusInfo.activeSugClass : 'bg-accent text-popover-foreground')
-                                            : (statusInfo ? statusInfo.sugClass : 'hover:bg-accent text-popover-foreground')
+                                            ? (statusInfo ? statusInfo.activeSugClass : 'bg-blue-100 text-slate-950 ring-2 ring-inset ring-blue-400 border-blue-300 font-medium')
+                                            : (statusInfo ? statusInfo.sugClass : 'hover:bg-slate-100 text-popover-foreground')
                                         }`}
                                         onMouseDown={(e) => {
                                           e.preventDefault();
@@ -1376,7 +1624,7 @@ export default function SalesPage() {
                                         }}
                                       >
                                         <div className="flex items-center justify-between gap-1">
-                                          <div className={`font-bold ${statusInfo ? statusInfo.textColor : 'text-primary'}`}>
+                                          <div className={`font-bold ${statusInfo ? statusInfo.textColor : isSelected ? 'text-blue-900' : 'text-primary'}`}>
                                             {b.productName}
                                           </div>
                                           <div className="flex items-center gap-1.5 shrink-0">
@@ -1392,10 +1640,16 @@ export default function SalesPage() {
                                             )}
                                           </div>
                                         </div>
-                                        <div className={`text-xs mt-0.5 font-medium ${statusInfo ? 'text-slate-700' : 'text-muted-foreground'}`}>
+                                        <div className={`text-xs mt-0.5 font-medium ${statusInfo ? 'text-slate-700' : isSelected ? 'text-slate-800' : 'text-muted-foreground'}`}>
                                           Batch: <span className="font-semibold text-slate-800">{b.batchNumber}</span> | <span className="text-blue-700 font-bold bg-blue-50 px-1 rounded">{label}</span>
                                         </div>
-                                        <div className={`flex flex-wrap gap-x-2 gap-y-0.5 text-xs mt-1 p-1 rounded font-medium ${statusInfo ? 'bg-black/5 text-slate-800' : 'text-muted-foreground bg-muted/30'}`}>
+                                        <div className={`flex flex-wrap gap-x-2 gap-y-0.5 text-xs mt-1 p-1 rounded font-medium ${
+                                          statusInfo 
+                                            ? 'bg-black/5 text-slate-800' 
+                                            : isSelected 
+                                              ? 'bg-white/80 text-slate-900 shadow-2xs' 
+                                              : 'text-muted-foreground bg-muted/30'
+                                        }`}>
                                           {category === 'Available' && (
                                             <span>Avail: <span className="font-bold text-slate-900">{b.availableQty}</span></span>
                                           )}
@@ -1489,11 +1743,12 @@ export default function SalesPage() {
                             if (e.key === 'Enter') {
                               e.preventDefault();
                               if (index === items.length - 1) {
-                                const nextIdx = items.length;
-                                addItem();
-                                setTimeout(() => {
-                                  productInputsRef.current[nextIdx]?.focus();
-                                }, 50);
+                                const addBtn = document.getElementById(`add-product-btn-${index}`);
+                                if (addBtn) {
+                                  addBtn.focus();
+                                } else {
+                                  addItem();
+                                }
                               } else {
                                 const nextInput = productInputsRef.current[index + 1];
                                 if (nextInput) {
@@ -1524,17 +1779,18 @@ export default function SalesPage() {
                       <div className="col-span-1 flex justify-end gap-1 items-center">
                         {!isEditingDeliveredOrder && index === items.length - 1 && (
                           <Button 
+                            id={`add-product-btn-${index}`}
                             type="button" 
                             variant="outline" 
                             size="sm" 
                             onClick={addItem} 
                             onKeyDown={e => {
-                              if (e.key === 'Enter') {
+                              if (e.key === 'Enter' || e.key === ' ') {
                                 e.preventDefault();
                                 addItem();
                               }
                             }}
-                            className="h-9 px-2 shrink-0 focus-visible:ring-2 focus-visible:ring-primary" 
+                            className="h-9 px-2 shrink-0 ring-offset-background focus:ring-2 focus:ring-primary focus-visible:ring-2 focus-visible:ring-primary focus:bg-primary/10 transition-all" 
                             title="Add another product"
                           >
                             <Plus className="h-3 w-3" />
@@ -1639,12 +1895,12 @@ export default function SalesPage() {
                     )}
                   </Button>
                 </div>
-              ) : editingChallanNumber ? (
+              ) : (isEditingOrder || editingChallanNumber) ? (
                 <div className="flex justify-end gap-3 shrink-0">
                   <Button type="button" variant="outline" onClick={handleCancelEdit} disabled={isSubmitting}>
                     Cancel
                   </Button>
-                  {!isEditingDeliveredOrder && (
+                  {isEligibleForHold && (
                     <Button
                       type="button"
                       variant="outline"
@@ -1676,6 +1932,10 @@ export default function SalesPage() {
                     ) : isEditingDeliveredOrder ? (
                       <>
                         <Check className="mr-2 h-4 w-4" /> Save Delivered Order (Replace Product)
+                      </>
+                    ) : isEditingOrder ? (
+                      <>
+                        <Check className="mr-2 h-4 w-4" /> Save Order Changes
                       </>
                     ) : (
                       <>
@@ -1832,8 +2092,8 @@ export default function SalesPage() {
                             size="icon" 
                             className="h-8 w-8 text-blue-600 hover:bg-blue-50" 
                             onClick={() => handleEditFromHistory(group)} 
-                            title="Edit Order in Sales Form"
-                            disabled={group.status === 'Delivered'}
+                            title={group.status === 'Delivered' || group.status === 'Cancelled' ? "Delivered and Cancelled orders cannot be edited" : "Edit Order in Sales Form"}
+                            disabled={group.status === 'Delivered' || group.status === 'Cancelled'}
                           >
                             <Pencil className="h-4 w-4" />
                           </Button>

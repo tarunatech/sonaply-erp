@@ -169,7 +169,8 @@ async function migrate() {
         name TEXT NOT NULL,
         category TEXT NOT NULL,
         size TEXT,
-        barcode TEXT
+        barcode TEXT,
+        status TEXT DEFAULT 'Active'
       )
     `);
 
@@ -193,7 +194,8 @@ async function migrate() {
         is_nil BOOLEAN DEFAULT FALSE,
         is_cancelled BOOLEAN DEFAULT FALSE,
         is_dead_stock BOOLEAN DEFAULT FALSE,
-        description TEXT
+        description TEXT,
+        status TEXT DEFAULT 'Active'
       )
     `);
 
@@ -263,6 +265,8 @@ async function migrate() {
         is_challan_generated BOOLEAN DEFAULT FALSE,
         is_order BOOLEAN DEFAULT FALSE,
         status TEXT DEFAULT 'Delivered',
+        delivered_at TIMESTAMP,
+        delivery_date DATE,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
@@ -412,7 +416,7 @@ async function migrate() {
     }
 
     // 8. Alterations for recent schema additions
-    console.log('Step 8: Adding delivered_at, challan cancel/built/bill_no fields, is_order, sales_returns, challan_notes, display_qty, stock_category, and estimated_delivery_date...');
+    console.log('Step 8: Adding delivered_at, delivery_date, challan cancel/built/bill_no fields, is_order, sales_returns, challan_notes, display_qty, stock_category, and estimated_delivery_date...');
     await db.query('ALTER TABLE sales ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP');
     await db.query('ALTER TABLE sales ADD COLUMN IF NOT EXISTS estimated_delivery_date DATE');
     await db.query('ALTER TABLE sales ADD COLUMN IF NOT EXISTS is_order BOOLEAN DEFAULT FALSE');
@@ -427,6 +431,14 @@ async function migrate() {
     await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS is_order BOOLEAN DEFAULT FALSE');
     await db.query('UPDATE challans SET is_order = FALSE WHERE is_order IS NULL');
     await db.query('ALTER TABLE challans ALTER COLUMN is_order SET DEFAULT FALSE');
+    await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP');
+    await db.query('ALTER TABLE challans ADD COLUMN IF NOT EXISTS delivery_date DATE');
+    await db.query(`
+      UPDATE challans 
+      SET delivery_date = COALESCE(CAST(updated_at AS date), created_at),
+          delivered_at = COALESCE(updated_at, CAST(created_at AS timestamp))
+      WHERE status = 'Delivered' AND delivery_date IS NULL
+    `);
     await db.query('ALTER TABLE sales ADD COLUMN IF NOT EXISTS damage_qty INTEGER DEFAULT 0');
     await db.query('ALTER TABLE holds ADD COLUMN IF NOT EXISTS held_qty INTEGER');
     await db.query('ALTER TABLE batches ADD COLUMN IF NOT EXISTS display_qty INTEGER DEFAULT 0');
@@ -760,6 +772,7 @@ async function migrate() {
     await db.query(`CREATE INDEX IF NOT EXISTS idx_challans_notes_status ON challan_notes(status)`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_challan_notes_created_at ON challan_notes(created_at DESC)`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_challans_status_active ON challans(status, is_cancelled) WHERE is_cancelled = FALSE`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_challans_delivery_date ON challans(delivery_date DESC) WHERE status = 'Delivered'`);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_sales_pending_status ON sales(status, pending_qty) WHERE status != 'Cancelled'`);
 
     // 14. Sync products table from existing batches, purchases, and sales

@@ -388,7 +388,7 @@ export default function ClientsPage() {
                         {nameSuggestions.map((c, i) => (
                           <div
                             key={c.id}
-                            className={`px-3 py-2 cursor-pointer text-sm text-popover-foreground border-b last:border-0 ${selectedSuggestionIndex === i ? 'bg-accent' : 'hover:bg-accent'}`}
+                            className={`px-3 py-2 cursor-pointer text-sm text-popover-foreground border-b last:border-0 ${selectedSuggestionIndex === i ? 'bg-blue-100 text-slate-950 ring-2 ring-inset ring-blue-400 border-blue-300 font-medium' : 'hover:bg-slate-100'}`}
                             onMouseDown={(e) => {
                               e.preventDefault();
                               pickClientSuggestion(c);

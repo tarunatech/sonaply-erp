@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import { Download, Printer, Plus, Trash2, Pencil, ChevronDown, ChevronRight, Calendar as CalendarIcon, X, Loader2 } from "lucide-react";
+import { Download, Printer, Plus, Trash2, Pencil, ChevronDown, ChevronRight, Calendar as CalendarIcon, CalendarDays, Filter, X, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
@@ -73,6 +73,173 @@ export default function PurchasePage() {
   const supplierContainerRef = useRef<HTMLDivElement>(null);
   
   const [purchaseFilter, setPurchaseFilter] = useState('');
+
+  // Purchase History Date Filter States
+  const [dateFilterMode, setDateFilterMode] = useState<'all' | 'single' | 'range'>('all');
+  const [singleDate, setSingleDate] = useState(() => getLocalDateString());
+  const [fromDate, setFromDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    return getLocalDateString(d);
+  });
+  const [toDate, setToDate] = useState(() => getLocalDateString());
+
+  // Applied Date Filter
+  const [appliedDateFilter, setAppliedDateFilter] = useState<{
+    mode: 'all' | 'single' | 'range';
+    singleDate: string;
+    fromDate: string;
+    toDate: string;
+  }>({
+    mode: 'all',
+    singleDate: getLocalDateString(),
+    fromDate: (() => {
+      const d = new Date();
+      d.setDate(d.getDate() - 30);
+      return getLocalDateString(d);
+    })(),
+    toDate: getLocalDateString(),
+  });
+
+  const handleApplyDateFilter = () => {
+    if (dateFilterMode === 'range') {
+      let start = fromDate;
+      let end = toDate;
+      if (start && end && start > end) {
+        const temp = start;
+        start = end;
+        end = temp;
+        setFromDate(start);
+        setToDate(end);
+      }
+      setAppliedDateFilter({
+        mode: 'range',
+        singleDate,
+        fromDate: start,
+        toDate: end,
+      });
+      toast({
+        title: "Date Range Applied",
+        description: `Showing purchases from ${formatLocalDate(start)} to ${formatLocalDate(end)}`,
+      });
+    } else if (dateFilterMode === 'single') {
+      setAppliedDateFilter({
+        mode: 'single',
+        singleDate,
+        fromDate,
+        toDate,
+      });
+      toast({
+        title: "Single Date Applied",
+        description: `Showing purchases for ${formatLocalDate(singleDate)}`,
+      });
+    } else {
+      handleClearDateFilter();
+    }
+  };
+
+  const handleClearDateFilter = () => {
+    setDateFilterMode('all');
+    setAppliedDateFilter(prev => ({ ...prev, mode: 'all' }));
+    toast({
+      title: "Date Filter Cleared",
+      description: "Showing all purchases",
+    });
+  };
+
+  const handlePreset = (preset: 'today' | 'yesterday' | 'this_month' | 'last_7' | 'last_30') => {
+    const today = new Date();
+    const todayStr = getLocalDateString(today);
+
+    if (preset === 'today') {
+      setDateFilterMode('single');
+      setSingleDate(todayStr);
+      setAppliedDateFilter(prev => ({
+        ...prev,
+        mode: 'single',
+        singleDate: todayStr,
+      }));
+      toast({
+        title: "Filter: Today",
+        description: `Showing purchases for ${formatLocalDate(todayStr)}`,
+      });
+    } else if (preset === 'yesterday') {
+      const yest = new Date();
+      yest.setDate(yest.getDate() - 1);
+      const yestStr = getLocalDateString(yest);
+      setDateFilterMode('single');
+      setSingleDate(yestStr);
+      setAppliedDateFilter(prev => ({
+        ...prev,
+        mode: 'single',
+        singleDate: yestStr,
+      }));
+      toast({
+        title: "Filter: Yesterday",
+        description: `Showing purchases for ${formatLocalDate(yestStr)}`,
+      });
+    } else if (preset === 'this_month') {
+      const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+      const startStr = getLocalDateString(firstDay);
+      setDateFilterMode('range');
+      setFromDate(startStr);
+      setToDate(todayStr);
+      setAppliedDateFilter(prev => ({
+        ...prev,
+        mode: 'range',
+        fromDate: startStr,
+        toDate: todayStr,
+      }));
+      toast({
+        title: "Filter: This Month",
+        description: `Showing purchases from ${formatLocalDate(startStr)} to ${formatLocalDate(todayStr)}`,
+      });
+    } else if (preset === 'last_7') {
+      const d = new Date();
+      d.setDate(d.getDate() - 7);
+      const startStr = getLocalDateString(d);
+      setDateFilterMode('range');
+      setFromDate(startStr);
+      setToDate(todayStr);
+      setAppliedDateFilter(prev => ({
+        ...prev,
+        mode: 'range',
+        fromDate: startStr,
+        toDate: todayStr,
+      }));
+      toast({
+        title: "Filter: Last 7 Days",
+        description: `Showing purchases from ${formatLocalDate(startStr)} to ${formatLocalDate(todayStr)}`,
+      });
+    } else if (preset === 'last_30') {
+      const d = new Date();
+      d.setDate(d.getDate() - 30);
+      const startStr = getLocalDateString(d);
+      setDateFilterMode('range');
+      setFromDate(startStr);
+      setToDate(todayStr);
+      setAppliedDateFilter(prev => ({
+        ...prev,
+        mode: 'range',
+        fromDate: startStr,
+        toDate: todayStr,
+      }));
+      toast({
+        title: "Filter: Last 30 Days",
+        description: `Showing purchases from ${formatLocalDate(startStr)} to ${formatLocalDate(todayStr)}`,
+      });
+    }
+  };
+
+  const exportFileName = useMemo(() => {
+    if (appliedDateFilter.mode === 'single') {
+      return `purchases-${appliedDateFilter.singleDate}.csv`;
+    }
+    if (appliedDateFilter.mode === 'range') {
+      return `purchases-${appliedDateFilter.fromDate}-to-${appliedDateFilter.toDate}.csv`;
+    }
+    return `purchases-all-${new Date().toISOString().slice(0, 10)}.csv`;
+  }, [appliedDateFilter]);
   const [activeCategoryIndex, setActiveCategoryIndex] = useState<number | null>(null);
   const [activeProductIndex, setActiveProductIndex] = useState<number | null>(null);
   const [selectedCategorySuggestionIndex, setSelectedCategorySuggestionIndex] = useState<number>(-1);
@@ -134,16 +301,33 @@ export default function PurchasePage() {
 
   const filteredPurchases = useMemo(() => {
     return purchases.filter(p => {
-      const f = purchaseFilter.toLowerCase();
-      const formattedD = formatLocalDate(p.date);
-      return (p.supplierName || '').toLowerCase().includes(f) ||
-             (p.productName || '').toLowerCase().includes(f) ||
-             (p.category || '').toLowerCase().includes(f) ||
-             (p.batchNumber || '').toLowerCase().includes(f) ||
-             (p.date || '').toLowerCase().includes(f) ||
-             formattedD.toLowerCase().includes(f);
+      const pDate = p.date ? String(p.date).slice(0, 10) : '';
+
+      if (appliedDateFilter.mode === 'single') {
+        if (pDate !== appliedDateFilter.singleDate) return false;
+      } else if (appliedDateFilter.mode === 'range') {
+        const start = appliedDateFilter.fromDate;
+        const end = appliedDateFilter.toDate;
+        if (start && pDate < start) return false;
+        if (end && pDate > end) return false;
+      }
+
+      if (purchaseFilter.trim()) {
+        const f = purchaseFilter.toLowerCase().trim();
+        const formattedD = formatLocalDate(p.date);
+        const matches = 
+          (p.supplierName || '').toLowerCase().includes(f) ||
+          (p.productName || '').toLowerCase().includes(f) ||
+          (p.category || '').toLowerCase().includes(f) ||
+          (p.batchNumber || '').toLowerCase().includes(f) ||
+          (p.date || '').toLowerCase().includes(f) ||
+          formattedD.toLowerCase().includes(f);
+        if (!matches) return false;
+      }
+
+      return true;
     }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [purchases, purchaseFilter]);
+  }, [purchases, purchaseFilter, appliedDateFilter]);
 
   const supplierGroups = useMemo(() => {
     const map: Record<string, SupplierGroup> = {};
@@ -193,7 +377,7 @@ export default function PurchasePage() {
 
   useEffect(() => {
     setHistoryPage(1);
-  }, [purchaseFilter]);
+  }, [purchaseFilter, appliedDateFilter]);
 
   const totalHistoryPages = Math.max(1, Math.ceil(supplierGroups.length / historyPageSize));
 
@@ -871,23 +1055,239 @@ export default function PurchasePage() {
         </TabsContent>
         
         <TabsContent value="history">
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={() => exportCSV(filteredPurchases as any, `purchases-${new Date().toISOString().slice(0,10)}.csv`)}>
-                <Download className="mr-1 h-4 w-4" /> Export CSV
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => printElement('purchase-table')}>
-                <Printer className="mr-1 h-4 w-4" /> Print
-              </Button>
+          {/* Purchase History Filter Controls */}
+          <div className="bg-slate-50 border rounded-lg p-3 mb-4 space-y-3 shadow-2xs">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              {/* Date Filter Mode Selector */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                  <CalendarDays className="h-4 w-4 text-primary" />
+                  Date Filter:
+                </span>
+                <div className="inline-flex items-center rounded-md border border-slate-200 bg-white p-0.5 shadow-2xs">
+                  <button
+                    type="button"
+                    onClick={handleClearDateFilter}
+                    className={`px-3 py-1 text-xs font-semibold rounded transition-all ${
+                      appliedDateFilter.mode === 'all' && dateFilterMode === 'all'
+                        ? 'bg-primary text-primary-foreground shadow-xs font-bold'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    All Dates
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDateFilterMode('single')}
+                    className={`px-3 py-1 text-xs font-semibold rounded transition-all ${
+                      dateFilterMode === 'single'
+                        ? 'bg-primary text-primary-foreground shadow-xs font-bold'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Single Date
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDateFilterMode('range')}
+                    className={`px-3 py-1 text-xs font-semibold rounded transition-all ${
+                      dateFilterMode === 'range'
+                        ? 'bg-primary text-primary-foreground shadow-xs font-bold'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Custom Range
+                  </button>
+                </div>
+
+                {/* Quick Presets */}
+                <div className="flex flex-wrap items-center gap-1 ml-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handlePreset('today')}
+                    className="h-7 text-xs px-2 text-slate-600 hover:bg-slate-200/60 font-medium"
+                  >
+                    Today
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handlePreset('yesterday')}
+                    className="h-7 text-xs px-2 text-slate-600 hover:bg-slate-200/60 font-medium"
+                  >
+                    Yesterday
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handlePreset('this_month')}
+                    className="h-7 text-xs px-2 text-slate-600 hover:bg-slate-200/60 font-medium"
+                  >
+                    This Month
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handlePreset('last_7')}
+                    className="h-7 text-xs px-2 text-slate-600 hover:bg-slate-200/60 font-medium"
+                  >
+                    Last 7 Days
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handlePreset('last_30')}
+                    className="h-7 text-xs px-2 text-slate-600 hover:bg-slate-200/60 font-medium"
+                  >
+                    Last 30 Days
+                  </Button>
+                </div>
+              </div>
+
+              {/* Action Buttons: Export & Print */}
+              <div className="flex items-center gap-2">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => exportCSV(filteredPurchases as any, exportFileName)}
+                  className="h-8 text-xs bg-white shadow-2xs font-medium"
+                >
+                  <Download className="mr-1.5 h-3.5 w-3.5" /> Export CSV
+                </Button>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => printElement('purchase-table')}
+                  className="h-8 text-xs bg-white shadow-2xs font-medium"
+                >
+                  <Printer className="mr-1.5 h-3.5 w-3.5" /> Print
+                </Button>
+              </div>
             </div>
-            <div className="w-full sm:w-72">
-              <Input 
-                placeholder="Filter by date, supplier, product..." 
-                value={purchaseFilter} 
-                onChange={e => setPurchaseFilter(e.target.value)} 
-                className="h-9"
-              />
+
+            {/* Inputs Row for Single Date / Custom Range and Search Input */}
+            <div className="flex flex-wrap items-end gap-3 pt-2 border-t border-slate-200">
+              {dateFilterMode === 'single' && (
+                <div className="flex items-end gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold text-slate-600">Select Date</Label>
+                    <Input
+                      type="date"
+                      value={singleDate}
+                      onChange={(e) => setSingleDate(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleApplyDateFilter();
+                        }
+                      }}
+                      className="h-8 text-xs w-40 bg-white"
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={handleApplyDateFilter}
+                    className="h-8 text-xs bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 shadow-xs gap-1.5"
+                  >
+                    <Filter className="h-3.5 w-3.5" /> Apply Date
+                  </Button>
+                </div>
+              )}
+
+              {dateFilterMode === 'range' && (
+                <div className="flex flex-wrap items-end gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold text-slate-600">From Date</Label>
+                    <Input
+                      type="date"
+                      value={fromDate}
+                      onChange={(e) => setFromDate(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleApplyDateFilter();
+                        }
+                      }}
+                      className="h-8 text-xs w-36 bg-white"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold text-slate-600">To Date</Label>
+                    <Input
+                      type="date"
+                      value={toDate}
+                      onChange={(e) => setToDate(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleApplyDateFilter();
+                        }
+                      }}
+                      className="h-8 text-xs w-36 bg-white"
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={handleApplyDateFilter}
+                    className="h-8 text-xs bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 shadow-xs gap-1.5"
+                  >
+                    <Filter className="h-3.5 w-3.5" /> Apply Range
+                  </Button>
+                </div>
+              )}
+
+              {/* Text Search Box */}
+              <div className="flex-1 min-w-[220px] space-y-1 sm:ml-auto">
+                <Label className="text-[11px] font-semibold text-slate-600">Search Records</Label>
+                <Input 
+                  placeholder="Filter by supplier, product, batch..." 
+                  value={purchaseFilter} 
+                  onChange={e => setPurchaseFilter(e.target.value)} 
+                  className="h-8 text-xs bg-white"
+                />
+              </div>
             </div>
+
+            {/* Active Date Filter Summary Banner */}
+            {appliedDateFilter.mode !== 'all' && (
+              <div className="flex flex-wrap items-center justify-between gap-2 bg-blue-50/90 border border-blue-200 rounded-md px-3 py-1.5 text-xs text-blue-900">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-bold flex items-center gap-1">
+                    <CalendarDays className="h-3.5 w-3.5 text-blue-700" />
+                    Filtered Period:
+                  </span>
+                  {appliedDateFilter.mode === 'single' ? (
+                    <span>
+                      Date: <strong className="font-semibold text-blue-950 underline">{formatLocalDate(appliedDateFilter.singleDate)}</strong> (Single Day)
+                    </span>
+                  ) : (
+                    <span>
+                      Range: <strong className="font-semibold text-blue-950 underline">{formatLocalDate(appliedDateFilter.fromDate)}</strong> to <strong className="font-semibold text-blue-950 underline">{formatLocalDate(appliedDateFilter.toDate)}</strong>
+                    </span>
+                  )}
+                  <span className="text-slate-600">
+                    • <strong>{filteredPurchases.length}</strong> purchase item{filteredPurchases.length !== 1 ? 's' : ''} found across <strong>{supplierGroups.length}</strong> supplier{supplierGroups.length !== 1 ? 's' : ''}
+                  </span>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleClearDateFilter}
+                  className="h-6 text-[11px] px-2 text-blue-700 hover:text-blue-900 hover:bg-blue-100 font-semibold"
+                >
+                  <X className="mr-1 h-3 w-3" /> Clear Filter
+                </Button>
+              </div>
+            )}
           </div>
           <Card>
             <CardContent className="p-0" id="purchase-table">

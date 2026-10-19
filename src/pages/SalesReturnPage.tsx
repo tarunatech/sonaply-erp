@@ -516,7 +516,7 @@ export default function SalesReturnPage() {
                               {suggestions.map((p, i) => (
                                 <div
                                   key={p}
-                                  className={`px-3 py-2 cursor-pointer text-xs text-popover-foreground border-b last:border-0 ${selectedProductIndex === i ? 'bg-accent font-medium' : 'hover:bg-accent'}`}
+                                  className={`px-3 py-2 cursor-pointer text-xs text-popover-foreground border-b last:border-0 ${selectedProductIndex === i ? 'bg-blue-100 text-slate-950 ring-2 ring-inset ring-blue-400 border-blue-300 font-medium' : 'hover:bg-slate-100'}`}
                                   onMouseDown={e => {
                                     e.preventDefault();
                                     pickProduct(index, p);

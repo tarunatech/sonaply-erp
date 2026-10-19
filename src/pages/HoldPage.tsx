@@ -45,6 +45,9 @@ export default function HoldPage() {
 
   useEffect(() => {
     fetchHolds();
+    const handleStockUpdate = () => fetchHolds();
+    window.addEventListener("erp-stock-updated", handleStockUpdate);
+    return () => window.removeEventListener("erp-stock-updated", handleStockUpdate);
   }, []);
 
   const handleRelease = async (id: string) => {

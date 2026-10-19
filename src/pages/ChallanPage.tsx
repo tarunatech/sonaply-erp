@@ -7,7 +7,6 @@ import {
   getClients,
   updateChallan,
   updateChallanGroupBillNo,
-  deleteChallanGroup,
   cancelChallanGroup,
   deliverChallanGroup,
   exportCSV,
@@ -21,6 +20,8 @@ import {
   StockBatch,
   Client,
   ChallanNote,
+  getLocalDateString,
+  formatLocalDate,
 } from "@/lib/store";
 import { printElement } from "@/lib/print";
 import { transliterateToGujarati } from "@/lib/utils";
@@ -327,29 +328,7 @@ export default function ChallanPage() {
     });
   };
 
-  const handleDelete = async (challanNo: string) => {
-    const password = window.prompt(
-      "Please enter admin password to delete entire challan:",
-    );
-    if (password !== "admin") {
-      if (password !== null)
-        toast({ title: "Incorrect password", variant: "destructive" });
-      return;
-    }
-    if (
-      window.confirm(
-        `Are you sure you want to delete challan ${challanNo} and all its items?`,
-      )
-    ) {
-      try {
-        await deleteChallanGroup(challanNo);
-        refresh();
-        toast({ title: "Challan deleted" });
-      } catch (err: any) {
-        toast({ title: "Delete failed", description: err.message, variant: "destructive" });
-      }
-    }
-  };
+
 
   const handleDeliverClick = (group: any) => {
     const currentBill = (billInputs[group.challanNo] !== undefined ? billInputs[group.challanNo] : (group.billNo || "")).trim();
@@ -361,7 +340,11 @@ export default function ChallanPage() {
       });
       return;
     }
-    setConfirmDeliverGroup({ ...group, currentBillNo: currentBill });
+    setConfirmDeliverGroup({ 
+      ...group, 
+      currentBillNo: currentBill,
+      deliveryDate: getLocalDateString(),
+    });
   };
 
   const executeDeliver = async () => {
@@ -375,12 +358,12 @@ export default function ChallanPage() {
           )
         );
       }
-      await deliverChallanGroup(confirmDeliverGroup.challanNo);
+      await deliverChallanGroup(confirmDeliverGroup.challanNo, confirmDeliverGroup.deliveryDate || getLocalDateString());
       window.dispatchEvent(new CustomEvent("erp-stock-updated"));
       refresh();
       toast({
         title: "Challan Delivered",
-        description: `${confirmDeliverGroup.challanNo} (Bill: ${confirmDeliverGroup.currentBillNo}) delivered successfully.`,
+        description: `${confirmDeliverGroup.challanNo} (Bill: ${confirmDeliverGroup.currentBillNo}) marked as delivered on ${formatLocalDate(confirmDeliverGroup.deliveryDate || getLocalDateString())}.`,
       });
       setConfirmDeliverGroup(null);
     } catch (err: any) {
@@ -787,15 +770,6 @@ export default function ChallanPage() {
                                 <span className="inline-flex items-center justify-center h-8 w-8 rounded-md bg-red-100 text-red-700 border border-red-200 shadow-2xs" title="Cancelled">
                                   <Ban className="h-4 w-4 text-red-600" />
                                 </span>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8 text-destructive hover:bg-red-50 hover:text-red-700 rounded-md"
-                                  onClick={() => handleDelete(group.challanNo)}
-                                  title="Delete Cancelled Challan"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
                               </div>
                             ) : (
                             <>
@@ -850,15 +824,6 @@ export default function ChallanPage() {
                               title="Cancel Challan"
                             >
                               <Ban className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 text-destructive"
-                              onClick={() => handleDelete(group.challanNo)}
-                              title="Delete Challan"
-                            >
-                              <Trash2 className="h-4 w-4" />
                             </Button>
                             </>
                             )}
@@ -932,6 +897,20 @@ export default function ChallanPage() {
                 <span className="font-mono font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200 uppercase">
                   {confirmDeliverGroup.currentBillNo}
                 </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 font-medium">Delivery Date:</span>
+                <Input
+                  type="date"
+                  value={confirmDeliverGroup.deliveryDate || getLocalDateString()}
+                  onChange={(e) =>
+                    setConfirmDeliverGroup({
+                      ...confirmDeliverGroup,
+                      deliveryDate: e.target.value,
+                    })
+                  }
+                  className="h-8 text-xs font-mono font-bold w-36 bg-white"
+                />
               </div>
               <div className="pt-2 border-t border-slate-200 text-xs text-slate-600">
                 <span className="font-semibold text-slate-700">Items to Deliver:</span>

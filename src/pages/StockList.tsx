@@ -872,10 +872,12 @@ export default function StockList() {
   const handleEditSave = async () => {
     if (editingBatch) {
       try {
+        const todayDate = getLocalDateString();
         const finalBatch = {
           ...editingBatch,
           batchNumber: editingBatch.batchNumber?.trim() || "0",
           status: editingBatch.status || "Active",
+          date: todayDate,
         };
         const originalBatch = batches.find((b) => b.id === finalBatch.id);
         if (originalBatch) {
@@ -2337,14 +2339,14 @@ export default function StockList() {
                 batches.map((b) => (
                   <TableRow
                     key={b.id}
-                    className={`transition-colors ${
+                    className={`transition-colors duration-150 ${
                       b.isDeadStock
                         ? "bg-slate-400/90 text-slate-900 hover:bg-slate-500/90 border-slate-300"
                         : b.isCancelled
                         ? "bg-red-200/90 text-red-950 hover:bg-red-300/90 border-red-300"
                         : b.isNil
                         ? "bg-blue-200/90 text-blue-950 hover:bg-blue-300/90 border-blue-300"
-                        : "hover:bg-slate-50/50"
+                        : "hover:bg-emerald-100/80 hover:text-slate-950 border-slate-300"
                     }`}
                   >
                     <TableCell className={`border-2 border-slate-300 px-4 py-3 align-middle font-bold ${b.isCancelled ? "text-red-950" : b.isNil ? "text-blue-950" : "text-slate-800"}`}>

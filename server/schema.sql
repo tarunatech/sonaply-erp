@@ -114,6 +114,8 @@ CREATE TABLE IF NOT EXISTS sales (
     is_challan_generated BOOLEAN DEFAULT FALSE,
     is_order BOOLEAN DEFAULT FALSE,
     status TEXT DEFAULT 'Delivered',
+    delivered_at TIMESTAMP,
+    delivery_date DATE,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
   
@@ -179,6 +181,7 @@ CREATE INDEX IF NOT EXISTS idx_holds_status ON holds(status);
 CREATE INDEX IF NOT EXISTS idx_purchases_prod_batch ON purchases(LOWER(TRIM(product_name)), LOWER(TRIM(batch_number)));
 CREATE INDEX IF NOT EXISTS idx_purchases_date ON purchases(date DESC);
 CREATE INDEX IF NOT EXISTS idx_challans_status_active ON challans(status, is_cancelled) WHERE is_cancelled = FALSE;
+CREATE INDEX IF NOT EXISTS idx_challans_delivery_date ON challans(delivery_date DESC) WHERE status = 'Delivered';
 CREATE INDEX IF NOT EXISTS idx_sales_pending_status ON sales(status, pending_qty) WHERE status != 'Cancelled';
 CREATE INDEX IF NOT EXISTS idx_challan_notes_status ON challan_notes(status);
 CREATE INDEX IF NOT EXISTS idx_challan_notes_created_at ON challan_notes(created_at DESC);
