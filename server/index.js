@@ -2690,8 +2690,38 @@ app.put("/api/sales/:id", async (req, res) => {
           updates.pending_qty = newQty - deliveredQty;
           updates.status = newQty === deliveredQty ? "Delivered" : "Partial";
 
-          // Sync pending challans
+          // Sync pending challans (P-draft) and active CH- delivery challans
           const newPending = newQty - deliveredQty;
+
+          // --- FIX: Also update any active (non-delivered) CH- delivery challan quantity
+          // when the order pending quantity is reduced below what the CH- challan covers.
+          const activeCHChallansPartial = await client.query(
+            `SELECT * FROM challans 
+             WHERE sales_id = $1 AND (challan_no LIKE 'CH-%' OR challan_no LIKE 'CH%') 
+               AND is_cancelled = FALSE AND status != 'Delivered'
+             ORDER BY created_at ASC, id ASC`,
+            [id],
+          );
+          const activeCHQtyPartial = activeCHChallansPartial.rows.reduce(
+            (sum, c) => sum + Number(c.quantity || 0),
+            0,
+          );
+          if (activeCHQtyPartial > newPending) {
+            let remainingCHQty = newPending;
+            for (const chRow of activeCHChallansPartial.rows) {
+              if (remainingCHQty > 0) {
+                const allocate = Math.min(remainingCHQty, Number(chRow.quantity || 0));
+                await client.query(
+                  `UPDATE challans SET quantity = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+                  [allocate, chRow.id],
+                );
+                remainingCHQty -= allocate;
+              } else {
+                await client.query("DELETE FROM challans WHERE id = $1", [chRow.id]);
+              }
+            }
+          }
+
           const pChallanRes = await client.query(
             "SELECT * FROM challans WHERE sales_id = $1 AND challan_no LIKE 'P-%' AND is_cancelled = FALSE AND status = 'Pending' LIMIT 1",
             [id],
@@ -4086,13 +4116,35 @@ async function handleOrderGroupUpdate(orderIdentifier, body, client) {
       updatedSales.push(updateSaleRes.rows[0]);
 
       // Synchronize P- draft challan for this sale
-      const activeCHForSale = await client.query(
-        `SELECT COALESCE(SUM(quantity), 0) as ch_sum FROM challans 
+      const activeCHChallansForSale = await client.query(
+        `SELECT * FROM challans 
          WHERE sales_id = $1 AND (challan_no LIKE 'CH-%' OR challan_no LIKE 'CH%') 
-           AND is_cancelled = FALSE AND status != 'Delivered'`,
+           AND is_cancelled = FALSE AND status != 'Delivered'
+         ORDER BY created_at ASC, id ASC`,
         [matchedSale.id],
       );
-      const activeCHQty = Number(activeCHForSale.rows[0].ch_sum || 0);
+      const activeCHQty = activeCHChallansForSale.rows.reduce(
+        (sum, c) => sum + Number(c.quantity || 0),
+        0,
+      );
+      // --- FIX: When the order quantity was reduced below the active CH challan qty,
+      // distribute newPendingQty across the CH challans and delete any excess.
+      if (activeCHQty > newPendingQty) {
+        let remainingCHQty = newPendingQty;
+        for (const chRow of activeCHChallansForSale.rows) {
+          if (remainingCHQty > 0) {
+            const allocate = Math.min(remainingCHQty, Number(chRow.quantity || 0));
+            await client.query(
+              `UPDATE challans SET quantity = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+              [allocate, chRow.id],
+            );
+            remainingCHQty -= allocate;
+          } else {
+            // Excess CH challan rows beyond the new order quantity — remove them
+            await client.query("DELETE FROM challans WHERE id = $1", [chRow.id]);
+          }
+        }
+      }
       const unhandledPending = Math.max(0, newPendingQty - activeCHQty);
 
       const existingDraftP = await client.query(
