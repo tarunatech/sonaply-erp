@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { getSales, getChallans, exportCSV, addChallan, classifyPendingOrder, getBatches, getProducts, getClients, confirmChallanGroup, deleteChallanGroup, updateSale, cancelPendingDeliveryGroup, Sale, StockBatch, Challan, Product, Client, formatLocalDate, getLocalDateString } from "@/lib/store";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -37,14 +37,21 @@ const renderCustomer = (customerName: string) => {
 
 export default function PendingDeliveries() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [sales, setSales] = useState<Sale[]>([]);
   const [allSales, setAllSales] = useState<Sale[]>([]);
   const [challans, setChallans] = useState<Challan[]>([]);
   const [cancelledPChallans, setCancelledPChallans] = useState<Challan[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
-  const [filter, setFilter] = useState("");
+  const [filter, setFilter] = useState(() => (location.state as any)?.search || "");
   const [selectedEstDate, setSelectedEstDate] = useState<string | null>(null);
+
+  useEffect(() => {
+    if ((location.state as any)?.search) {
+      setFilter((location.state as any).search);
+    }
+  }, [location.state]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const { toast } = useToast();
@@ -531,7 +538,22 @@ export default function PendingDeliveries() {
         <div className="flex flex-wrap gap-2 items-center">
           <div className="relative w-full sm:w-72">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input placeholder="Search customer, product or order..." value={filter} onChange={e => setFilter(e.target.value)} className="pl-9 h-9" />
+            <Input
+              placeholder="Search customer, product or order..."
+              value={filter}
+              onChange={e => setFilter(e.target.value)}
+              className="pl-9 pr-8 h-9"
+            />
+            {filter && (
+              <button
+                type="button"
+                onClick={() => setFilter("")}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-0.5 rounded cursor-pointer"
+                title="Clear search"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
 
           <div className="flex items-center gap-1">
@@ -694,6 +716,38 @@ export default function PendingDeliveries() {
                         {!isRawOrderNo && group.orderNo !== displayChallanNo && (
                           <div className="text-[11px] text-slate-500 mt-1 font-medium whitespace-nowrap">{group.orderNo}</div>
                         )}
+                        {(() => {
+                          const groupSaleIds = group.salesItems.map((si) => si.sale.id);
+                          const linkedCH = Array.from(new Set(
+                            challans
+                              .filter((c) => {
+                                if (c.isCancelled || c.status === "Delivered") return false;
+                                const isCH = c.challanNo.startsWith("CH-") || c.challanNo.startsWith("CH");
+                                if (!isCH) return false;
+                                const matchesSale = groupSaleIds.includes(c.salesId);
+                                const matchesOrder = group.orderNo && !group.orderNo.startsWith("ORD-") && allSales.find((s) => s.id === c.salesId)?.orderNo === group.orderNo;
+                                return matchesSale || matchesOrder;
+                              })
+                              .map((c) => c.challanNo)
+                          ));
+                          if (linkedCH.length === 0) return null;
+                          return (
+                            <div className="flex flex-wrap gap-1 items-center mt-1">
+                              <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Delivery:</span>
+                              {linkedCH.map((cn) => (
+                                <button
+                                  key={cn}
+                                  type="button"
+                                  onClick={() => navigate("/challans", { state: { search: cn } })}
+                                  className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-2xs cursor-pointer transition-colors"
+                                  title={`Click to view delivery challan ${cn}`}
+                                >
+                                  🔗 {cn}
+                                </button>
+                              ))}
+                            </div>
+                          );
+                        })()}
                       </TableCell>
                       <TableCell className="border-2 border-slate-300 px-2.5 py-2 text-sm min-w-[120px] max-w-[180px] break-words">
                         {renderCustomer(group.customer)}
