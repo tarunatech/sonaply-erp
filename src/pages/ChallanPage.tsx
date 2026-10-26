@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import {
   getChallans,
   getSales,
@@ -50,6 +50,7 @@ import {
   User,
   Bell,
   Clock,
+  X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -78,6 +79,7 @@ const renderCustomer = (customerName: string) => {
 
 export default function ChallanPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [challans, setChallans] = useState<Challan[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [batches, setBatches] = useState<StockBatch[]>([]);
@@ -87,11 +89,28 @@ export default function ChallanPage() {
   const [newNoteText, setNewNoteText] = useState("");
   const [isAddingNote, setIsAddingNote] = useState(false);
   const [isUpdatingNote, setIsUpdatingNote] = useState<string | null>(null);
-  const [filter, setFilter] = useState("");
+  const [filter, setFilter] = useState(() => (location.state as any)?.search || "");
   const [billInputs, setBillInputs] = useState<Record<string, string>>({});
   const [confirmDeliverGroup, setConfirmDeliverGroup] = useState<any | null>(null);
   const [isDelivering, setIsDelivering] = useState(false);
   const { toast } = useToast();
+
+  useEffect(() => {
+    if ((location.state as any)?.search) {
+      setFilter((location.state as any).search);
+    }
+  }, [location.state]);
+
+  const handlePChallanClick = (targetChallanNo: string) => {
+    const targetChallan = challans.find(
+      (c) => c.challanNo === targetChallanNo && !c.isCancelled
+    );
+    if (targetChallan && targetChallan.status === "Confirmed") {
+      setFilter(targetChallanNo);
+    } else {
+      navigate("/pending-deliveries", { state: { search: targetChallanNo } });
+    }
+  };
 
   const refresh = useCallback(() => {
     Promise.all([
@@ -173,7 +192,8 @@ export default function ChallanPage() {
       if (!groups[c.challanNo]) groups[c.challanNo] = [];
       groups[c.challanNo].push(c);
     });
-    return Object.entries(groups)
+
+    const ungrouped = Object.entries(groups)
       .map(([challanNo, items]) => ({
         challanNo,
         customer: items[0].customer,
@@ -184,7 +204,7 @@ export default function ChallanPage() {
         billNo: items.find((i) => i.billNo)?.billNo || "",
         isChallanGenerated: items.every((i) => i.isChallanGenerated),
         isCancelled: items.some((i) => i.isCancelled || i.status === "Cancelled"),
-        status: items[0].status,
+        status: items.some((i) => i.status === "Confirmed") ? "Confirmed" : items[0].status,
         salesId: items[0].salesId,
         id: items[0].id,
       }))
@@ -194,8 +214,56 @@ export default function ChallanPage() {
         if (isCH) return true;
         if (isP) return g.status === "Confirmed";
         return true;
-      })
-      .sort((a, b) => {
+      });
+
+    // Build maps for cross-linking challans by salesId and by orderNo across all active challans (including Pending P- challans)
+    const salesIdToChallanNos: Record<string, Set<string>> = {};
+    const orderNoToChallanNos: Record<string, Set<string>> = {};
+
+    activeChallans.forEach((c) => {
+      if (c.salesId) {
+        if (!salesIdToChallanNos[c.salesId]) {
+          salesIdToChallanNos[c.salesId] = new Set();
+        }
+        salesIdToChallanNos[c.salesId].add(c.challanNo);
+
+        const sale = sales.find((s) => s.id === c.salesId);
+        if (sale?.orderNo) {
+          if (!orderNoToChallanNos[sale.orderNo]) {
+            orderNoToChallanNos[sale.orderNo] = new Set();
+          }
+          orderNoToChallanNos[sale.orderNo].add(c.challanNo);
+        }
+      }
+    });
+
+    const withLinks = ungrouped.map((g) => {
+      const siblingSet = new Set<string>();
+      g.items.forEach((item) => {
+        if (item.salesId && salesIdToChallanNos[item.salesId]) {
+          salesIdToChallanNos[item.salesId].forEach((cn) => {
+            if (cn !== g.challanNo) siblingSet.add(cn);
+          });
+        }
+        const sale = sales.find((s) => s.id === item.salesId);
+        if (sale?.orderNo && orderNoToChallanNos[sale.orderNo]) {
+          orderNoToChallanNos[sale.orderNo].forEach((cn) => {
+            if (cn !== g.challanNo) siblingSet.add(cn);
+          });
+        }
+      });
+
+      const siblings = Array.from(siblingSet);
+      const linkedCH = siblings.filter((cn) => cn.startsWith("CH-") || cn.startsWith("CH"));
+      const linkedP = siblings.filter((cn) => cn.startsWith("P-"));
+      const orderNo = g.items
+        .map((item) => sales.find((s) => s.id === item.salesId)?.orderNo)
+        .find(Boolean) || "";
+
+      return { ...g, linkedCH, linkedP, orderNo };
+    });
+
+    return withLinks.sort((a, b) => {
         const getGroupLatestTime = (group: typeof a) => {
           let maxTime = 0;
           for (const item of group.items) {
@@ -219,7 +287,6 @@ export default function ChallanPage() {
           }
           return maxTime;
         };
-
         const timeA = getGroupLatestTime(a);
         const timeB = getGroupLatestTime(b);
         if (timeA !== timeB) return timeB - timeA;
@@ -239,12 +306,16 @@ export default function ChallanPage() {
     if (!filter) return groupedChallans;
     const f = filter.toLowerCase();
     return groupedChallans.filter(g => {
-      const orderNo = salesMap.get(g.salesId)?.orderNo || "";
+      const orderNo = (g as any).orderNo || salesMap.get(g.salesId)?.orderNo || "";
       const currentBill = (billInputs[g.challanNo] ?? g.billNo ?? "").toLowerCase();
+      const linkedCH = ((g as any).linkedCH || []) as string[];
+      const linkedP = ((g as any).linkedP || []) as string[];
       return (g.challanNo || '').toLowerCase().includes(f) ||
              (g.customer || '').toLowerCase().includes(f) ||
              orderNo.toLowerCase().includes(f) ||
              currentBill.includes(f) ||
+             linkedCH.some((cn) => cn.toLowerCase().includes(f)) ||
+             linkedP.some((cn) => cn.toLowerCase().includes(f)) ||
              g.items.some(item => (item.product || '').toLowerCase().includes(f));
     });
   }, [groupedChallans, filter, salesMap, billInputs]);
@@ -584,8 +655,18 @@ export default function ChallanPage() {
               placeholder="Search customer, product, challan or bill #..."
               value={filter}
               onChange={e => setFilter(e.target.value)}
-              className="pl-9 h-9"
+              className="pl-9 pr-8 h-9"
             />
+            {filter && (
+              <button
+                type="button"
+                onClick={() => setFilter("")}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-0.5 rounded cursor-pointer"
+                title="Clear search"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
           <Button variant="outline" size="sm" onClick={() => exportCSV(filteredChallansForExport as any, `delivery-challans-${new Date().toISOString().slice(0, 10)}.csv`)}>
             <Download className="mr-1 h-4 w-4" /> Export
@@ -623,10 +704,23 @@ export default function ChallanPage() {
                     const currentBillValue = billInputs[group.challanNo] !== undefined
                       ? billInputs[group.challanNo]
                       : (group.billNo || "");
+                    const isPChallan = group.challanNo.startsWith("P-");
+                    const isCHChallan = group.challanNo.startsWith("CH-") || group.challanNo.startsWith("CH");
+                    const linkedCH: string[] = (group as any).linkedCH || [];
+                    const linkedP: string[] = (group as any).linkedP || [];
+
                     return (
                       <TableRow
                         key={group.challanNo}
-                        className={group.isCancelled ? "bg-red-50/50 border-l-4 border-l-red-400 opacity-80" : "hover:bg-slate-50/40"}
+                        className={`${
+                          group.isCancelled
+                            ? "bg-red-50/50 border-l-4 border-l-red-400 opacity-80"
+                            : isPChallan
+                            ? "bg-amber-50/30 border-l-4 border-l-amber-400 hover:bg-amber-50/50"
+                            : isCHChallan
+                            ? "border-l-4 border-l-emerald-400 hover:bg-emerald-50/20"
+                            : "hover:bg-slate-50/40"
+                        }`}
                       >
                         <TableCell className="border-2 border-slate-300 px-4 py-3.5 text-sm text-slate-700 font-medium whitespace-nowrap align-top">
                           {group.createdAt
@@ -635,11 +729,50 @@ export default function ChallanPage() {
                         </TableCell>
                         <TableCell className="border-2 border-slate-300 px-4 py-3.5 font-medium align-top">
                           <div className="flex flex-col gap-1.5">
-                            <div className="flex items-center gap-2">
-                              <span className="font-bold text-sm text-slate-900 bg-slate-100 px-2.5 py-1 rounded-md border border-slate-200 shadow-2xs">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className={`font-bold text-sm px-2.5 py-1 rounded-md border shadow-2xs ${
+                                isPChallan
+                                  ? "text-amber-900 bg-amber-100 border-amber-300"
+                                  : isCHChallan
+                                  ? "text-emerald-900 bg-emerald-50 border-emerald-300"
+                                  : "text-slate-900 bg-slate-100 border-slate-200"
+                              }`}>
                                 {group.challanNo}
                               </span>
                             </div>
+                            {/* Linked challan cross-reference */}
+                            {linkedCH.length > 0 && (
+                              <div className="flex flex-wrap gap-1 items-center">
+                                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Dispatched via:</span>
+                                {linkedCH.map((cn) => (
+                                  <button
+                                    key={cn}
+                                    type="button"
+                                    onClick={() => setFilter(cn)}
+                                    className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-2xs cursor-pointer transition-colors"
+                                    title={`Click to filter by ${cn}`}
+                                  >
+                                    🔗 {cn}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                            {linkedP.length > 0 && (
+                              <div className="flex flex-wrap gap-1 items-center">
+                                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">Pending ref:</span>
+                                {linkedP.map((cn) => (
+                                  <button
+                                    key={cn}
+                                    type="button"
+                                    onClick={() => handlePChallanClick(cn)}
+                                    className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 shadow-2xs cursor-pointer transition-colors"
+                                    title={`Click to view ${cn}`}
+                                  >
+                                    🔗 {cn}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
                             <div className="flex flex-col gap-1 mt-0.5">
                               <div className="flex items-center gap-1.5">
                                 <Input
@@ -692,6 +825,11 @@ export default function ChallanPage() {
                           <div className="font-semibold text-slate-900 leading-snug">
                             {renderCustomer(group.customer)}
                           </div>
+                          {(group as any).orderNo && (
+                            <div className="text-[11px] font-mono font-medium text-slate-500 mt-1">
+                              Order: <span className="font-bold text-slate-700">{(group as any).orderNo}</span>
+                            </div>
+                          )}
                         </TableCell>
                         <TableCell className="border-2 border-slate-300 px-4 py-3.5 align-top">
                           <div className="text-sm space-y-2">
@@ -700,10 +838,34 @@ export default function ChallanPage() {
                               const itemBatch = batches.find((b) => b.productName === item.product);
                               const totalOrder = itemSale ? itemSale.orderedQty : item.quantity;
                               const alreadyDelivered = itemSale ? (itemSale.deliveredQty || 0) : 0;
-                              const pendingQty = itemSale ? Math.max(0, itemSale.orderedQty - alreadyDelivered - item.quantity) : 0;
+
+                              // Active sibling challans for this exact sale item
+                              const activeItemChallans = challans.filter(
+                                (c) => c.salesId === item.salesId && !c.isCancelled && c.status !== "Delivered"
+                              );
+                              const siblingCH = activeItemChallans.filter(
+                                (c) => (c.challanNo.startsWith("CH-") || c.challanNo.startsWith("CH")) && c.challanNo !== group.challanNo
+                              );
+                              const siblingCHQty = siblingCH.reduce((sum, c) => sum + (Number(c.quantity) || 0), 0);
+
+                              const siblingP = activeItemChallans.filter(
+                                (c) => c.challanNo.startsWith("P-") && c.challanNo !== group.challanNo
+                              );
+                              const siblingPQty = siblingP.reduce((sum, c) => sum + (Number(c.quantity) || 0), 0);
+
+                              // Remaining unhandled pending qty (not in this challan, not in any sibling challan, not delivered)
+                              const accountedQty = isPChallan
+                                ? (item.quantity + siblingCHQty + alreadyDelivered)
+                                : (item.quantity + siblingPQty + alreadyDelivered);
+                              const uncoveredPending = Math.max(0, totalOrder - accountedQty);
+
                               const description = item.description || itemSale?.description || itemBatch?.description || "";
                               return (
-                                <div key={idx} className="p-2 rounded-md bg-slate-50/80 border border-slate-200/80 shadow-2xs space-y-1">
+                                <div key={idx} className={`p-2 rounded-md border shadow-2xs space-y-1 ${
+                                  isPChallan
+                                    ? "bg-amber-50/60 border-amber-200/80"
+                                    : "bg-slate-50/80 border-slate-200/80"
+                                }`}>
                                   <div className="flex items-center justify-between gap-2 flex-wrap">
                                     <div className="flex items-center gap-1.5 flex-wrap">
                                       <span className="font-bold text-slate-900 text-sm">{item.product}</span>
@@ -722,24 +884,66 @@ export default function ChallanPage() {
                                         </span>
                                       )}
                                     </div>
-                                    <div className="text-right flex items-center gap-2">
+                                    <div className="text-right flex items-center gap-1.5 flex-wrap justify-end">
                                       {itemSale && (
                                         <div className="text-[11px] text-slate-500 font-semibold">
-                                          Order: <span className="text-slate-800 font-bold">{totalOrder}</span>
-                                          {pendingQty > 0 && (
-                                            <span className="text-red-600 font-bold ml-1">
-                                              (Pend: {pendingQty})
-                                            </span>
-                                          )}
+                                          Ordered: <span className="text-slate-800 font-bold">{totalOrder}</span>
                                         </div>
                                       )}
-                                      <span className={`font-bold text-xs px-2 py-0.5 rounded border shadow-2xs ${
-                                        item.quantity > 0 
-                                          ? "text-emerald-800 bg-emerald-50 border-emerald-200" 
-                                          : "text-amber-800 bg-amber-50 border-amber-200"
-                                      }`}>
-                                        {item.quantity > 0 ? `Fulfill: ${item.quantity}` : "Fulfill: 0 (Pending Stock)"}
-                                      </span>
+                                      {isPChallan ? (
+                                        // P- challan: show how many are AWAITING stock in this challan
+                                        <>
+                                          <span className="font-bold text-xs px-2 py-0.5 rounded border shadow-2xs bg-amber-50 text-amber-800 border-amber-300">
+                                            Awaiting Stock: {item.quantity}
+                                          </span>
+                                          {siblingCH.length > 0 && (
+                                            <button
+                                              type="button"
+                                              onClick={() => setFilter(siblingCH[0].challanNo)}
+                                              className="font-bold text-xs px-2 py-0.5 rounded border shadow-2xs bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-300 cursor-pointer transition-colors"
+                                              title={`Fulfilled in ${siblingCH.map((c) => c.challanNo).join(", ")}`}
+                                            >
+                                              Fulfilled in {siblingCH.map((c) => c.challanNo).join(", ")}: {siblingCHQty}
+                                            </button>
+                                          )}
+                                          {alreadyDelivered > 0 && (
+                                            <span className="font-bold text-xs px-2 py-0.5 rounded border shadow-2xs bg-green-50 text-green-800 border-green-300">
+                                              Delivered: {alreadyDelivered}
+                                            </span>
+                                          )}
+                                        </>
+                                      ) : (
+                                        // CH- challan: show how many are fulfilled in this challan
+                                        <>
+                                          <span className={`font-bold text-xs px-2 py-0.5 rounded border shadow-2xs ${
+                                            item.quantity > 0
+                                              ? "text-emerald-800 bg-emerald-50 border-emerald-200"
+                                              : "text-amber-800 bg-amber-50 border-amber-200"
+                                          }`}>
+                                            {item.quantity > 0 ? `Fulfilled: ${item.quantity}` : "Fulfilled: 0"}
+                                          </span>
+                                          {siblingP.length > 0 && (
+                                            <button
+                                              type="button"
+                                              onClick={() => handlePChallanClick(siblingP[0].challanNo)}
+                                              className="font-bold text-xs px-2 py-0.5 rounded border shadow-2xs bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300 cursor-pointer transition-colors"
+                                              title={`Pending in ${siblingP.map((c) => c.challanNo).join(", ")}`}
+                                            >
+                                              Pending in {siblingP.map((c) => c.challanNo).join(", ")}: {siblingPQty}
+                                            </button>
+                                          )}
+                                          {alreadyDelivered > 0 && (
+                                            <span className="font-bold text-xs px-2 py-0.5 rounded border shadow-2xs bg-green-50 text-green-800 border-green-300">
+                                              Delivered: {alreadyDelivered}
+                                            </span>
+                                          )}
+                                        </>
+                                      )}
+                                      {uncoveredPending > 0 && (
+                                        <span className="font-bold text-xs px-2 py-0.5 rounded border shadow-2xs bg-red-50 text-red-700 border-red-200">
+                                          Still Pending: {uncoveredPending}
+                                        </span>
+                                      )}
                                     </div>
                                   </div>
                                   {description && (
@@ -751,7 +955,7 @@ export default function ChallanPage() {
                               );
                             })}
                             {(() => {
-                              const firstWithNotes = group.items.find(i => i.notes);
+                              const firstWithNotes = group.items.find((i: any) => i.notes);
                               if (firstWithNotes && firstWithNotes.notes) {
                                 return (
                                   <div className="text-[11px] text-orange-700 font-semibold mt-1 bg-orange-50 px-2 py-0.5 rounded border border-orange-200/80 w-fit flex items-center gap-1">

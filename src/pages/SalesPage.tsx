@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { addSale, addSaleBulk, addClient, getBatches, getClients, getSales, addHold, cancelHold, updateHoldGroup, updateSale, deleteSale, deleteChallanGroup, exportCSV, confirmSale, deliverSale, updateChallanGroup, updateDeliveredOrderGroup, updateOrderGroup, Sale, Client, StockBatch, generateWhatsAppLink, getLocalDateString } from "@/lib/store";
+import { addSale, addSaleBulk, addClient, getBatches, getClients, getSales, getChallans, addHold, cancelHold, updateHoldGroup, updateSale, deleteSale, deleteChallanGroup, exportCSV, confirmSale, deliverSale, updateChallanGroup, updateDeliveredOrderGroup, updateOrderGroup, Sale, Client, StockBatch, Challan, generateWhatsAppLink, getLocalDateString } from "@/lib/store";
 import { Hand } from "lucide-react";
 
 import { printElement } from "@/lib/print";
@@ -116,6 +116,7 @@ export default function SalesPage() {
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState<number | null>(null);
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState<number>(-1);
   const [sales, setSales] = useState<Sale[]>([]);
+  const [challans, setChallans] = useState<Challan[]>([]);
   const [allBatches, setAllBatches] = useState<StockBatch[]>([]);
   const [editingSale, setEditingSale] = useState<any>(null);
   const productInputsRef = useRef<(HTMLInputElement | null)[]>([]);
@@ -160,6 +161,7 @@ export default function SalesPage() {
   const refreshSales = useCallback(() => getSales().then(setSales), []);
   const refreshBatches = useCallback(() => getBatches().then(setAllBatches), []);
   const refreshClients = useCallback(() => getClients().then(setAllClients), []);
+  const refreshChallans = useCallback(() => getChallans().then(setChallans), []);
 
   useEffect(() => {
     if (location.state?.editHold) {
@@ -363,16 +365,18 @@ export default function SalesPage() {
     refreshSales();
     refreshBatches();
     refreshClients();
+    refreshChallans();
 
     const handleStockUpdate = () => {
       refreshSales();
       refreshBatches();
       refreshClients();
+      refreshChallans();
     };
 
     window.addEventListener("erp-stock-updated", handleStockUpdate);
     return () => window.removeEventListener("erp-stock-updated", handleStockUpdate);
-  }, [refreshSales, refreshBatches, refreshClients]);
+  }, [refreshSales, refreshBatches, refreshClients, refreshChallans]);
 
   const uniqueClients = useMemo(() => {
     return allClients.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -1993,14 +1997,15 @@ export default function SalesPage() {
             <Table className="border-collapse border-2 border-slate-300 w-full" wrapperClassName="max-h-[calc(100vh-250px)]">
               <TableHeader className="sticky top-0 bg-slate-100 z-10 shadow-2xs border-b-2 border-slate-300">
                 <TableRow className="hover:bg-transparent">
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Date</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Order #</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Customer</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3">Product</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right">Ordered</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-green-600 px-4 py-3 text-right">Delivered</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-red-600 px-4 py-3 text-right">Pending</TableHead>
-                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right">Actions</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 min-w-[90px]">Date</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 min-w-[140px]">Order #</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 min-w-[160px]">Customer</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 min-w-[180px]">Product</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right min-w-[80px]">Ordered</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-indigo-600 px-4 py-3 text-right min-w-[90px]">Fulfilled</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-green-600 px-4 py-3 text-right min-w-[110px]">Delivered</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-red-600 px-4 py-3 text-right min-w-[80px]">Pending</TableHead>
+                  <TableHead className="border-2 border-slate-300 text-xs font-bold text-slate-600 px-4 py-3 text-right min-w-[120px]">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -2010,30 +2015,61 @@ export default function SalesPage() {
                   </TableRow>
                 ) : paginatedGroupedSales.map(group => (
                   <TableRow key={group.orderNo} className="hover:bg-slate-50/40">
-                    <TableCell className="border-2 border-slate-300 px-4 py-3 text-sm text-slate-700 font-medium whitespace-nowrap">
+                    <TableCell className="border-2 border-slate-300 px-4 py-3 text-sm text-slate-700 font-medium whitespace-nowrap align-top">
                       {group.orderDate ? format(new Date(group.orderDate), "dd-MM-yyyy") : ""}
                     </TableCell>
-                    <TableCell className="border-2 border-slate-300 px-4 py-3 font-mono text-xs font-bold text-slate-900">{group.orderNo}</TableCell>
-                    <TableCell className="border-2 border-slate-300 px-4 py-3 text-sm min-w-[150px] max-w-[220px] break-words">
+                    <TableCell className="border-2 border-slate-300 px-4 py-3 font-mono text-xs font-bold text-slate-900 align-top">
+                      <div>{group.orderNo}</div>
+                      {(() => {
+                        const orderChallans = challans.filter(
+                          (c) => !c.isCancelled && group.items.some((it) => it.id === c.salesId)
+                        );
+                        const orderChallanNos = Array.from(new Set(orderChallans.map((c) => c.challanNo)));
+                        if (orderChallanNos.length === 0) return null;
+                        return (
+                          <div className="flex flex-wrap gap-1 mt-1.5">
+                            {orderChallanNos.map((cn) => {
+                              const isCH = cn.startsWith("CH-") || cn.startsWith("CH");
+                              return (
+                                <button
+                                  key={cn}
+                                  type="button"
+                                  onClick={() => navigate("/challans")}
+                                  className={`text-[9px] font-bold px-1.5 py-0.5 rounded border shadow-2xs cursor-pointer transition-colors ${
+                                    isCH
+                                      ? "bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100"
+                                      : "bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100"
+                                  }`}
+                                  title={`View ${cn} in Delivery Challans`}
+                                >
+                                  {isCH ? `🚚 ${cn}` : `⏳ ${cn}`}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        );
+                      })()}
+                    </TableCell>
+                    <TableCell className="border-2 border-slate-300 px-4 py-3 text-sm min-w-[150px] max-w-[220px] break-words align-top">
                       {renderCustomer(group.customer)}
                       <div className="text-[10px] text-muted-foreground mt-1">{group.clientPhone || '-'}</div>
                     </TableCell>
-                    <TableCell className="border-2 border-slate-300 px-4 py-3">
+                    <TableCell className="border-2 border-slate-300 px-4 py-3 align-top">
                       <div className="space-y-1">
                         {group.items.map((item, idx) => {
                           const pBatches = batchesByProductMap.get((item.product || '').trim()) || [];
                           const mBatch = item.batchNo ? pBatches.find(b => b.batchNumber === item.batchNo) : pBatches[0];
                           const sInfo = getBatchStatusInfo(mBatch);
                           return (
-                            <div key={idx} className="flex items-center gap-1.5 flex-wrap border-b border-slate-100 last:border-0 pb-1 h-7">
-                              <span className={`font-semibold ${sInfo ? sInfo.textColor : 'text-slate-900'}`}>{item.product}</span>
+                            <div key={idx} className="flex items-center gap-1.5 flex-nowrap border-b border-slate-100 last:border-0 pb-1 h-8 overflow-hidden">
+                              <span className={`font-semibold truncate ${sInfo ? sInfo.textColor : 'text-slate-900'}`}>{item.product}</span>
                               {sInfo && (
                                 <span className={sInfo.badgeClass}>
                                   {sInfo.label}
                                 </span>
                               )}
                               {item.stockCategory && (
-                                <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold shrink-0 ${
                                   item.stockCategory === 'Display' ? 'bg-amber-50 text-amber-800 border border-amber-200' :
                                   item.stockCategory === 'Damage' ? 'bg-red-50 text-red-800 border border-red-200' :
                                   'bg-blue-50 text-blue-800 border border-blue-200'
@@ -2046,31 +2082,76 @@ export default function SalesPage() {
                         })}
                       </div>
                     </TableCell>
-                    <TableCell className="border-2 border-slate-300 px-4 py-3 text-right">
+                    <TableCell className="border-2 border-slate-300 px-4 py-3 text-right align-top whitespace-nowrap min-w-[80px]">
                       <div className="space-y-1">
                         {group.items.map((item, idx) => (
-                          <div key={idx} className="border-b border-slate-100 last:border-0 pb-1 h-7 flex justify-end items-center font-semibold text-slate-700">
+                          <div key={idx} className="border-b border-slate-100 last:border-0 pb-1 h-8 flex justify-end items-center font-semibold text-slate-700">
                             {item.orderedQty}
                           </div>
                         ))}
                       </div>
                     </TableCell>
-                    <TableCell className="border-2 border-slate-300 px-4 py-3 text-right font-semibold text-green-600">
+                    <TableCell className="border-2 border-slate-300 px-4 py-3 text-right align-top whitespace-nowrap min-w-[90px]">
                       <div className="space-y-1">
-                        {group.items.map((item, idx) => (
-                          <div key={idx} className="border-b border-slate-100 last:border-0 pb-1 h-7 flex justify-end items-center font-semibold">
-                            {item.deliveredQty}
-                          </div>
-                        ))}
+                        {group.items.map((item, idx) => {
+                          const itemChallansF = challans.filter((c) => c.salesId === item.id && !c.isCancelled);
+                          const activeCHF = itemChallansF.filter(
+                            (c) => (c.challanNo.startsWith("CH-") || c.challanNo.startsWith("CH")) && c.status !== "Delivered"
+                          );
+                          const fulfilledQty = activeCHF.reduce((sum, c) => sum + (Number(c.quantity) || 0), 0);
+                          return (
+                            <div key={idx} className="border-b border-slate-100 last:border-0 pb-1 h-8 flex justify-end items-center">
+                              {fulfilledQty > 0 ? (
+                                <span className="font-bold text-indigo-600">{fulfilledQty}</span>
+                              ) : (
+                                <span className="text-slate-400 font-semibold">0</span>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     </TableCell>
-                    <TableCell className="border-2 border-slate-300 px-4 py-3 text-right font-semibold text-red-600">
+                    <TableCell className="border-2 border-slate-300 px-4 py-3 text-right align-top whitespace-nowrap min-w-[110px]">
                       <div className="space-y-1">
-                        {group.items.map((item, idx) => (
-                          <div key={idx} className="border-b border-slate-100 last:border-0 pb-1 h-7 flex justify-end items-center font-semibold">
-                            {item.pendingQty}
-                          </div>
-                        ))}
+                        {group.items.map((item, idx) => {
+                          const itemChallans = challans.filter((c) => c.salesId === item.id && !c.isCancelled);
+                          const activeCH = itemChallans.filter(
+                            (c) => (c.challanNo.startsWith("CH-") || c.challanNo.startsWith("CH")) && c.status !== "Delivered"
+                          );
+                          const inDeliveryQty = activeCH.reduce((sum, c) => sum + (Number(c.quantity) || 0), 0);
+                          return (
+                            <div key={idx} className="border-b border-slate-100 last:border-0 pb-1 h-8 flex justify-end items-center gap-1.5">
+                              <span className={item.deliveredQty > 0 ? "text-green-600 font-bold" : "text-slate-600 font-semibold"}>
+                                {item.deliveredQty}
+                              </span>
+                              {inDeliveryQty > 0 && (
+                                <span
+                                  className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-300 shadow-2xs whitespace-nowrap cursor-default"
+                                  title={`In Delivery Challan (${activeCH.map((c) => c.challanNo).join(", ")}): ${inDeliveryQty}`}
+                                >
+                                  🚚 {inDeliveryQty}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </TableCell>
+                    <TableCell className="border-2 border-slate-300 px-4 py-3 text-right align-top whitespace-nowrap min-w-[80px]">
+                      <div className="space-y-1">
+                        {group.items.map((item, idx) => {
+                          const itemChallansP = challans.filter((c) => c.salesId === item.id && !c.isCancelled);
+                          const activeCHP = itemChallansP.filter(
+                            (c) => (c.challanNo.startsWith("CH-") || c.challanNo.startsWith("CH")) && c.status !== "Delivered"
+                          );
+                          const inDeliveryQtyP = activeCHP.reduce((sum, c) => sum + (Number(c.quantity) || 0), 0);
+                          const truePending = Math.max(0, (item.pendingQty || 0) - inDeliveryQtyP);
+                          return (
+                            <div key={idx} className="border-b border-slate-100 last:border-0 pb-1 h-8 flex justify-end items-center font-bold text-red-600">
+                              {truePending}
+                            </div>
+                          );
+                        })}
                       </div>
                     </TableCell>
                     <TableCell className="border-2 border-slate-300 px-4 py-3 align-middle text-right">
